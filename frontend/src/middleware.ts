@@ -7,11 +7,12 @@ import type { NextRequest } from 'next/server';
  * 保护需要登录才能访问的路由
  */
 export function middleware(request: NextRequest) {
-  const sessionCookie = request.cookies.get('deer_session');
+  const accessTokenCookie = request.cookies.get('kc_access_token');
+  const refreshTokenCookie = request.cookies.get('kc_refresh_token');
 
   // 保护 /workspace 路由
   if (request.nextUrl.pathname.startsWith('/workspace')) {
-    if (!sessionCookie) {
+    if (!accessTokenCookie && !refreshTokenCookie) {
       // 未登录，重定向到登录页面
       const loginUrl = new URL('/api/auth/login', request.url);
       loginUrl.searchParams.set('returnTo', request.nextUrl.pathname);
