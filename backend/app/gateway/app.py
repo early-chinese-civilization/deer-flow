@@ -21,6 +21,7 @@ from app.gateway.routers import (
     threads,
     uploads,
 )
+from app.gateway.auth import routes as auth_routes  # 导入认证路由
 from deerflow.config.app_config import get_app_config
 
 # Configure logging
@@ -109,6 +110,10 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
         openapi_url="/openapi.json",
         openapi_tags=[
             {
+                "name": "auth",
+                "description": "Authentication and authorization endpoints (login, logout, session management)",
+            },
+            {
                 "name": "models",
                 "description": "Operations for querying available AI models and their configurations",
             },
@@ -166,6 +171,9 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
     # CORS is handled by nginx - no need for FastAPI middleware
 
     # Include routers
+    # Auth API is mounted at /api/auth (认证路由，必须最先注册)
+    app.include_router(auth_routes.router)
+
     # Models API is mounted at /api/models
     app.include_router(models.router)
 
