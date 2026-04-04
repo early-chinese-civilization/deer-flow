@@ -1,12 +1,12 @@
 "use client";
 
 import { ChevronRightIcon } from "lucide-react";
-import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { FlickeringGrid } from "@/components/ui/flickering-grid";
 import Galaxy from "@/components/ui/galaxy";
 import { WordRotate } from "@/components/ui/word-rotate";
+import { login } from "@/core/auth/api";
 import { cn } from "@/lib/utils";
 
 export function Hero({ className }: { className?: string }) {
@@ -68,12 +68,15 @@ export function Hero({ className }: { className?: string }) {
           <br />
           different levels of tasks that could take minutes to hours.
         </p>
-        <Link href="/workspace">
-          <Button className="size-lg mt-8 scale-108" size="lg">
-            <span className="text-md">Get Started with 2.0</span>
-            <ChevronRightIcon className="size-4" />
-          </Button>
-        </Link>
+        <Button
+          className="size-lg mt-8 scale-108"
+          size="lg"
+          type="button"
+          onClick={() => login("/workspace")}
+        >
+          <span className="text-md">Get Started with 2.0</span>
+          <ChevronRightIcon className="size-4" />
+        </Button>
       </div>
     </div>
   );
