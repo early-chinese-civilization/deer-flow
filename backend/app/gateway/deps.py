@@ -11,8 +11,10 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
 
+from app.gateway.auth.keycloak import KeycloakError
+from app.gateway.auth.service import sync_user_from_access_token
 from deerflow.runtime import RunManager, StreamBridge
 
 
@@ -90,15 +92,18 @@ async def get_db() -> AsyncGenerator:
 
 
 async def get_current_user(
-    deer_session: str | None = None,
-    db = None,
-):
+    kc_access_token: str | None = Cookie(default=None),
+    db=Depends(get_db),
+) :
     """获取当前用户（必须登录）
 
-    从 cookie 中读取 session_id，查询数据库获取用户信息。
+    从 HttpOnly `kc_access_token` 实时校验当前用户。
+
+    这里故意不在依赖层做 refresh 回写，避免在普通业务接口里隐式改写浏览器 cookie。
+    懒刷新和 cookie 重写由 `/api/auth/me`、`/api/auth/refresh` 两个显式认证入口负责。
 
     Args:
-        deer_session: 会话ID（来自 cookie）
+        kc_access_token: Access token（来自 cookie）
         db: 数据库会话
 
     Returns:
@@ -107,59 +112,33 @@ async def get_current_user(
     Raises:
         HTTPException: 如果未登录或会话无效
     """
-    from datetime import datetime, timezone
-    from fastapi import Cookie, Depends
-    from sqlalchemy import select
-
-    from app.gateway.auth.session import SessionManager
-    from app.gateway.db.models import User
-
-    # 注意：这个函数需要在路由中使用 Depends 时自动注入参数
-    # 实际使用时应该这样：
-    # async def get_current_user(
-    #     deer_session: str | None = Cookie(default=None),
-    #     db: AsyncSession = Depends(get_db),
-    # ) -> User:
-
-    if not deer_session:
+    if not kc_access_token:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    # 获取会话
-    session = await SessionManager.get_session(db, deer_session)
-    if not session:
-        raise HTTPException(status_code=401, detail="Invalid session")
-
-    # 检查过期
-    if session.expires_at < datetime.now(timezone.utc):
-        raise HTTPException(status_code=401, detail="Session expired")
-
-    # 获取用户
-    stmt = select(User).where(User.id == session.user_id)
-    result = await db.execute(stmt)
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-
-    return user
+    try:
+        return await sync_user_from_access_token(db=db, access_token=kc_access_token)
+    except KeycloakError as exc:
+        if exc.status >= 500:
+            raise HTTPException(status_code=503, detail="Authentication service unavailable") from exc
+        raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
 
 
 async def get_current_user_optional(
-    deer_session: str | None = None,
-    db = None,
+    kc_access_token: str | None = Cookie(default=None),
+    db=Depends(get_db),
 ):
     """获取当前用户（可选，不强制登录）
 
     如果未登录或会话无效，返回 None 而不是抛出异常。
 
     Args:
-        deer_session: 会话ID（来自 cookie）
+        kc_access_token: Access token（来自 cookie）
         db: 数据库会话
 
     Returns:
         User 对象或 None
     """
     try:
-        return await get_current_user(deer_session, db)
+        return await get_current_user(kc_access_token, db)
     except HTTPException:
         return None

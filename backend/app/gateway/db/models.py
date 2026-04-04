@@ -1,11 +1,7 @@
-"""ORM 模型定义
+"""ORM 模型定义。"""
+from datetime import UTC, datetime
 
-定义用户和认证会话的数据库模型。
-"""
-from datetime import datetime, timezone
-from typing import Optional
-
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, String, Text
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, String
 from sqlalchemy.orm import DeclarativeBase
 
 
@@ -45,55 +41,13 @@ class User(Base):
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         comment="创建时间"
     )
     updated_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
-        comment="更新时间"
-    )
-
-
-class AuthSession(Base):
-    """认证会话表
-
-    存储用户的登录会话和 Keycloak token 信息。
-    refresh_token 必须加密存储。
-    """
-    __tablename__ = "auth_sessions"
-
-    # 主键：会话ID
-    session_id = Column(String(64), primary_key=True, comment="会话ID")
-
-    # 关联用户
-    user_id = Column(BigInteger, nullable=False, index=True, comment="用户ID")
-
-    # Token 信息（refresh_token 必须加密）
-    refresh_token_encrypted = Column(Text, nullable=False, comment="加密的 refresh token")
-    access_token = Column(Text, nullable=True, comment="Access token（可选存储）")
-    id_token = Column(Text, nullable=True, comment="ID token（可选存储）")
-
-    # 过期时间
-    expires_at = Column(
-        DateTime(timezone=True),
-        nullable=False,
-        comment="会话过期时间"
-    )
-
-    # 时间戳
-    created_at = Column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-        comment="创建时间"
-    )
-    updated_at = Column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         comment="更新时间"
     )

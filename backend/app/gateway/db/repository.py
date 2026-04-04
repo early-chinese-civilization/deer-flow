@@ -1,14 +1,10 @@
-"""数据访问层
-
-提供用户和会话的数据库操作方法。
-"""
-from typing import Optional
+"""数据访问层。"""
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.db.models import AuthSession, User
+from app.gateway.db.models import User
 
 
 class UserRepository:
@@ -20,9 +16,9 @@ class UserRepository:
         external_auth_id: str,
         username: str,
         display_name: str,
-        email: Optional[str] = None,
-        given_name: Optional[str] = None,
-        family_name: Optional[str] = None,
+        email: str | None = None,
+        given_name: str | None = None,
+        family_name: str | None = None,
         email_verified: bool = False,
     ) -> User:
         """插入或更新用户
@@ -75,7 +71,7 @@ class UserRepository:
         return result.scalar_one()
 
     @staticmethod
-    async def get_user_by_id(db: AsyncSession, user_id: int) -> Optional[User]:
+    async def get_user_by_id(db: AsyncSession, user_id: int) -> User | None:
         """根据 ID 获取用户
 
         Args:
@@ -92,7 +88,7 @@ class UserRepository:
     @staticmethod
     async def get_user_by_external_auth_id(
         db: AsyncSession, external_auth_id: str
-    ) -> Optional[User]:
+    ) -> User | None:
         """根据 external_auth_id 获取用户
 
         Args:
@@ -105,37 +101,3 @@ class UserRepository:
         stmt = select(User).where(User.external_auth_id == external_auth_id)
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
-
-
-class SessionRepository:
-    """会话数据访问层"""
-
-    @staticmethod
-    async def get_session(
-        db: AsyncSession, session_id: str
-    ) -> Optional[AuthSession]:
-        """根据 session_id 获取会话
-
-        Args:
-            db: 数据库会话
-            session_id: 会话ID
-
-        Returns:
-            AuthSession 对象，如果不存在则返回 None
-        """
-        stmt = select(AuthSession).where(AuthSession.session_id == session_id)
-        result = await db.execute(stmt)
-        return result.scalar_one_or_none()
-
-    @staticmethod
-    async def delete_session(db: AsyncSession, session_id: str) -> None:
-        """删除会话
-
-        Args:
-            db: 数据库会话
-            session_id: 会话ID
-        """
-        session = await SessionRepository.get_session(db, session_id)
-        if session:
-            await db.delete(session)
-            await db.commit()
