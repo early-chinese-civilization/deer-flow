@@ -14,9 +14,9 @@ import uuid
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
+import app.gateway.services as gateway_services
 from app.gateway.deps import get_checkpointer, get_run_manager, get_stream_bridge
 from app.gateway.routers.thread_runs import RunCreateRequest
-from app.gateway.services import sse_consumer, start_run
 from deerflow.runtime import serialize_channel_values
 
 logger = logging.getLogger(__name__)
@@ -42,10 +42,10 @@ async def stateless_stream(body: RunCreateRequest, request: Request) -> Streamin
     thread_id = _resolve_thread_id(body)
     bridge = get_stream_bridge(request)
     run_mgr = get_run_manager(request)
-    record = await start_run(body, thread_id, request)
+    record = await gateway_services.start_run(body, thread_id, request)
 
     return StreamingResponse(
-        sse_consumer(bridge, record, request, run_mgr),
+        gateway_services.sse_consumer(bridge, record, request, run_mgr),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -64,7 +64,7 @@ async def stateless_wait(body: RunCreateRequest, request: Request) -> dict:
     Otherwise a new temporary thread is created.
     """
     thread_id = _resolve_thread_id(body)
-    record = await start_run(body, thread_id, request)
+    record = await gateway_services.start_run(body, thread_id, request)
 
     if record.task is not None:
         try:

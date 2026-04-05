@@ -32,9 +32,9 @@ export function getLangGraphBaseURL(isMock?: boolean) {
   } else {
     // LangGraph SDK requires a full URL, construct it from current origin
     if (typeof window !== "undefined") {
-      return `${window.location.origin}/api/langgraph`;
+      return `${window.location.origin}/api/langgraph-compat`;
     }
     // Fallback for SSR
-    return "http://localhost:2026/api/langgraph";
+    return "http://localhost:2026/api/langgraph-compat";
   }
 }

@@ -17,7 +17,9 @@ from typing import Any
 from fastapi import HTTPException, Request
 from langchain_core.messages import HumanMessage
 
+from app.gateway.db.engine import get_db_session
 from app.gateway.deps import get_checkpointer, get_run_manager, get_store, get_stream_bridge
+from app.gateway.services.message_mirror import mirror_messages_from_stream
 from deerflow.runtime import (
     END_SENTINEL,
     HEARTBEAT_SENTINEL,
@@ -187,6 +189,29 @@ async def _upsert_thread_in_store(store, thread_id: str, metadata: dict | None) 
         logger.warning("Failed to upsert thread %s in store (non-fatal)", thread_id)
 
 
+async def mirror_stream_event_messages(
+    *,
+    thread_id: str,
+    event: str,
+    data: Any,
+) -> int:
+    """Mirror a single SSE event with an isolated DB session.
+
+    Each mirror attempt uses its own session so the SSE consumer never shares an
+    ``AsyncSession`` across concurrent events or long-lived stream handling.
+    """
+    if event != "values":
+        return 0
+
+    async with get_db_session() as db:
+        return await mirror_messages_from_stream(
+            db=db,
+            thread_id=thread_id,
+            event=event,
+            data=data,
+        )
+
+
 async def _sync_thread_title_after_run(
     run_task: asyncio.Task,
     thread_id: str,
@@ -344,6 +369,8 @@ async def sse_consumer(
     The ``finally`` block implements ``on_disconnect`` semantics:
     - ``cancel``: abort the background task on client disconnect.
     - ``continue``: let the task run; events are discarded.
+
+    Also mirrors user-visible messages to the database.
     """
     try:
         async for entry in bridge.subscribe(record.run_id):
@@ -357,6 +384,18 @@ async def sse_consumer(
             if entry is END_SENTINEL:
                 yield format_sse("end", None, event_id=entry.id or None)
                 return
+
+            # Mirror only the latest ``values.messages`` snapshot. Partial
+            # chunk events are not the product source of truth.
+            if entry.event == "values":
+                try:
+                    await mirror_stream_event_messages(
+                        thread_id=record.thread_id,
+                        event=entry.event,
+                        data=entry.data,
+                    )
+                except Exception:
+                    logger.debug("Message mirroring failed (non-fatal)", exc_info=True)
 
             yield format_sse(entry.event, entry.data, event_id=entry.id or None)
 

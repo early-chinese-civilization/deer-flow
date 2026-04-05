@@ -15,12 +15,21 @@ import asyncio
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.deps import get_checkpointer, get_run_manager, get_stream_bridge
-from app.gateway.services import sse_consumer, start_run
+import app.gateway.services as gateway_services
+from app.gateway.db.models import User
+from app.gateway.deps import (
+    get_checkpointer,
+    get_current_user_optional_no_db,
+    get_db_optional,
+    get_run_manager,
+    get_stream_bridge,
+)
+from app.gateway.services.ownership import require_thread_access
 from deerflow.runtime import RunRecord, serialize_channel_values
 
 logger = logging.getLogger(__name__)
@@ -92,26 +101,42 @@ def _record_to_response(record: RunRecord) -> RunResponse:
 
 
 @router.post("/{thread_id}/runs", response_model=RunResponse)
-async def create_run(thread_id: str, body: RunCreateRequest, request: Request) -> RunResponse:
+async def create_run(
+    thread_id: str,
+    body: RunCreateRequest,
+    request: Request,
+    current_user: User | None = Depends(get_current_user_optional_no_db),
+    db: AsyncSession | None = Depends(get_db_optional),
+) -> RunResponse:
     """Create a background run (returns immediately)."""
-    record = await start_run(body, thread_id, request)
+    await require_thread_access(db=db, thread_id=thread_id, current_user=current_user)
+
+    record = await gateway_services.start_run(body, thread_id, request)
     return _record_to_response(record)
 
 
 @router.post("/{thread_id}/runs/stream")
-async def stream_run(thread_id: str, body: RunCreateRequest, request: Request) -> StreamingResponse:
+async def stream_run(
+    thread_id: str,
+    body: RunCreateRequest,
+    request: Request,
+    current_user: User | None = Depends(get_current_user_optional_no_db),
+    db: AsyncSession | None = Depends(get_db_optional),
+) -> StreamingResponse:
     """Create a run and stream events via SSE.
 
     The response includes a ``Content-Location`` header with the run's
     resource URL, matching the LangGraph Platform protocol.  The
     ``useStream`` React hook uses this to extract run metadata.
     """
+    await require_thread_access(db=db, thread_id=thread_id, current_user=current_user)
+
     bridge = get_stream_bridge(request)
     run_mgr = get_run_manager(request)
-    record = await start_run(body, thread_id, request)
+    record = await gateway_services.start_run(body, thread_id, request)
 
     return StreamingResponse(
-        sse_consumer(bridge, record, request, run_mgr),
+        gateway_services.sse_consumer(bridge, record, request, run_mgr),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -127,7 +152,7 @@ async def stream_run(thread_id: str, body: RunCreateRequest, request: Request) -
 @router.post("/{thread_id}/runs/wait", response_model=dict)
 async def wait_run(thread_id: str, body: RunCreateRequest, request: Request) -> dict:
     """Create a run and block until it completes, returning the final state."""
-    record = await start_run(body, thread_id, request)
+    record = await gateway_services.start_run(body, thread_id, request)
 
     if record.task is not None:
         try:
@@ -214,7 +239,7 @@ async def join_run(thread_id: str, run_id: str, request: Request) -> StreamingRe
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
     return StreamingResponse(
-        sse_consumer(bridge, record, request, run_mgr),
+        gateway_services.sse_consumer(bridge, record, request, run_mgr),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -256,7 +281,7 @@ async def stream_existing_run(
 
     bridge = get_stream_bridge(request)
     return StreamingResponse(
-        sse_consumer(bridge, record, request, run_mgr),
+        gateway_services.sse_consumer(bridge, record, request, run_mgr),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -17,10 +17,14 @@ import time
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.deps import get_checkpointer, get_store
+from app.gateway.db.models import User
+from app.gateway.db.repository import ChatRepository
+from app.gateway.deps import get_checkpointer, get_current_user_optional_no_db, get_db_optional, get_store
+from app.gateway.services.ownership import check_chat_access, require_thread_access
 from deerflow.config.paths import Paths, get_paths
 from deerflow.runtime import serialize_channel_values
 
@@ -215,12 +219,26 @@ def _derive_thread_status(checkpoint_tuple) -> str:
 
 
 @router.delete("/{thread_id}", response_model=ThreadDeleteResponse)
-async def delete_thread_data(thread_id: str, request: Request) -> ThreadDeleteResponse:
+async def delete_thread_data(
+    thread_id: str,
+    request: Request,
+    current_user: User | None = Depends(get_current_user_optional_no_db),
+    db: AsyncSession | None = Depends(get_db_optional),
+) -> ThreadDeleteResponse:
     """Delete local persisted filesystem data for a thread.
 
     Cleans DeerFlow-managed thread directories, removes checkpoint data,
     and removes the thread record from the Store.
     """
+    # Check ownership if database is available
+    if db is not None:
+        allowed, error_msg = await check_chat_access(db, thread_id, current_user)
+        if not allowed:
+            raise HTTPException(status_code=403, detail=error_msg)
+
+        # Delete chat record (cascades to messages)
+        await ChatRepository.delete_chat(db, thread_id)
+
     # Clean local filesystem
     response = _delete_thread_data(thread_id)
 
@@ -245,7 +263,12 @@ async def delete_thread_data(thread_id: str, request: Request) -> ThreadDeleteRe
 
 
 @router.post("", response_model=ThreadResponse)
-async def create_thread(body: ThreadCreateRequest, request: Request) -> ThreadResponse:
+async def create_thread(
+    body: ThreadCreateRequest,
+    request: Request,
+    current_user: User | None = Depends(get_current_user_optional_no_db),
+    db: AsyncSession | None = Depends(get_db_optional),
+) -> ThreadResponse:
     """Create a new thread.
 
     The thread record is written to the Store (for fast listing) and an
@@ -268,6 +291,21 @@ async def create_thread(body: ThreadCreateRequest, request: Request) -> ThreadRe
                 updated_at=str(existing_record.get("updated_at", "")),
                 metadata=existing_record.get("metadata", {}),
             )
+
+    # Create chat record if user is logged in
+    if current_user is not None and db is not None:
+        try:
+            import uuid as uuid_module
+            await ChatRepository.create_chat(
+                db=db,
+                thread_id=thread_id,
+                owner_user_id=current_user.id,
+                workspace_id=uuid_module.uuid4(),  # Auto-generate workspace for v1
+                status="idle",
+            )
+        except Exception:
+            logger.exception("Failed to create chat record for thread %s", thread_id)
+            raise HTTPException(status_code=500, detail="Failed to create chat record")
 
     # Write thread record to Store
     if store is not None:
@@ -315,7 +353,12 @@ async def create_thread(body: ThreadCreateRequest, request: Request) -> ThreadRe
 
 
 @router.post("/search", response_model=list[ThreadResponse])
-async def search_threads(body: ThreadSearchRequest, request: Request) -> list[ThreadResponse]:
+async def search_threads(
+    body: ThreadSearchRequest,
+    request: Request,
+    current_user: User | None = Depends(get_current_user_optional_no_db),
+    db: AsyncSession | None = Depends(get_db_optional),
+) -> list[ThreadResponse]:
     """Search and list threads.
 
     Two-phase approach:
@@ -330,6 +373,9 @@ async def search_threads(body: ThreadSearchRequest, request: Request) -> list[Th
     newly found thread is immediately written to the Store so that the next
     search skips Phase 2 for that thread — the Store converges to a full
     index over time without a one-shot migration job.
+
+    **Phase 2 ownership filtering**: Only returns threads owned by current_user
+    or legacy threads (no chat record).
     """
     store = get_store(request)
     checkpointer = get_checkpointer(request)
@@ -348,8 +394,19 @@ async def search_threads(body: ThreadSearchRequest, request: Request) -> list[Th
 
         for item in items:
             val = item.value
-            merged[val["thread_id"]] = ThreadResponse(
-                thread_id=val["thread_id"],
+            thread_id = val["thread_id"]
+
+            # Filter by ownership if database is available
+            if db is not None:
+                chat = await ChatRepository.get_chat_by_thread_id(db, thread_id)
+                if chat is not None:
+                    # Chat record exists - check ownership
+                    if current_user is None or chat.owner_user_id != current_user.id:
+                        continue
+                # else: legacy thread, include for backward compat
+
+            merged[thread_id] = ThreadResponse(
+                thread_id=thread_id,
                 status=val.get("status", "idle"),
                 created_at=str(val.get("created_at", "")),
                 updated_at=str(val.get("updated_at", "")),
@@ -372,6 +429,15 @@ async def search_threads(body: ThreadSearchRequest, request: Request) -> list[Th
             # Skip sub-graph checkpoints (checkpoint_ns is non-empty for those)
             if cfg.get("configurable", {}).get("checkpoint_ns", ""):
                 continue
+
+            # Filter by ownership if database is available
+            if db is not None:
+                chat = await ChatRepository.get_chat_by_thread_id(db, thread_id)
+                if chat is not None:
+                    # Chat record exists - check ownership
+                    if current_user is None or chat.owner_user_id != current_user.id:
+                        continue
+                # else: legacy thread, include for backward compat
 
             ckpt_meta = getattr(checkpoint_tuple, "metadata", {}) or {}
             # Strip LangGraph internal keys from the user-visible metadata dict
@@ -420,8 +486,20 @@ async def search_threads(body: ThreadSearchRequest, request: Request) -> list[Th
 
 
 @router.patch("/{thread_id}", response_model=ThreadResponse)
-async def patch_thread(thread_id: str, body: ThreadPatchRequest, request: Request) -> ThreadResponse:
+async def patch_thread(
+    thread_id: str,
+    body: ThreadPatchRequest,
+    request: Request,
+    current_user: User | None = Depends(get_current_user_optional_no_db),
+    db: AsyncSession | None = Depends(get_db_optional),
+) -> ThreadResponse:
     """Merge metadata into a thread record."""
+    # Check ownership if database is available
+    if db is not None:
+        allowed, error_msg = await check_chat_access(db, thread_id, current_user)
+        if not allowed:
+            raise HTTPException(status_code=403, detail=error_msg)
+
     store = get_store(request)
     if store is None:
         raise HTTPException(status_code=503, detail="Store not available")
@@ -451,13 +529,21 @@ async def patch_thread(thread_id: str, body: ThreadPatchRequest, request: Reques
 
 
 @router.get("/{thread_id}", response_model=ThreadResponse)
-async def get_thread(thread_id: str, request: Request) -> ThreadResponse:
+async def get_thread(
+    thread_id: str,
+    request: Request,
+    current_user: User | None = Depends(get_current_user_optional_no_db),
+    db: AsyncSession | None = Depends(get_db_optional),
+) -> ThreadResponse:
     """Get thread info.
 
     Reads metadata from the Store and derives the accurate execution
     status from the checkpointer.  Falls back to the checkpointer alone
     for threads that pre-date Store adoption (backward compat).
     """
+    # Check ownership if database is available
+    await require_thread_access(db=db, thread_id=thread_id, current_user=current_user)
+
     store = get_store(request)
     checkpointer = get_checkpointer(request)
 
@@ -506,12 +592,18 @@ async def get_thread(thread_id: str, request: Request) -> ThreadResponse:
 
 
 @router.get("/{thread_id}/state", response_model=ThreadStateResponse)
-async def get_thread_state(thread_id: str, request: Request) -> ThreadStateResponse:
+async def get_thread_state(
+    thread_id: str,
+    request: Request,
+    current_user: User | None = Depends(get_current_user_optional_no_db),
+    db: AsyncSession | None = Depends(get_db_optional),
+) -> ThreadStateResponse:
     """Get the latest state snapshot for a thread.
 
     Channel values are serialized to ensure LangChain message objects
     are converted to JSON-safe dicts.
     """
+    await require_thread_access(db=db, thread_id=thread_id, current_user=current_user)
     checkpointer = get_checkpointer(request)
 
     config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
@@ -638,8 +730,15 @@ async def update_thread_state(thread_id: str, body: ThreadStateUpdateRequest, re
 
 
 @router.post("/{thread_id}/history", response_model=list[HistoryEntry])
-async def get_thread_history(thread_id: str, body: ThreadHistoryRequest, request: Request) -> list[HistoryEntry]:
+async def get_thread_history(
+    thread_id: str,
+    body: ThreadHistoryRequest,
+    request: Request,
+    current_user: User | None = Depends(get_current_user_optional_no_db),
+    db: AsyncSession | None = Depends(get_db_optional),
+) -> list[HistoryEntry]:
     """Get checkpoint history for a thread."""
+    await require_thread_access(db=db, thread_id=thread_id, current_user=current_user)
     checkpointer = get_checkpointer(request)
 
     config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
