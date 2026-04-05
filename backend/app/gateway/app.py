@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.gateway.auth import routes as auth_routes
 from app.gateway.config import get_gateway_config
 from app.gateway.deps import langgraph_runtime
 from app.gateway.routers import (
@@ -21,7 +22,6 @@ from app.gateway.routers import (
     threads,
     uploads,
 )
-from app.gateway.auth import routes as auth_routes  # 导入认证路由
 from deerflow.config.app_config import get_app_config
 
 # Configure logging
@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.exception(error_msg)
         raise RuntimeError(error_msg) from e
     config = get_gateway_config()
-    logger.info(f"Starting API Gateway on {config.host}:{config.port}")
+    logger.info("Starting API Gateway on %s:%s", config.host, config.port)
 
     # Initialize LangGraph runtime components (StreamBridge, RunManager, checkpointer, store)
     async with langgraph_runtime(app):

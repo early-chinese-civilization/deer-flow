@@ -1,5 +1,9 @@
 """数据访问层。"""
 
+from __future__ import annotations
+
+from typing import Any
+
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +13,28 @@ from app.gateway.db.models import User
 
 class UserRepository:
     """用户数据访问层"""
+
+    @staticmethod
+    def _build_user_values(
+        *,
+        external_auth_id: str,
+        username: str,
+        display_name: str,
+        email: str | None,
+        given_name: str | None,
+        family_name: str | None,
+        email_verified: bool,
+    ) -> dict[str, Any]:
+        """统一构造 users 表写入字段。"""
+        return {
+            "external_auth_id": external_auth_id,
+            "username": username,
+            "display_name": display_name,
+            "email": email,
+            "given_name": given_name,
+            "family_name": family_name,
+            "email_verified": email_verified,
+        }
 
     @staticmethod
     async def upsert_user(
@@ -38,7 +64,7 @@ class UserRepository:
         Returns:
             User 对象
         """
-        stmt = insert(User).values(
+        insert_values = UserRepository._build_user_values(
             external_auth_id=external_auth_id,
             username=username,
             display_name=display_name,
@@ -47,27 +73,24 @@ class UserRepository:
             family_name=family_name,
             email_verified=email_verified,
         )
+        update_values = {
+            key: value
+            for key, value in insert_values.items()
+            if key != "external_auth_id"
+        }
 
-        # 如果冲突则更新
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["external_auth_id"],
-            set_={
-                "username": username,
-                "display_name": display_name,
-                "email": email,
-                "given_name": given_name,
-                "family_name": family_name,
-                "email_verified": email_verified,
-            },
+        stmt = (
+            insert(User)
+            .values(**insert_values)
+            .on_conflict_do_update(
+                index_elements=["external_auth_id"],
+                set_=update_values,
+            )
+            .returning(User)
         )
 
-        await db.execute(stmt)
+        result = await db.execute(stmt)
         await db.commit()
-
-        # 查询并返回用户
-        result = await db.execute(
-            select(User).where(User.external_auth_id == external_auth_id)
-        )
         return result.scalar_one()
 
     @staticmethod

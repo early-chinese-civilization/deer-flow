@@ -1,10 +1,12 @@
-"""Keycloak OpenID Connect 客户端
+"""Keycloak OpenID Connect 客户端。"""
 
-实现 Authorization Code + PKCE 流程（Public Client）。
-"""
+from __future__ import annotations
+
 import logging
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
@@ -12,9 +14,10 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(slots=True)
 class TokenResponse:
-    """Token 响应"""
+    """Token 响应。"""
+
     access_token: str
     expires_in: int
     refresh_token: str
@@ -24,28 +27,30 @@ class TokenResponse:
     scope: str
 
 
-@dataclass
+@dataclass(slots=True)
 class KeycloakUserInfo:
-    """Keycloak 用户信息"""
-    sub: str                              # Keycloak 用户标识
-    name: str                             # 全名
-    preferred_username: str               # 用户名
-    given_name: str | None = None         # 名
-    family_name: str | None = None        # 姓
-    email: str | None = None              # 邮箱
-    email_verified: bool = False          # 邮箱是否验证
+    """Keycloak 用户信息。"""
+
+    sub: str
+    name: str
+    preferred_username: str
+    given_name: str | None = None
+    family_name: str | None = None
+    email: str | None = None
+    email_verified: bool = False
 
 
 class KeycloakError(Exception):
-    """Keycloak 错误"""
-    def __init__(self, message: str, status: int, detail: str | None = None):
+    """Keycloak 错误。"""
+
+    def __init__(self, message: str, status: int, detail: str | None = None) -> None:
         super().__init__(message)
         self.status = status
         self.detail = detail
 
 
 def _is_tls_insecure() -> bool:
-    """仅在显式开启时跳过 Keycloak TLS 校验，方便本地开发。"""
+    """仅在显式开启时跳过 Keycloak TLS 校验。"""
     return os.getenv("KEYCLOAK_TLS_INSECURE", "false").strip().lower() in {
         "1",
         "true",
@@ -60,19 +65,9 @@ def _get_httpx_verify() -> bool:
 
 
 class KeycloakClient:
-    """Keycloak 客户端（Authorization Code + PKCE）
+    """Keycloak 客户端。"""
 
-    默认按 public client 运行；如果配置了 client_secret，也兼容 confidential client。
-    """
-
-    def __init__(self):
-        """初始化 Keycloak 客户端
-
-        从环境变量读取配置：
-        - KEYCLOAK_URL: Keycloak 服务器地址
-        - KEYCLOAK_REALM: Realm 名称
-        - KEYCLOAK_CLIENT_ID: Client ID
-        """
+    def __init__(self) -> None:
         self.url = os.getenv("KEYCLOAK_URL", "")
         self.realm = os.getenv("KEYCLOAK_REALM", "")
         self.client_id = os.getenv("KEYCLOAK_CLIENT_ID", "")
@@ -80,7 +75,10 @@ class KeycloakClient:
         self.auth_url = f"{self.url}/realms/{self.realm}/protocol/openid-connect"
 
         if not all([self.url, self.realm, self.client_id]):
-            raise ValueError("Keycloak configuration incomplete: KEYCLOAK_URL, KEYCLOAK_REALM, KEYCLOAK_CLIENT_ID are required")
+            raise ValueError(
+                "Keycloak configuration incomplete: "
+                "KEYCLOAK_URL, KEYCLOAK_REALM, KEYCLOAK_CLIENT_ID are required"
+            )
 
         logger.info(
             "Keycloak client configured: realm=%s client_id=%s has_client_secret=%s tls_insecure=%s",
@@ -92,22 +90,13 @@ class KeycloakClient:
 
     def build_auth_url(
         self,
+        *,
         redirect_uri: str,
         state: str,
         code_challenge: str,
-        code_challenge_method: str = "S256"
+        code_challenge_method: str = "S256",
     ) -> str:
-        """构造授权 URL（PKCE）
-
-        Args:
-            redirect_uri: 回调地址
-            state: State 参数（包含 nonce 和 returnTo）
-            code_challenge: PKCE code_challenge
-            code_challenge_method: PKCE 方法（默认 S256）
-
-        Returns:
-            Keycloak 授权 URL
-        """
+        """构造授权 URL。"""
         params = {
             "response_type": "code",
             "client_id": self.client_id,
@@ -121,18 +110,11 @@ class KeycloakClient:
 
     def build_logout_url(
         self,
+        *,
         id_token_hint: str | None,
-        post_logout_redirect_uri: str
+        post_logout_redirect_uri: str,
     ) -> str:
-        """构造登出 URL
-
-        Args:
-            id_token_hint: ID token（用于识别会话）
-            post_logout_redirect_uri: 登出后跳转地址
-
-        Returns:
-            Keycloak 登出 URL
-        """
+        """构造登出 URL。"""
         params = {
             "client_id": self.client_id,
             "post_logout_redirect_uri": post_logout_redirect_uri,
@@ -175,7 +157,12 @@ class KeycloakClient:
         )
 
     @classmethod
-    def _raise_for_unsuccessful_response(cls, response: httpx.Response, *, action: str) -> None:
+    def _raise_for_unsuccessful_response(
+        cls,
+        response: httpx.Response,
+        *,
+        action: str,
+    ) -> None:
         """统一处理 Keycloak 非成功响应。"""
         if response.is_success:
             return
@@ -186,141 +173,138 @@ class KeycloakClient:
             cls._read_error_detail(response),
         )
 
+    @staticmethod
+    def _read_json_payload(response: httpx.Response, *, action: str) -> dict[str, Any]:
+        """统一解析成功响应 JSON，避免每个入口自己处理异常。"""
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise KeycloakError(
+                f"{action} failed: invalid JSON response",
+                502,
+                response.text.strip() or None,
+            ) from exc
+        if not isinstance(payload, dict):
+            raise KeycloakError(
+                f"{action} failed: invalid JSON payload",
+                502,
+                response.text.strip() or None,
+            )
+        return payload
+
+    async def _post_form(
+        self,
+        *,
+        action: str,
+        path: str,
+        data: dict[str, str],
+    ) -> dict[str, Any]:
+        """执行 form POST，并返回 JSON 响应。"""
+        try:
+            async with httpx.AsyncClient(verify=_get_httpx_verify(), timeout=10.0) as client:
+                response = await client.post(
+                    f"{self.auth_url}/{path}",
+                    data=self._build_token_request_data(data),
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+        except httpx.HTTPError as exc:
+            logger.error("%s transport failed", action, exc_info=exc)
+            raise KeycloakError("Keycloak upstream unavailable", 503, str(exc)) from exc
+
+        self._raise_for_unsuccessful_response(response, action=action)
+        return self._read_json_payload(response, action=action)
+
+    async def _get_json(
+        self,
+        *,
+        action: str,
+        path: str,
+        headers: Mapping[str, str],
+    ) -> dict[str, Any]:
+        """执行 GET 并返回 JSON 响应。"""
+        try:
+            async with httpx.AsyncClient(verify=_get_httpx_verify(), timeout=10.0) as client:
+                response = await client.get(f"{self.auth_url}/{path}", headers=dict(headers))
+        except httpx.HTTPError as exc:
+            logger.error("%s transport failed", action, exc_info=exc)
+            raise KeycloakError("Keycloak upstream unavailable", 503, str(exc)) from exc
+
+        self._raise_for_unsuccessful_response(response, action=action)
+        return self._read_json_payload(response, action=action)
+
+    @staticmethod
+    def _parse_token_response(payload: Mapping[str, Any]) -> TokenResponse:
+        """把 token JSON 响应收口到 dataclass。"""
+        return TokenResponse(
+            access_token=str(payload["access_token"]),
+            expires_in=int(payload["expires_in"]),
+            refresh_token=str(payload["refresh_token"]),
+            refresh_expires_in=int(payload["refresh_expires_in"]),
+            token_type=str(payload["token_type"]),
+            id_token=str(payload["id_token"]),
+            scope=str(payload["scope"]),
+        )
+
+    @staticmethod
+    def _parse_user_info(payload: Mapping[str, Any]) -> KeycloakUserInfo:
+        """把 userinfo JSON 响应收口到 dataclass。"""
+        return KeycloakUserInfo(
+            sub=str(payload["sub"]),
+            name=str(payload.get("name", "")),
+            preferred_username=str(payload.get("preferred_username", "")),
+            given_name=payload.get("given_name"),
+            family_name=payload.get("family_name"),
+            email=payload.get("email"),
+            email_verified=bool(payload.get("email_verified", False)),
+        )
+
     async def exchange_code_for_tokens(
         self,
+        *,
         code: str,
         redirect_uri: str,
-        code_verifier: str
+        code_verifier: str,
     ) -> TokenResponse:
-        """交换授权码获取 token（PKCE）
-
-        Args:
-            code: 授权码
-            redirect_uri: 回调地址（必须与授权时一致）
-            code_verifier: PKCE code_verifier
-
-        Returns:
-            TokenResponse 对象
-
-        Raises:
-            KeycloakError: 如果交换失败
-        """
-        try:
-            async with httpx.AsyncClient(verify=_get_httpx_verify(), timeout=10.0) as client:
-                response = await client.post(
-                    f"{self.auth_url}/token",
-                    data=self._build_token_request_data({
-                        "grant_type": "authorization_code",
-                        "code": code,
-                        "redirect_uri": redirect_uri,
-                        "code_verifier": code_verifier,  # PKCE 验证
-                    }),
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
-                )
-        except httpx.HTTPError as exc:
-            logger.error("Keycloak token exchange transport failed", exc_info=exc)
-            raise KeycloakError("Keycloak upstream unavailable", 503, str(exc)) from exc
-
-        self._raise_for_unsuccessful_response(response, action="Token exchange")
-
-        # Keycloak 可能返回额外字段（如 not-before-policy），只提取需要的字段
-        data = response.json()
-        return TokenResponse(
-            access_token=data["access_token"],
-            expires_in=data["expires_in"],
-            refresh_token=data["refresh_token"],
-            refresh_expires_in=data["refresh_expires_in"],
-            token_type=data["token_type"],
-            id_token=data["id_token"],
-            scope=data["scope"],
+        """交换授权码获取 token。"""
+        payload = await self._post_form(
+            action="Token exchange",
+            path="token",
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "code_verifier": code_verifier,
+            },
         )
+        return self._parse_token_response(payload)
 
     async def refresh_access_token(self, refresh_token: str) -> TokenResponse:
-        """刷新 access token
-
-        Args:
-            refresh_token: Refresh token
-
-        Returns:
-            TokenResponse 对象（包含新的 access_token 和 refresh_token）
-
-        Raises:
-            KeycloakError: 如果刷新失败
-        """
-        try:
-            async with httpx.AsyncClient(verify=_get_httpx_verify(), timeout=10.0) as client:
-                response = await client.post(
-                    f"{self.auth_url}/token",
-                    data=self._build_token_request_data({
-                        "grant_type": "refresh_token",
-                        "refresh_token": refresh_token,
-                    }),
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
-                )
-        except httpx.HTTPError as exc:
-            logger.error("Keycloak token refresh transport failed", exc_info=exc)
-            raise KeycloakError("Keycloak upstream unavailable", 503, str(exc)) from exc
-
-        self._raise_for_unsuccessful_response(response, action="Token refresh")
-
-        # 刷新接口同样可能返回额外字段，避免 dataclass 直接解包失败
-        data = response.json()
-        return TokenResponse(
-            access_token=data["access_token"],
-            expires_in=data["expires_in"],
-            refresh_token=data["refresh_token"],
-            refresh_expires_in=data["refresh_expires_in"],
-            token_type=data["token_type"],
-            id_token=data["id_token"],
-            scope=data["scope"],
+        """刷新 access token。"""
+        payload = await self._post_form(
+            action="Token refresh",
+            path="token",
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            },
         )
+        return self._parse_token_response(payload)
 
     async def fetch_user_info(self, access_token: str) -> KeycloakUserInfo:
-        """获取用户信息
-
-        Args:
-            access_token: Access token
-
-        Returns:
-            KeycloakUserInfo 对象
-
-        Raises:
-            KeycloakError: 如果获取失败
-        """
-        try:
-            async with httpx.AsyncClient(verify=_get_httpx_verify(), timeout=10.0) as client:
-                response = await client.get(
-                    f"{self.auth_url}/userinfo",
-                    headers={"Authorization": f"Bearer {access_token}"},
-                )
-        except httpx.HTTPError as exc:
-            logger.error("Keycloak userinfo transport failed", exc_info=exc)
-            raise KeycloakError("Keycloak upstream unavailable", 503, str(exc)) from exc
-
-        self._raise_for_unsuccessful_response(response, action="Fetch userinfo")
-
-        data = response.json()
-        return KeycloakUserInfo(
-            sub=data["sub"],
-            name=data.get("name", ""),
-            preferred_username=data.get("preferred_username", ""),
-            given_name=data.get("given_name"),
-            family_name=data.get("family_name"),
-            email=data.get("email"),
-            email_verified=data.get("email_verified", False),
+        """获取用户信息。"""
+        payload = await self._get_json(
+            action="Fetch userinfo",
+            path="userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
         )
+        return self._parse_user_info(payload)
 
 
-# 全局单例
 _keycloak_client: KeycloakClient | None = None
 
 
 def get_keycloak_client() -> KeycloakClient:
-    """获取 Keycloak 客户端单例
-
-    Returns:
-        KeycloakClient 实例
-    """
+    """获取 Keycloak 客户端单例。"""
     global _keycloak_client
     if _keycloak_client is None:
         _keycloak_client = KeycloakClient()

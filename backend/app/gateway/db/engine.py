@@ -1,10 +1,10 @@
-"""数据库引擎和会话管理
+"""数据库引擎和会话管理。"""
 
-提供全局数据库引擎和会话工厂，支持异步操作。
-"""
+from __future__ import annotations
+
 import os
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -16,6 +16,17 @@ from sqlalchemy.ext.asyncio import (
 # 全局引擎和会话工厂
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
+
+
+def _normalize_database_url(url: str) -> str:
+    """把同步风格的 PostgreSQL URL 标准化成 asyncpg 形式。"""
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    if not url.startswith("postgresql+asyncpg://"):
+        return f"postgresql+asyncpg://{url}"
+    return url
 
 
 def get_database_url() -> str:
@@ -31,15 +42,7 @@ def get_database_url() -> str:
     if not url:
         raise ValueError("DATABASE_URL environment variable is required")
 
-    # 转换为 asyncpg 格式
-    if url.startswith("postgresql://"):
-        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    elif url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql+asyncpg://", 1)
-    elif not url.startswith("postgresql+asyncpg://"):
-        url = f"postgresql+asyncpg://{url}"
-
-    return url
+    return _normalize_database_url(url)
 
 
 def get_engine() -> AsyncEngine:
@@ -52,10 +55,10 @@ def get_engine() -> AsyncEngine:
     if _engine is None:
         _engine = create_async_engine(
             get_database_url(),
-            pool_size=10,              # 连接池大小
-            max_overflow=20,           # 最大溢出连接数
-            pool_pre_ping=True,        # 连接前检查可用性
-            echo=False,                # 不打印 SQL 日志
+            pool_size=10,  # 连接池大小
+            max_overflow=20,  # 最大溢出连接数
+            pool_pre_ping=True,  # 连接前检查可用性
+            echo=False,  # 不打印 SQL 日志
         )
     return _engine
 
@@ -71,7 +74,7 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
         _session_factory = async_sessionmaker(
             get_engine(),
             class_=AsyncSession,
-            expire_on_commit=False,    # 提交后不过期对象
+            expire_on_commit=False,  # 提交后不过期对象
         )
     return _session_factory
 

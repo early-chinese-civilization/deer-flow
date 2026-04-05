@@ -12,9 +12,11 @@ from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.auth.keycloak import KeycloakError
 from app.gateway.auth.service import sync_user_from_access_token
+from app.gateway.db.models import User
 from deerflow.runtime import RunManager, StreamBridge
 
 
@@ -77,7 +79,7 @@ def get_store(request: Request):
 # ---------------------------------------------------------------------------
 
 
-async def get_db() -> AsyncGenerator:
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """获取数据库会话（依赖注入）
 
     使用示例:
@@ -93,8 +95,8 @@ async def get_db() -> AsyncGenerator:
 
 async def get_current_user(
     kc_access_token: str | None = Cookie(default=None),
-    db=Depends(get_db),
-) :
+    db: AsyncSession = Depends(get_db),
+) -> User:
     """获取当前用户（必须登录）
 
     从 HttpOnly `kc_access_token` 实时校验当前用户。
@@ -125,8 +127,8 @@ async def get_current_user(
 
 async def get_current_user_optional(
     kc_access_token: str | None = Cookie(default=None),
-    db=Depends(get_db),
-):
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
     """获取当前用户（可选，不强制登录）
 
     如果未登录或会话无效，返回 None 而不是抛出异常。
