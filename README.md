@@ -219,6 +219,7 @@ make docker-start   # Start services (auto-detects sandbox mode from config.yaml
 ```
 
 `make docker-start` starts `provisioner` only when `config.yaml` uses provisioner mode (`sandbox.use: deerflow.community.aio_sandbox:AioSandboxProvider` with `provisioner_url`).
+In Docker Compose, `gateway` and `langgraph` explicitly receive `DEER_FLOW_SANDBOX_PROVISIONER_URL=http://provisioner:8002`, because `provisioner` is only resolvable inside the Compose network.
 
 Docker builds use the upstream `uv` registry by default. If you need faster mirrors in restricted networks, export `UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple` and `NPM_REGISTRY=https://registry.npmmirror.com` before running `make docker-init` or `make docker-start`.
 
@@ -246,6 +247,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed Docker development guide.
 If you prefer running services locally:
 
 Prerequisite: complete the "Configuration" steps above first (`make config` and model API keys). `make dev` requires a valid configuration file (defaults to `config.yaml` in the project root; can be overridden via `DEER_FLOW_CONFIG_PATH`).
+When using `AioSandboxProvider` with a provisioner during local development, set `DEER_FLOW_SANDBOX_PROVISIONER_URL=http://localhost:8002` in the root `.env`. Do not use `http://provisioner:8002` for `make dev` because that hostname only exists inside Docker Compose.
 On Windows, run the local development flow from Git Bash. Native `cmd.exe` and PowerShell shells are not supported for the bash-based service scripts, and WSL is not guaranteed because some scripts rely on Git for Windows utilities such as `cygpath`.
 
 1. **Check prerequisites**:
@@ -287,6 +289,7 @@ DeerFlow supports multiple sandbox execution modes:
 - **Docker Execution with Kubernetes** (runs sandbox code in Kubernetes pods via provisioner service)
 
 For Docker development, service startup follows `config.yaml` sandbox mode. In Local/Docker modes, `provisioner` is not started.
+`provisioner` is a Docker-network service name, so it only works from inside Docker Compose containers. Use `DEER_FLOW_SANDBOX_PROVISIONER_URL=http://localhost:8002` for local `make dev`, and `http://provisioner:8002` for Docker Compose.
 
 See the [Sandbox Configuration Guide](backend/docs/CONFIGURATION.md#sandbox) to configure your preferred mode.
 
