@@ -3,6 +3,7 @@ import { getPageMap } from "nextra/page-map";
 import { Footer, Layout } from "nextra-theme-docs";
 
 import { Header } from "@/components/landing/header";
+import { WORKSPACE_HOME_PATH } from "@/core/config/home-path";
 import { getLocaleByLang } from "@/core/i18n/locale";
 import "nextra-theme-docs/style.css";
 
@@ -35,7 +36,7 @@ export default async function DocLayout({ children, params }) {
       navbar={
         <Header
           className="relative max-w-full px-10"
-          homeURL="/"
+          homeURL={WORKSPACE_HOME_PATH}
           locale={locale}
         />
       }
