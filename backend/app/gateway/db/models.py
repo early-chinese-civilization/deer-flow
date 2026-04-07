@@ -83,6 +83,21 @@ class Chat(Base):
         default="idle",
         comment="Chat status: idle, busy, interrupted, error",
     )
+    latest_checkpoint_id = Column(
+        String(255),
+        nullable=True,
+        comment="Latest root checkpoint ID from checkpointer",
+    )
+    latest_checkpoint_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Timestamp of latest checkpoint",
+    )
+    projection_synced_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Last successful projection sync timestamp",
+    )
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -105,7 +120,10 @@ class Chat(Base):
         order_by="Message.seq",
     )
 
-    __table_args__ = (Index("ix_chats_owner_updated", "owner_user_id", "updated_at"),)
+    __table_args__ = (
+        Index("ix_chats_owner_updated", "owner_user_id", "updated_at"),
+        Index("ix_chats_projection_lag", "latest_checkpoint_at", "projection_synced_at"),
+    )
 
 
 class Message(Base):
