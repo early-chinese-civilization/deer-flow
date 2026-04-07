@@ -12,7 +12,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 5
+config_version: 6
 
 # ============================================================================
 # Logging
@@ -592,9 +592,11 @@ memory:
 # ============================================================================
 # Checkpointer Configuration
 # ============================================================================
-# Configure state persistence for the embedded DeerFlowClient.
-# The LangGraph Server manages its own state persistence separately
-# via the server infrastructure (this setting does not affect it).
+# Configure state persistence for the embedded DeerFlowClient, LangGraph Server,
+# and the shared long-term memory store.
+# The LangGraph Server uses the same checkpointer/store configuration.
+# The runtime and client read the same checkpointer configuration so local
+# development should keep a lightweight default unless you explicitly want PG.
 #
 # When configured, DeerFlowClient will automatically use this checkpointer,
 # enabling multi-turn conversations to persist across process restarts.
@@ -612,7 +614,7 @@ memory:
 # checkpointer:
 #   type: memory
 #
-# SQLite (file-based, single-process):
+# SQLite (file-based, single-process, recommended local default):
 checkpointer:
   type: sqlite
   connection_string: checkpoints.db
@@ -620,7 +622,7 @@ checkpointer:
 # PostgreSQL (multi-process, production):
 # checkpointer:
 #   type: postgres
-#   connection_string: postgresql://user:password@localhost:5432/deerflow
+#   connection_string: $DEER_FLOW_CHECKPOINTER_DATABASE_URL
 
 # ============================================================================
 # IM Channels Configuration
