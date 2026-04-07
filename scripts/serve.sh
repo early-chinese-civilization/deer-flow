@@ -45,6 +45,7 @@ fi
 
 echo "Stopping existing services if any..."
 pkill -f "langgraph dev" 2>/dev/null || true
+pkill -f "scripts/langgraph_windows.py" 2>/dev/null || true
 pkill -f "uvicorn app.gateway.app:app" 2>/dev/null || true
 pkill -f "next dev" 2>/dev/null || true
 pkill -f "next-server" 2>/dev/null || true
@@ -105,6 +106,7 @@ cleanup() {
     echo "Shutting down services..."
     if [ "${SKIP_LANGGRAPH_SERVER:-0}" != "1" ]; then
         pkill -f "langgraph dev" 2>/dev/null || true
+        pkill -f "scripts/langgraph_windows.py" 2>/dev/null || true
     fi
     pkill -f "uvicorn app.gateway.app:app" 2>/dev/null || true
     pkill -f "next dev" 2>/dev/null || true
@@ -144,7 +146,14 @@ if [ "${SKIP_LANGGRAPH_SERVER:-0}" != "1" ]; then
     # Read log_level from config.yaml, fallback to env var, then to "info"
     CONFIG_LOG_LEVEL=$(grep -m1 '^log_level:' config.yaml 2>/dev/null | awk '{print $2}' | tr -d ' ')
     LANGGRAPH_LOG_LEVEL="${LANGGRAPH_LOG_LEVEL:-${CONFIG_LOG_LEVEL:-info}}"
-    (cd backend && NO_COLOR=1 uv run langgraph dev --no-browser --allow-blocking --server-log-level $LANGGRAPH_LOG_LEVEL $LANGGRAPH_EXTRA_FLAGS > ../logs/langgraph.log 2>&1) &
+
+    # Use Windows-compatible launcher on Windows to fix psycopg event loop issue
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
+        (cd backend && NO_COLOR=1 uv run python scripts/langgraph_windows.py dev --no-browser --allow-blocking --server-log-level $LANGGRAPH_LOG_LEVEL $LANGGRAPH_EXTRA_FLAGS > ../logs/langgraph.log 2>&1) &
+    else
+        (cd backend && NO_COLOR=1 uv run langgraph dev --no-browser --allow-blocking --server-log-level $LANGGRAPH_LOG_LEVEL $LANGGRAPH_EXTRA_FLAGS > ../logs/langgraph.log 2>&1) &
+    fi
+
     ./scripts/wait-for-port.sh 2024 60 "LangGraph" || {
         echo "  See logs/langgraph.log for details"
         tail -20 logs/langgraph.log

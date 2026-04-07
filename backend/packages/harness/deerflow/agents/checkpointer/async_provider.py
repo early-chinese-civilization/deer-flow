@@ -17,11 +17,15 @@ For sync usage see :mod:`deerflow.agents.checkpointer.provider`.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
+import sys
 from collections.abc import AsyncIterator
 
 from langgraph.types import Checkpointer
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 
 from deerflow.agents.checkpointer.provider import (
     POSTGRES_CONN_REQUIRED,
@@ -34,6 +38,33 @@ from deerflow.runtime.store._sqlite_utils import ensure_sqlite_parent_dir, resol
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Windows event loop fix for psycopg
+# ---------------------------------------------------------------------------
+
+
+def _ensure_compatible_event_loop():
+    """Ensure event loop is compatible with psycopg on Windows.
+
+    psycopg requires SelectorEventLoop on Windows, but Python 3.8+ defaults
+    to ProactorEventLoop. This function switches to SelectorEventLoop if needed.
+    """
+    if sys.platform == "win32":
+        try:
+            loop = asyncio.get_running_loop()
+            # Check if we're using ProactorEventLoop
+            if isinstance(loop, asyncio.ProactorEventLoop):
+                logger.warning(
+                    "Detected ProactorEventLoop on Windows. psycopg requires SelectorEventLoop. "
+                    "This should be fixed at application startup by setting the event loop policy."
+                )
+        except RuntimeError:
+            # No running loop yet - set policy for future loops
+            if isinstance(asyncio.get_event_loop_policy(), asyncio.WindowsProactorEventLoopPolicy):
+                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+                logger.info("Set WindowsSelectorEventLoopPolicy for psycopg compatibility")
+
+
+# ---------------------------------------------------------------------------
 # Async factory
 # ---------------------------------------------------------------------------
 
@@ -44,6 +75,7 @@ async def _async_checkpointer(config) -> AsyncIterator[Checkpointer]:
     if config.type == "memory":
         from langgraph.checkpoint.memory import InMemorySaver
 
+        logger.info("Checkpointer: using InMemorySaver (in-process, not persistent)")
         yield InMemorySaver()
         return
 
@@ -57,6 +89,7 @@ async def _async_checkpointer(config) -> AsyncIterator[Checkpointer]:
         ensure_sqlite_parent_dir(conn_str)
         async with AsyncSqliteSaver.from_conn_string(conn_str) as saver:
             await saver.setup()
+            logger.info("Checkpointer: using AsyncSqliteSaver (%s)", conn_str)
             yield saver
         return
 
@@ -69,8 +102,28 @@ async def _async_checkpointer(config) -> AsyncIterator[Checkpointer]:
         if not config.connection_string:
             raise ValueError(POSTGRES_CONN_REQUIRED)
 
-        async with AsyncPostgresSaver.from_conn_string(config.connection_string) as saver:
+        # Ensure compatible event loop on Windows
+        _ensure_compatible_event_loop()
+
+        pool_kwargs = {
+            "autocommit": True,
+            "prepare_threshold": 0,
+            "row_factory": dict_row,
+        }
+        pool = AsyncConnectionPool(
+            config.connection_string,
+            min_size=1,
+            max_size=5,
+            kwargs=pool_kwargs,
+        )
+        async with pool:
+            saver = AsyncPostgresSaver(conn=pool)
             await saver.setup()
+            logger.info(
+                "Checkpointer: using AsyncPostgresSaver with connection pool (min_size=%s, max_size=%s)",
+                1,
+                5,
+            )
             yield saver
         return
 
@@ -98,6 +151,7 @@ async def make_checkpointer() -> AsyncIterator[Checkpointer]:
     if config.checkpointer is None:
         from langgraph.checkpoint.memory import InMemorySaver
 
+        logger.warning("No 'checkpointer' section in config.yaml — using InMemorySaver. Thread state will be lost on server restart. Configure a sqlite or postgres backend for persistence.")
         yield InMemorySaver()
         return
 

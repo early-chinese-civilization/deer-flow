@@ -17,8 +17,10 @@ Usage (e.g. FastAPI lifespan)::
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
+import sys
 from collections.abc import AsyncIterator
 
 from langgraph.store.base import BaseStore
@@ -27,6 +29,25 @@ from deerflow.config.app_config import get_app_config
 from deerflow.runtime.store.provider import POSTGRES_CONN_REQUIRED, POSTGRES_STORE_INSTALL, SQLITE_STORE_INSTALL, ensure_sqlite_parent_dir, resolve_sqlite_conn_str
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_compatible_event_loop() -> None:
+    """Ensure Windows uses SelectorEventLoop for psycopg-backed stores."""
+    if sys.platform != "win32":
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        if isinstance(asyncio.get_event_loop_policy(), asyncio.WindowsProactorEventLoopPolicy):
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+            logger.info("Set WindowsSelectorEventLoopPolicy for psycopg store compatibility")
+        return
+
+    if isinstance(loop, asyncio.ProactorEventLoop):
+        logger.warning(
+            "Detected ProactorEventLoop on Windows. psycopg-backed stores require SelectorEventLoop."
+        )
 
 # ---------------------------------------------------------------------------
 # Internal backend factory
@@ -71,9 +92,19 @@ async def _async_store(config) -> AsyncIterator[BaseStore]:
         if not config.connection_string:
             raise ValueError(POSTGRES_CONN_REQUIRED)
 
-        async with AsyncPostgresStore.from_conn_string(config.connection_string) as store:
+        _ensure_compatible_event_loop()
+        pool_config = {"min_size": 1, "max_size": 5}
+
+        async with AsyncPostgresStore.from_conn_string(
+            config.connection_string,
+            pool_config=pool_config,
+        ) as store:
             await store.setup()
-            logger.info("Store: using AsyncPostgresStore")
+            logger.info(
+                "Store: using AsyncPostgresStore with connection pool (min_size=%s, max_size=%s)",
+                pool_config["min_size"],
+                pool_config["max_size"],
+            )
             yield store
         return
 
