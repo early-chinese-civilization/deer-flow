@@ -2,7 +2,6 @@ import json
 import logging
 
 from fastapi import APIRouter
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from deerflow.models import create_chat_model
@@ -107,7 +106,7 @@ async def generate_suggestions(thread_id: str, request: SuggestionsRequest) -> S
     if not conversation:
         return SuggestionsResponse(suggestions=[])
 
-    system_instruction = (
+    prompt = (
         "You are generating follow-up questions to help the user continue the conversation.\n"
         f"Based on the conversation below, produce EXACTLY {n} short questions the user might ask next.\n"
         "Requirements:\n"
@@ -115,13 +114,14 @@ async def generate_suggestions(thread_id: str, request: SuggestionsRequest) -> S
         "- Questions must be written in the same language as the user.\n"
         "- Keep each question concise (ideally <= 20 words / <= 40 Chinese characters).\n"
         "- Do NOT include numbering, markdown, or any extra text.\n"
-        "- Output MUST be a JSON array of strings only.\n"
+        "- Output MUST be a JSON array of strings only.\n\n"
+        "Conversation:\n"
+        f"{conversation}\n"
     )
-    user_content = f"Conversation Context:\n{conversation}\n\nGenerate {n} follow-up questions"
 
     try:
         model = create_chat_model(name=request.model_name, thinking_enabled=False)
-        response = model.invoke([SystemMessage(content=system_instruction), HumanMessage(content=user_content)])
+        response = model.invoke(prompt)
         raw = _extract_response_text(response.content)
         suggestions = _parse_json_string_list(raw) or []
         cleaned = [s.replace("\n", " ").strip() for s in suggestions if s.strip()]

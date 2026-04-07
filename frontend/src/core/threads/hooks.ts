@@ -32,10 +32,6 @@ export type ThreadStreamOptions = {
   onToolEnd?: (event: ToolEndEvent) => void;
 };
 
-type SendMessageOptions = {
-  additionalKwargs?: Record<string, unknown>;
-};
-
 function getStreamErrorMessage(error: unknown): string {
   if (typeof error === "string" && error.trim()) {
     return error;
@@ -222,7 +218,6 @@ export function useThreadStream({
       threadId: string,
       message: PromptInputMessage,
       extraContext?: Record<string, unknown>,
-      options?: SendMessageOptions,
     ) => {
       if (sendInFlightRef.current) {
         return;
@@ -243,23 +238,17 @@ export function useThreadStream({
         }),
       );
 
-      const hideFromUI = options?.additionalKwargs?.hide_from_ui === true;
-      const optimisticAdditionalKwargs = {
-        ...options?.additionalKwargs,
-        ...(optimisticFiles.length > 0 ? { files: optimisticFiles } : {}),
+      // Create optimistic human message (shown immediately)
+      const optimisticHumanMsg: Message = {
+        type: "human",
+        id: `opt-human-${Date.now()}`,
+        content: text ? [{ type: "text", text }] : "",
+        additional_kwargs:
+          optimisticFiles.length > 0 ? { files: optimisticFiles } : {},
       };
 
-      const newOptimistic: Message[] = [];
-      if (!hideFromUI) {
-        newOptimistic.push({
-          type: "human",
-          id: `opt-human-${Date.now()}`,
-          content: text ? [{ type: "text", text }] : "",
-          additional_kwargs: optimisticAdditionalKwargs,
-        });
-      }
-
-      if (optimisticFiles.length > 0 && !hideFromUI) {
+      const newOptimistic: Message[] = [optimisticHumanMsg];
+      if (optimisticFiles.length > 0) {
         // Mock AI message while files are being uploaded
         newOptimistic.push({
           type: "ai",
@@ -380,12 +369,8 @@ export function useThreadStream({
                     text,
                   },
                 ],
-                additional_kwargs: {
-                  ...options?.additionalKwargs,
-                  ...(filesForSubmit.length > 0
-                    ? { files: filesForSubmit }
-                    : {}),
-                },
+                additional_kwargs:
+                  filesForSubmit.length > 0 ? { files: filesForSubmit } : {},
               },
             ],
           },
