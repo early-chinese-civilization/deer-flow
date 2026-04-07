@@ -13,7 +13,7 @@
 
 ### 1.2 技术栈
 
-- **后端**: FastAPI + SQLAlchemy 2.0 (async) + asyncpg + Alembic
+- **后端**: FastAPI + SQLAlchemy 2.0 (async) + psycopg + Alembic
 - **认证**: Keycloak OpenID Connect
 - **前端**: Next.js 16 + React 19
 
