@@ -1,0 +1,71 @@
+# DeerFlow用户管理阶段6-KnowledgeBase接入
+
+## 1. 本阶段目标
+
+- 建立 Knowledge Base 资源层
+- 建立文件上传与 OSS 存储
+- 建立解析、切分、向量索引与运行时检索
+
+## 2. 前置依赖
+
+- user skills 的业务化和运行时投影已具备基础
+- 用户级 agent / workspace / chat 模型已稳定
+
+## 3. 分层策略
+
+### 6A 资源层
+
+- 建立 `knowledge_bases`
+- 建立 `knowledge_base_files`
+- 建立 `knowledge_base_versions`
+- 建立 `agent_knowledge_bases`
+- 用户可上传自定义文件
+
+### 6B 索引层
+
+- 文件解析
+- 文本切分
+- `knowledge_chunks` 写入 `pgvector`
+
+### 6C 运行时接入
+
+- agent / chat 可绑定 Knowledge Base
+- `chat_knowledge_base_versions` 记录 chat 最终冻结后的 KB 版本集合，属于必须落库的冻结结果
+- Gateway 在运行前组装检索上下文
+
+## 4. 冻结硬规则
+
+- chat 创建或绑定 agent 时，Gateway 必须解析并冻结当时有效的 `knowledge_base_version_ids`
+- 冻结结果必须写入 `agent_snapshot` 与 `chat_knowledge_base_versions`
+- 历史 chat 不跟随后续 Knowledge Base 切换 active version 而漂移
+
+## 5. 为什么 PG 仍然必须保留文件表
+
+- OSS 解决的是文件存储，不解决业务管理
+- 前端仍需要文件列表、状态、失败原因、版本、去重和索引关系
+- 因此 `knowledge_base_files` 不能省略
+
+## 6. 允许修改范围
+
+- `backend/app/**`
+- `frontend/src/**`
+- `backend/tests/**`
+- `plan/**`
+
+## 7. 边界与不做事项
+
+- 本阶段不做高级权限共享模型
+- 本阶段不做复杂的跨 KB 联邦检索
+
+## 8. 风险与注意事项
+
+- 若文件只进 OSS 不落 PG，业务管理层会缺失
+- 若先接入检索再补状态管理，问题定位会非常困难
+
+## 9. 验收动作
+
+- KB 文件可上传到 OSS
+- PG 中可看到文件元数据与处理状态
+- `pgvector` 检索链路可跑通
+- chat / agent 可使用 KB 检索结果
+- `chat_knowledge_base_versions` 已作为冻结结果稳定落库
