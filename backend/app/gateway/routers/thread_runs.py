@@ -30,6 +30,10 @@ from app.gateway.deps import (
     get_stream_bridge,
 )
 from app.gateway.services.ownership import require_thread_access
+from app.gateway.services.runtime_state import (
+    is_runtime_state_unavailable,
+    to_runtime_state_http_exception,
+)
 from deerflow.runtime import RunRecord, serialize_channel_values
 
 logger = logging.getLogger(__name__)
@@ -168,8 +172,15 @@ async def wait_run(thread_id: str, body: RunCreateRequest, request: Request) -> 
             checkpoint = getattr(checkpoint_tuple, "checkpoint", {}) or {}
             channel_values = checkpoint.get("channel_values", {})
             return serialize_channel_values(channel_values)
-    except Exception:
+    except Exception as exc:
+        if is_runtime_state_unavailable(exc):
+            logger.warning(
+                "Runtime state backend unavailable while fetching final state for run %s",
+                record.run_id,
+            )
+            raise to_runtime_state_http_exception(exc) from exc
         logger.exception("Failed to fetch final state for run %s", record.run_id)
+        raise HTTPException(status_code=500, detail="Failed to fetch final run state") from exc
 
     return {"status": record.status.value, "error": record.error}
 

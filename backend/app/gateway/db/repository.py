@@ -243,13 +243,16 @@ class MessageRepository:
         db: AsyncSession,
         thread_id: str | uuid.UUID,
         messages: list[VisibleMessagePayload],
+        *,
+        commit: bool = True,
     ) -> int:
         """Idempotently align a thread's messages with the latest final state."""
         thread_uuid = _as_thread_uuid(thread_id)
 
         if not messages:
             await db.execute(delete(Message).where(Message.thread_id == thread_uuid))
-            await db.commit()
+            if commit:
+                await db.commit()
             return 0
 
         insert_values = [
@@ -280,7 +283,8 @@ class MessageRepository:
                 Message.source_message_id.notin_(source_ids),
             )
         )
-        await db.commit()
+        if commit:
+            await db.commit()
         return len(messages)
 
     @staticmethod

@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4
+
+import pytest
 
 
 def test_format_sse_basic():
@@ -340,3 +346,135 @@ def test_build_run_config_no_request_config():
     config = build_run_config("thread-abc", None, None)
     assert config["configurable"] == {"thread_id": "thread-abc"}
     assert "context" not in config
+
+
+@pytest.mark.anyio
+async def test_project_from_stream_event_updates_chat_title_and_anchor():
+    from app.gateway.services.projection import ProjectionService
+
+    thread_id = str(uuid4())
+    chat = SimpleNamespace(
+        title=None,
+        latest_checkpoint_id=None,
+        latest_checkpoint_at=None,
+        projection_synced_at=None,
+    )
+    db = SimpleNamespace(
+        execute=AsyncMock(),
+        get=AsyncMock(return_value=chat),
+        commit=AsyncMock(),
+        rollback=AsyncMock(),
+    )
+
+    with patch(
+        "app.gateway.services.projection.MessageRepository.sync_visible_messages",
+        AsyncMock(return_value=2),
+    ) as sync_messages:
+        result = await ProjectionService.project_from_stream_event(
+            db=db,
+            thread_id=thread_id,
+            event="values",
+            data={
+                "title": "Projected title",
+                "messages": [
+                    {"id": "m1", "type": "human", "content": "hello"},
+                    {"id": "m2", "type": "ai", "content": "world"},
+                ],
+            },
+            checkpoint_id="ckpt-1",
+        )
+
+    assert sync_messages.await_args.kwargs["commit"] is False
+    assert result["projected"] is True
+    assert chat.title == "Projected title"
+    assert chat.latest_checkpoint_id == "ckpt-1"
+    assert chat.latest_checkpoint_at is not None
+    assert chat.projection_synced_at is not None
+
+
+@pytest.mark.anyio
+async def test_project_from_checkpoint_updates_title_even_without_messages():
+    from app.gateway.services.projection import ProjectionService
+
+    thread_id = str(uuid4())
+    chat = SimpleNamespace(
+        title=None,
+        latest_checkpoint_id=None,
+        latest_checkpoint_at=None,
+        projection_synced_at=None,
+    )
+    db = SimpleNamespace(
+        execute=AsyncMock(),
+        get=AsyncMock(return_value=chat),
+        commit=AsyncMock(),
+        rollback=AsyncMock(),
+    )
+    checkpoint_tuple = SimpleNamespace(
+        config={"configurable": {"thread_id": thread_id, "checkpoint_id": "ckpt-2"}},
+        checkpoint={
+            "ts": "2026-04-06T00:00:00Z",
+            "channel_values": {"title": "Checkpoint title", "messages": []},
+        },
+        metadata={},
+        parent_config=None,
+        pending_writes=[],
+    )
+
+    with patch(
+        "app.gateway.services.projection.MessageRepository.sync_visible_messages",
+        AsyncMock(return_value=0),
+    ) as sync_messages:
+        result = await ProjectionService.project_from_checkpoint(
+            db=db,
+            thread_id=thread_id,
+            checkpoint_tuple=checkpoint_tuple,
+        )
+
+    assert sync_messages.await_args.kwargs["commit"] is False
+    assert result["projected"] is True
+    assert chat.title == "Checkpoint title"
+    assert chat.latest_checkpoint_id == "ckpt-2"
+    assert chat.latest_checkpoint_at is not None
+
+
+@pytest.mark.anyio
+async def test_sync_thread_product_state_after_run_projects_checkpoint_and_updates_status(monkeypatch):
+    from app.gateway.services.runtime import _sync_thread_product_state_after_run
+    from deerflow.runtime import RunStatus
+
+    thread_id = str(uuid4())
+    completed_task = asyncio.get_running_loop().create_future()
+    completed_task.set_result(None)
+    record = SimpleNamespace(thread_id=thread_id, status=RunStatus.success)
+    checkpoint_tuple = SimpleNamespace(
+        config={"configurable": {"thread_id": thread_id, "checkpoint_id": "ckpt-3"}},
+        checkpoint={"channel_values": {"title": "Projected title", "messages": []}},
+        metadata={},
+        parent_config=None,
+        pending_writes=[],
+    )
+
+    class _SessionContext:
+        async def __aenter__(self):
+            return SimpleNamespace()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    project_mock = AsyncMock(return_value={"projected": True})
+    update_chat_mock = AsyncMock()
+
+    monkeypatch.setattr("app.gateway.services.runtime.get_db_session", lambda: _SessionContext())
+    monkeypatch.setattr("app.gateway.services.runtime.ProjectionService.project_from_checkpoint", project_mock)
+    monkeypatch.setattr("app.gateway.services.runtime.ChatRepository.update_chat", update_chat_mock)
+
+    await _sync_thread_product_state_after_run(
+        completed_task,
+        record,
+        SimpleNamespace(aget_tuple=AsyncMock(return_value=checkpoint_tuple)),
+        None,
+    )
+
+    assert project_mock.await_count == 1
+    update_chat_mock.assert_awaited_once()
+    assert update_chat_mock.await_args.kwargs["status"] == "idle"

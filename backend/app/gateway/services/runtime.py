@@ -18,8 +18,9 @@ from fastapi import HTTPException, Request
 from langchain_core.messages import HumanMessage
 
 from app.gateway.db.engine import get_db_session
+from app.gateway.db.repository import ChatRepository
 from app.gateway.deps import get_checkpointer, get_run_manager, get_store, get_stream_bridge
-from app.gateway.services.message_mirror import mirror_messages_from_stream
+from app.gateway.services.projection import ProjectionService
 from deerflow.runtime import (
     END_SENTINEL,
     HEARTBEAT_SENTINEL,
@@ -63,10 +64,7 @@ def format_sse(event: str, data: Any, *, event_id: str | None = None) -> str:
 
 
 def normalize_stream_modes(raw: list[str] | str | None) -> list[str]:
-    """Normalize the stream_mode parameter to a list.
-
-    Default matches what ``useStream`` expects: values + messages-tuple.
-    """
+    """Normalize the stream_mode parameter to a list."""
     if raw is None:
         return ["values"]
     if isinstance(raw, str):
@@ -149,9 +147,9 @@ def build_run_config(
             configurable = {"thread_id": thread_id}
             configurable.update(request_config.get("configurable", {}))
             config["configurable"] = configurable
-        for k, v in request_config.items():
-            if k not in ("configurable", "context"):
-                config[k] = v
+        for key, value in request_config.items():
+            if key not in ("configurable", "context"):
+                config[key] = value
     else:
         config["configurable"] = {"thread_id": thread_id}
 
@@ -161,7 +159,9 @@ def build_run_config(
         if "agent_name" not in config["configurable"]:
             normalized = assistant_id.strip().lower().replace("_", "-")
             if not normalized or not re.fullmatch(r"[a-z0-9-]+", normalized):
-                raise ValueError(f"Invalid assistant_id {assistant_id!r}: must contain only letters, digits, and hyphens after normalization.")
+                raise ValueError(
+                    f"Invalid assistant_id {assistant_id!r}: must contain only letters, digits, and hyphens after normalization."
+                )
             config["configurable"]["agent_name"] = normalized
     if metadata:
         config.setdefault("metadata", {}).update(metadata)
@@ -194,71 +194,97 @@ async def mirror_stream_event_messages(
     thread_id: str,
     event: str,
     data: Any,
-) -> int:
-    """Mirror a single SSE event with an isolated DB session.
+    checkpoint_id: str | None = None,
+) -> dict[str, Any]:
+    """Project a single SSE event using the unified projection service.
 
     Each mirror attempt uses its own session so the SSE consumer never shares an
     ``AsyncSession`` across concurrent events or long-lived stream handling.
     """
     if event != "values":
-        return 0
+        return {"projected": False, "reason": "not_values_event"}
 
     async with get_db_session() as db:
-        return await mirror_messages_from_stream(
+        return await ProjectionService.project_from_stream_event(
             db=db,
             thread_id=thread_id,
             event=event,
             data=data,
+            checkpoint_id=checkpoint_id,
         )
 
 
-async def _sync_thread_title_after_run(
+def _product_thread_status(run_status: RunStatus) -> str:
+    """Map run-manager lifecycle states onto product chat statuses."""
+    if run_status in (RunStatus.pending, RunStatus.running):
+        return "busy"
+    if run_status == RunStatus.interrupted:
+        return "interrupted"
+    if run_status == RunStatus.success:
+        return "idle"
+    return "error"
+
+
+async def _sync_thread_product_state_after_run(
     run_task: asyncio.Task,
-    thread_id: str,
+    record: RunRecord,
     checkpointer: Any,
     store: Any,
 ) -> None:
-    """Wait for *run_task* to finish, then persist the generated title to the Store.
-
-    TitleMiddleware writes the generated title to the LangGraph agent state
-    (checkpointer) but the Gateway's Store record is not updated automatically.
-    This coroutine closes that gap by reading the final checkpoint after the
-    run completes and syncing ``values.title`` into the Store record so that
-    subsequent ``/threads/search`` responses include the correct title.
-
-    Runs as a fire-and-forget :func:`asyncio.create_task`; failures are
-    logged at DEBUG level and never propagate.
-    """
-    # Wait for the background run task to complete (any outcome).
-    # asyncio.wait does not propagate task exceptions — it just returns
-    # when the task is done, cancelled, or failed.
+    """Project final runtime state into product tables after a run completes."""
     await asyncio.wait({run_task})
 
-    # Deferred import to avoid circular import with the threads router module.
     from app.gateway.routers.threads import _store_get, _store_put
+
+    thread_id = record.thread_id
+    status = _product_thread_status(record.status)
+    checkpoint_tuple = None
 
     try:
         ckpt_config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
-        ckpt_tuple = await checkpointer.aget_tuple(ckpt_config)
-        if ckpt_tuple is None:
-            return
+        checkpoint_tuple = await checkpointer.aget_tuple(ckpt_config)
+    except Exception:
+        logger.debug("Failed to load final checkpoint for thread %s", thread_id, exc_info=True)
 
-        channel_values = ckpt_tuple.checkpoint.get("channel_values", {})
-        title = channel_values.get("title")
-        if not title:
-            return
+    try:
+        async with get_db_session() as db:
+            if checkpoint_tuple is not None:
+                result = await ProjectionService.project_from_checkpoint(
+                    db=db,
+                    thread_id=thread_id,
+                    checkpoint_tuple=checkpoint_tuple,
+                )
+                if not result.get("projected"):
+                    logger.debug(
+                        "Post-run projection skipped for thread %s: %s",
+                        thread_id,
+                        result.get("reason"),
+                    )
+            await ChatRepository.update_chat(db, thread_id, status=status)
+    except Exception:
+        logger.debug("Failed to sync product projection for thread %s", thread_id, exc_info=True)
 
+    if store is None:
+        return
+
+    try:
         existing = await _store_get(store, thread_id)
         if existing is None:
             return
 
         updated = dict(existing)
-        updated.setdefault("values", {})["title"] = title
+        updated["status"] = status
         updated["updated_at"] = time.time()
+
+        checkpoint = getattr(checkpoint_tuple, "checkpoint", {}) or {}
+        channel_values = checkpoint.get("channel_values", {})
+        title = channel_values.get("title")
+        if isinstance(title, str) and title.strip():
+            updated.setdefault("values", {})["title"] = title
+
         await _store_put(store, updated)
-        logger.debug("Synced title %r for thread %s", title, thread_id)
     except Exception:
-        logger.debug("Failed to sync title for thread %s (non-fatal)", thread_id, exc_info=True)
+        logger.debug("Failed to sync store projection for thread %s", thread_id, exc_info=True)
 
 
 async def start_run(
@@ -299,9 +325,14 @@ async def start_run(
     except UnsupportedStrategyError as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
 
+    try:
+        async with get_db_session() as db:
+            await ChatRepository.update_chat(db, thread_id, status="busy")
+    except Exception:
+        logger.debug("Failed to mark thread %s as busy", thread_id, exc_info=True)
+
     # Ensure the thread is visible in /threads/search, even for threads that
     # were never explicitly created via POST /threads (e.g. stateless runs).
-    store = get_store(request)
     if store is not None:
         await _upsert_thread_in_store(store, thread_id, body.metadata)
 
@@ -315,7 +346,7 @@ async def start_run(
     # Only agent-relevant keys are forwarded; unknown keys (e.g. thread_id) are ignored.
     context = getattr(body, "context", None)
     if context:
-        _CONTEXT_CONFIGURABLE_KEYS = {
+        context_configurable_keys = {
             "model_name",
             "mode",
             "thinking_enabled",
@@ -325,7 +356,7 @@ async def start_run(
             "max_concurrent_subagents",
         }
         configurable = config.setdefault("configurable", {})
-        for key in _CONTEXT_CONFIGURABLE_KEYS:
+        for key in context_configurable_keys:
             if key in context:
                 configurable.setdefault(key, context[key])
 
@@ -349,12 +380,7 @@ async def start_run(
     )
     record.task = task
 
-    # After the run completes, sync the title generated by TitleMiddleware from
-    # the checkpointer into the Store record so that /threads/search returns the
-    # correct title instead of an empty values dict.
-    if store is not None:
-        asyncio.create_task(_sync_thread_title_after_run(task, thread_id, checkpointer, store))
-
+    asyncio.create_task(_sync_thread_product_state_after_run(task, record, checkpointer, store))
     return record
 
 
@@ -389,16 +415,26 @@ async def sse_consumer(
             # chunk events are not the product source of truth.
             if entry.event == "values":
                 try:
-                    await mirror_stream_event_messages(
+                    checkpoint_id = None
+                    if hasattr(entry, "metadata") and isinstance(entry.metadata, dict):
+                        checkpoint_id = entry.metadata.get("checkpoint_id")
+
+                    result = await mirror_stream_event_messages(
                         thread_id=record.thread_id,
                         event=entry.event,
                         data=entry.data,
+                        checkpoint_id=checkpoint_id,
                     )
+                    if not result.get("projected"):
+                        logger.debug(
+                            "Projection skipped for thread %s: %s",
+                            record.thread_id,
+                            result.get("reason"),
+                        )
                 except Exception:
-                    logger.debug("Message mirroring failed (non-fatal)", exc_info=True)
+                    logger.debug("Projection failed (non-fatal)", exc_info=True)
 
             yield format_sse(entry.event, entry.data, event_id=entry.id or None)
-
     finally:
         if record.status in (RunStatus.pending, RunStatus.running):
             if record.on_disconnect == DisconnectMode.cancel:

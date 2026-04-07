@@ -11,12 +11,16 @@ import asyncio
 import logging
 import uuid
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 import app.gateway.services as gateway_services
 from app.gateway.deps import get_checkpointer, get_run_manager, get_stream_bridge
 from app.gateway.routers.thread_runs import RunCreateRequest
+from app.gateway.services.runtime_state import (
+    is_runtime_state_unavailable,
+    to_runtime_state_http_exception,
+)
 from deerflow.runtime import serialize_channel_values
 
 logger = logging.getLogger(__name__)
@@ -80,7 +84,14 @@ async def stateless_wait(body: RunCreateRequest, request: Request) -> dict:
             checkpoint = getattr(checkpoint_tuple, "checkpoint", {}) or {}
             channel_values = checkpoint.get("channel_values", {})
             return serialize_channel_values(channel_values)
-    except Exception:
+    except Exception as exc:
+        if is_runtime_state_unavailable(exc):
+            logger.warning(
+                "Runtime state backend unavailable while fetching final state for run %s",
+                record.run_id,
+            )
+            raise to_runtime_state_http_exception(exc) from exc
         logger.exception("Failed to fetch final state for run %s", record.run_id)
+        raise HTTPException(status_code=500, detail="Failed to fetch final run state") from exc
 
     return {"status": record.status.value, "error": record.error}
