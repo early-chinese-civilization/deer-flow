@@ -1,53 +1,41 @@
-# Architecture Overview
+# 架构总览
 
-This document provides a comprehensive overview of the DeerFlow backend architecture.
+本文档提供 DeerFlow 后端架构的整体说明。
 
 ## System Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                              Client (Browser)                             │
-└─────────────────────────────────┬────────────────────────────────────────┘
-                                  │
-                                  ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│                          Nginx (Port 2026)                               │
-│                    Unified Reverse Proxy Entry Point                      │
-│  ┌────────────────────────────────────────────────────────────────────┐  │
-│  │  /api/langgraph/*  →  LangGraph Server (2024)                      │  │
-│  │  /api/*            →  Gateway API (8001)                           │  │
-│  │  /*                →  Frontend (3000)                               │  │
-│  └────────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────┬────────────────────────────────────────┘
-                                  │
-          ┌───────────────────────┼───────────────────────┐
-          │                       │                       │
-          ▼                       ▼                       ▼
-┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐
-│   LangGraph Server  │ │    Gateway API      │ │     Frontend        │
-│     (Port 2024)     │ │    (Port 8001)      │ │    (Port 3000)      │
-│                     │ │                     │ │                     │
-│  - Agent Runtime    │ │  - Models API       │ │  - Next.js App      │
-│  - Thread Mgmt      │ │  - MCP Config       │ │  - React UI         │
-│  - SSE Streaming    │ │  - Skills Mgmt      │ │  - Chat Interface   │
-│  - Checkpointing    │ │  - File Uploads     │ │                     │
-│                     │ │  - Thread Cleanup   │ │                     │
-│                     │ │  - Artifacts        │ │                     │
-└─────────────────────┘ └─────────────────────┘ └─────────────────────┘
-          │                       │
-          │     ┌─────────────────┘
-          │     │
-          ▼     ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│                         Shared Configuration                              │
-│  ┌─────────────────────────┐  ┌────────────────────────────────────────┐ │
-│  │      config.yaml        │  │      extensions_config.json            │ │
-│  │  - Models               │  │  - MCP Servers                         │ │
-│  │  - Tools                │  │  - Skills State                        │ │
-│  │  - Sandbox              │  │                                        │ │
-│  │  - Summarization        │  │                                        │ │
-│  └─────────────────────────┘  └────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────────────┘
+```text
++--------------------------------------------------------------------------+
+|                              Client (Browser)                            |
++-----------------------------------+--------------------------------------+
+                                    |
+                                    v
++--------------------------------------------------------------------------+
+|                          Nginx (Port 2026)                               |
+|                    Unified Reverse Proxy Entry Point                      |
+|  /api/langgraph/* -> Gateway API (8001 /api runtime)                     |
+|  /api/*            -> Gateway API (8001)                                 |
+|  /*                -> Frontend (3000)                                    |
++-------------------------------+-------------------------------+-----------+
+                                |                               |
+                                v                               v
+                  +--------------------------+     +----------------------+
+                  |      Gateway API         |     |      Frontend        |
+                  |       (Port 8001)        |     |      (Port 3000)     |
+                  | - REST endpoints         |     | - Next.js App        |
+                  | - LangGraph runtime      |     | - React UI           |
+                  | - Uploads / Artifacts    |     | - Chat Interface     |
+                  +-------------+------------+     +----------------------+
+                                |
+                                v
+                  +--------------------------+
+                  |   LangGraph Server       |
+                  |      (Port 2024)         |
+                  |     internal only        |
+                  | - Agent runtime          |
+                  | - Thread state           |
+                  | - Checkpointing          |
+                  +--------------------------+
 ```
 
 ## Component Details
@@ -91,7 +79,7 @@ FastAPI application providing REST endpoints for non-agent operations.
 - `artifacts.py` - `/api/threads/{id}/artifacts` - Artifact serving
 - `suggestions.py` - `/api/threads/{id}/suggestions` - Follow-up suggestion generation
 
-The web conversation delete flow is now split across both backend surfaces: LangGraph handles `DELETE /api/langgraph/threads/{thread_id}` for thread state, then the Gateway `threads.py` router removes DeerFlow-managed filesystem data via `Paths.delete_thread_dir()`.
+The web conversation delete flow is now split across both backend surfaces: the Gateway-backed LangGraph runtime handles `DELETE /api/langgraph/threads/{thread_id}` for thread state, then the Gateway `threads.py` router removes DeerFlow-managed filesystem data via `Paths.delete_thread_dir()`.
 
 ### Agent Architecture
 
@@ -353,10 +341,14 @@ SKILL.md Format:
    POST /api/langgraph/threads/{thread_id}/runs
    {"input": {"messages": [{"role": "user", "content": "Hello"}]}}
 
-2. Nginx → LangGraph Server (2024)
-   Proxied to LangGraph server
+2. Nginx → Gateway API (8001)
+   Rewrites `/api/langgraph/*` to Gateway `/api/*`
 
-3. LangGraph Server
+3. Gateway-backed LangGraph runtime
+   a. Validates the LangGraph-compatible request
+   b. Coordinates thread/run operations and internal service calls
+
+4. LangGraph Server
    a. Load/create thread state
    b. Execute middleware chain:
       - ThreadDataMiddleware: Set up paths
@@ -374,9 +366,9 @@ SKILL.md Format:
       - Tools execute via sandbox
       - Results added to messages
 
-   d. Stream response via SSE
+   d. Stream response via SSE back through Gateway
 
-4. Client receives streaming response
+5. Client receives streaming response
 ```
 
 ## Data Flow
