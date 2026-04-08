@@ -6,6 +6,8 @@ from fastapi import FastAPI
 
 from app.gateway.auth import routes as auth_routes
 from app.gateway.config import get_gateway_config
+from app.gateway.db.engine import get_engine
+from app.gateway.db.schema_preflight import assert_gateway_schema_ready
 from app.gateway.deps import langgraph_runtime
 from app.gateway.routers import (
     agents,
@@ -48,6 +50,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         raise RuntimeError(error_msg) from e
     config = get_gateway_config()
     logger.info("Starting API Gateway on %s:%s", config.host, config.port)
+
+    try:
+        await assert_gateway_schema_ready(get_engine())
+        logger.info("Gateway database schema preflight passed")
+    except RuntimeError:
+        logger.exception("Gateway database schema preflight failed")
+        raise
+    except Exception as exc:
+        error_msg = f"Failed to inspect Gateway database schema during startup: {exc}"
+        logger.exception(error_msg)
+        raise RuntimeError(error_msg) from exc
 
     # Initialize LangGraph runtime components (StreamBridge, RunManager, checkpointer, store)
     async with langgraph_runtime(app):

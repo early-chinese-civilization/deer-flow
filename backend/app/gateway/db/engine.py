@@ -13,6 +13,10 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from app.gateway.db.psycopg_compat import ensure_windows_selector_event_loop_policy
+
+ensure_windows_selector_event_loop_policy()
+
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 

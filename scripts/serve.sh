@@ -9,14 +9,14 @@ set -e
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# ── Load environment variables from .env ──────────────────────────────────────
+# ---- Load environment variables from .env ----
 if [ -f "$REPO_ROOT/.env" ]; then
     set -a
     source "$REPO_ROOT/.env"
     set +a
 fi
 
-# ── Argument parsing ─────────────────────────────────────────────────────────
+# ---- Argument parsing ----
 
 DEV_MODE=true
 for arg in "$@"; do
@@ -41,7 +41,7 @@ else
     FRONTEND_CMD="env BETTER_AUTH_SECRET=$($PYTHON_BIN -c 'import secrets; print(secrets.token_hex(16))') pnpm run preview"
 fi
 
-# ── Stop existing services ────────────────────────────────────────────────────
+# ---- Stop existing services ----
 
 echo "Stopping existing services if any..."
 pkill -f "langgraph dev" 2>/dev/null || true
@@ -56,7 +56,7 @@ killall -9 nginx 2>/dev/null || true
 ./scripts/cleanup-containers.sh deer-flow-sandbox 2>/dev/null || true
 sleep 1
 
-# ── Banner ────────────────────────────────────────────────────────────────────
+# ---- Banner ----
 
 echo ""
 echo "=========================================="
@@ -72,19 +72,19 @@ else
 fi
 echo ""
 echo "Services starting up..."
-echo "  → Backend: LangGraph + Gateway"
-echo "  → Frontend: Next.js"
-echo "  → Nginx: Reverse Proxy"
+echo "  -> Backend: LangGraph + Gateway"
+echo "  -> Frontend: Next.js"
+echo "  -> Nginx: Reverse Proxy"
 echo ""
 
-# ── Config check ─────────────────────────────────────────────────────────────
+# ---- Config check ----
 
 if ! { \
         [ -n "$DEER_FLOW_CONFIG_PATH" ] && [ -f "$DEER_FLOW_CONFIG_PATH" ] || \
         [ -f backend/config.yaml ] || \
         [ -f config.yaml ]; \
     }; then
-    echo "✗ No DeerFlow config file found."
+    echo "[ERROR] No DeerFlow config file found."
     echo "  Checked these locations:"
     echo "    - $DEER_FLOW_CONFIG_PATH (when DEER_FLOW_CONFIG_PATH is set)"
     echo "    - backend/config.yaml"
@@ -94,11 +94,11 @@ if ! { \
     exit 1
 fi
 
-# ── Auto-upgrade config ──────────────────────────────────────────────────
+# ---- Auto-upgrade config ----
 
 "$REPO_ROOT/scripts/config-upgrade.sh"
 
-# ── Cleanup trap ─────────────────────────────────────────────────────────────
+# ---- Cleanup trap ----
 
 cleanup() {
     trap - INT TERM
@@ -123,12 +123,12 @@ cleanup() {
     killall -9 nginx 2>/dev/null || true
     echo "Cleaning up sandbox containers..."
     ./scripts/cleanup-containers.sh deer-flow-sandbox 2>/dev/null || true
-    echo "✓ All services stopped"
+    echo "[OK] All services stopped"
     exit 0
 }
 trap cleanup INT TERM
 
-# ── Start services ────────────────────────────────────────────────────────────
+# ---- Start services ----
 
 mkdir -p logs
 mkdir -p temp/client_body_temp temp/proxy_temp temp/fastcgi_temp temp/uwsgi_temp temp/scgi_temp
@@ -163,16 +163,16 @@ if [ "${SKIP_LANGGRAPH_SERVER:-0}" != "1" ]; then
         fi
         cleanup
     }
-    echo "✓ LangGraph server started on localhost:2024"
+    echo "[OK] LangGraph server started on localhost:2024"
 else
-    echo "⏩ Skipping LangGraph server (SKIP_LANGGRAPH_SERVER=1)"
-    echo "   Use /api/langgraph-compat/* via Gateway instead"
+    echo "[SKIP] Skipping LangGraph server (SKIP_LANGGRAPH_SERVER=1)"
+    echo "   Gateway runtime remains available at /api/langgraph/*"
 fi
 
 echo "Starting Gateway API..."
 (cd backend && PYTHONPATH=. uv run uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001 $GATEWAY_EXTRA_FLAGS > ../logs/gateway.log 2>&1) &
 ./scripts/wait-for-port.sh 8001 30 "Gateway API" || {
-    echo "✗ Gateway API failed to start. Last log output:"
+    echo "[ERROR] Gateway API failed to start. Last log output:"
     tail -60 logs/gateway.log
     echo ""
     echo "Likely configuration errors:"
@@ -181,7 +181,7 @@ echo "Starting Gateway API..."
     echo "  Hint: Try running 'make config-upgrade' to update your config.yaml with the latest fields."
     cleanup
 }
-echo "✓ Gateway API started on localhost:8001"
+echo "[OK] Gateway API started on localhost:8001"
 
 echo "Starting Frontend..."
 (cd frontend && $FRONTEND_CMD > ../logs/frontend.log 2>&1) &
@@ -190,7 +190,7 @@ echo "Starting Frontend..."
     tail -20 logs/frontend.log
     cleanup
 }
-echo "✓ Frontend started on localhost:3000"
+echo "[OK] Frontend started on localhost:3000"
 
 echo "Starting Nginx reverse proxy..."
 nginx -g 'daemon off;' -c "$REPO_ROOT/docker/nginx/nginx.local.conf" -p "$REPO_ROOT" > logs/nginx.log 2>&1 &
@@ -200,33 +200,29 @@ NGINX_PID=$!
     tail -10 logs/nginx.log
     cleanup
 }
-echo "✓ Nginx started on localhost:2026"
+echo "[OK] Nginx started on localhost:2026"
 
-# ── Ready ─────────────────────────────────────────────────────────────────────
+# ---- Ready ----
 
 echo ""
 echo "=========================================="
 if $DEV_MODE; then
-    echo "  ✓ DeerFlow development server is running!"
+    echo "  [OK] DeerFlow development server is running!"
 else
-    echo "  ✓ DeerFlow production server is running!"
+    echo "  [OK] DeerFlow production server is running!"
 fi
 echo "=========================================="
 echo ""
-echo "  🌐 Application: http://localhost:2026"
-echo "  📡 API Gateway: http://localhost:2026/api/*"
+echo "  Application: http://localhost:2026"
+echo "  API Gateway: http://localhost:2026/api/*"
 if [ "${SKIP_LANGGRAPH_SERVER:-0}" = "1" ]; then
-    echo "  🤖 LangGraph: skipped (SKIP_LANGGRAPH_SERVER=1)"
+    echo "  LangGraph: skipped (SKIP_LANGGRAPH_SERVER=1)"
 else
-    echo "  🤖 LangGraph: http://localhost:2026/api/langgraph/* (served by langgraph dev)"
-fi
-echo "  🧪 LangGraph Compat (experimental): http://localhost:2026/api/langgraph-compat/* (served by Gateway)"
-if [ "${SKIP_LANGGRAPH_SERVER:-0}" = "1" ]; then
-    echo ""
-    echo "  💡 Set NEXT_PUBLIC_LANGGRAPH_BASE_URL=/api/langgraph-compat in frontend/.env.local"
+    echo "  LangGraph Runtime: http://localhost:2026/api/langgraph/*"
+    echo "  Internal LangGraph server: http://localhost:2024"
 fi
 echo ""
-echo "  📋 Logs:"
+echo "  Logs:"
 echo "     - LangGraph: logs/langgraph.log"
 echo "     - Gateway:   logs/gateway.log"
 echo "     - Frontend:  logs/frontend.log"

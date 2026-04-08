@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.gateway.db.engine import get_database_url
 from app.gateway.db.models import Base
+from app.gateway.db.psycopg_compat import run_async_with_psycopg_compatible_loop
 
 config = context.config
 
@@ -65,7 +66,7 @@ async def run_async_migrations() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
-    asyncio.run(run_async_migrations())
+    run_async_with_psycopg_compatible_loop(run_async_migrations())
 
 
 if context.is_offline_mode():
