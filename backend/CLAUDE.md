@@ -2,6 +2,25 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+
+## First-Principles Working Policy
+
+Always reason from first principles: start from the original requirement and the root problem, not from conventions, templates, or habitual implementation paths.
+
+### Required Behavior
+
+1. Do not assume the user already knows exactly what they want.
+When the user's goal, motivation, constraints, or success criteria are unclear, stop and clarify before implementation.
+
+2. If the goal is clear but the proposed path is not the shortest or best path, say so directly.
+Do not follow a longer or weaker implementation path just because it was suggested first. Recommend the simpler, more direct, more robust path and explain why it is better.
+
+3. Do not patch symptoms. Always pursue root cause.
+Every fix, design choice, and tradeoff must be grounded in the underlying cause of the problem. Every decision should be able to answer: "why this approach?"
+
+4. Communicate only what affects the decision.
+Lead with the conclusion, then the reasoning. Remove repetition, generic framing, and background that does not change the decision or action.
+
 ## Project Overview
 
 DeerFlow is a LangGraph-based AI super agent system with a full-stack architecture. The backend provides a "super agent" with sandbox execution, persistent memory, subagent delegation, and extensible tool integration - all operating in per-thread isolated environments.
@@ -211,7 +230,7 @@ FastAPI application on port 8001 with health check at `GET /health`.
 | **Artifacts** (`/api/threads/{id}/artifacts`) | `GET /{path}` - serve artifacts; active content types (`text/html`, `application/xhtml+xml`, `image/svg+xml`) are always forced as download attachments to reduce XSS risk; `?download=true` still forces download for other file types |
 | **Suggestions** (`/api/threads/{id}/suggestions`) | `POST /` - generate follow-up questions; rich list/block model content is normalized before JSON parsing |
 
-Proxied through nginx: `/api/langgraph/*` → LangGraph, all other `/api/*` → Gateway.
+Proxied through nginx: `/api/langgraph/*` → Gateway-backed LangGraph runtime, all other `/api/*` → Gateway.
 
 ### Sandbox System (`packages/harness/deerflow/sandbox/`)
 
@@ -437,7 +456,7 @@ make dev
 This starts all services and makes the application available at `http://localhost:2026`.
 
 **Nginx routing**:
-- `/api/langgraph/*` → LangGraph Server (2024)
+- `/api/langgraph/*` → Gateway-backed LangGraph runtime (`/api/*` on 8001)
 - `/api/*` (other) → Gateway API (8001)
 - `/` (non-API) → Frontend (3000)
 
@@ -453,7 +472,7 @@ make dev
 make gateway
 ```
 
-Direct access (without nginx):
+Internal direct access (without nginx):
 - LangGraph: `http://localhost:2024`
 - Gateway: `http://localhost:8001`
 
