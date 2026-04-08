@@ -6,36 +6,35 @@ DeerFlow is a LangGraph-based AI super agent with sandbox execution, persistent 
 
 ## Architecture
 
-```
-                        ┌──────────────────────────────────────┐
-                        │          Nginx (Port 2026)           │
-                        │      Unified reverse proxy           │
-                        └───────┬──────────────────┬───────────┘
-                                │                  │
-              /api/langgraph/*  │                  │  /api/* (other)
-                                ▼                  ▼
-               ┌────────────────────┐  ┌────────────────────────┐
-               │ LangGraph Server   │  │   Gateway API (8001)   │
-               │    (Port 2024)     │  │   FastAPI REST         │
-               │                    │  │                        │
-               │ ┌────────────────┐ │  │ Models, MCP, Skills,   │
-               │ │  Lead Agent    │ │  │ Memory, Uploads,       │
-               │ │  ┌──────────┐  │ │  │ Artifacts              │
-               │ │  │Middleware│  │ │  └────────────────────────┘
-               │ │  │  Chain   │  │ │
-               │ │  └──────────┘  │ │
-               │ │  ┌──────────┐  │ │
-               │ │  │  Tools   │  │ │
-               │ │  └──────────┘  │ │
-               │ │  ┌──────────┐  │ │
-               │ │  │Subagents │  │ │
-               │ │  └──────────┘  │ │
-               │ └────────────────┘ │
-               └────────────────────┘
+```text
+                        +--------------------------------------+
+                        |          Nginx (Port 2026)           |
+                        |      Unified reverse proxy           |
+                        +-----------+--------------+-----------+
+                                    |              |
+      /api/langgraph/* and /api/*   |              |  / (non-API)
+                                    v              v
+                    +--------------------------+   +------------------+
+                    |   Gateway API (8001)     |   | Frontend (3000)  |
+                    |                          |   |                  |
+                    | - Models, MCP, Skills    |   | - Next.js App    |
+                    | - Memory, Uploads        |   | - React UI       |
+                    | - Artifacts, Cleanup     |   | - Chat Interface |
+                    | - LangGraph runtime      |   |                  |
+                    +-------------+------------+   +------------------+
+                                  |
+                                  v
+                        +--------------------------+
+                        | LangGraph Server (2024)  |
+                        |      internal only       |
+                        | - Agent runtime          |
+                        | - Thread state           |
+                        | - Checkpointing          |
+                        +--------------------------+
 ```
 
 **Request Routing** (via Nginx):
-- `/api/langgraph/*` → LangGraph Server - agent interactions, threads, streaming
+- `/api/langgraph/*` → Gateway-backed LangGraph runtime - agent interactions, threads, streaming
 - `/api/*` (other) → Gateway API - models, MCP, skills, memory, artifacts, uploads, thread-local cleanup
 - `/` (non-API) → Frontend - Next.js web interface
 
@@ -201,6 +200,9 @@ Access at: http://localhost:2026
 **Backend Only** (from backend directory):
 
 ```bash
+# From the project root, apply DB migrations first when schema changed
+make migrate
+
 # Terminal 1: LangGraph server
 make dev
 
@@ -208,7 +210,7 @@ make dev
 make gateway
 ```
 
-Direct access: LangGraph at http://localhost:2024, Gateway at http://localhost:8001
+Internal direct access: LangGraph at http://localhost:2024, Gateway at http://localhost:8001
 
 ---
 
@@ -362,6 +364,7 @@ If a provider is explicitly enabled but required credentials are missing, or the
 
 ```bash
 make install    # Install dependencies
+make migrate    # Apply database migrations
 make dev        # Run LangGraph server (port 2024)
 make gateway    # Run Gateway API (port 8001)
 make lint       # Run linter (ruff)

@@ -425,7 +425,7 @@ DeerFlowが実行中であることを確認し（デフォルトは`http://loca
 ```bash
 DEERFLOW_URL=http://localhost:2026            # 統合プロキシベースURL
 DEERFLOW_GATEWAY_URL=http://localhost:2026    # Gateway API
-DEERFLOW_LANGGRAPH_URL=http://localhost:2026/api/langgraph  # LangGraph API
+DEERFLOW_LANGGRAPH_URL=http://localhost:2026/api/langgraph  # Gateway-backed LangGraph runtime
 ```
 
 完全なAPIリファレンスは[`skills/public/claude-to-deerflow/SKILL.md`](skills/public/claude-to-deerflow/SKILL.md)をご覧ください。

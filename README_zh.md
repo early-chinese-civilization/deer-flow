@@ -418,7 +418,7 @@ npx skills add https://github.com/bytedance/deer-flow --skill claude-to-deerflow
 ```bash
 DEERFLOW_URL=http://localhost:2026            # 统一代理基地址
 DEERFLOW_GATEWAY_URL=http://localhost:2026    # Gateway API
-DEERFLOW_LANGGRAPH_URL=http://localhost:2026/api/langgraph  # LangGraph API
+DEERFLOW_LANGGRAPH_URL=http://localhost:2026/api/langgraph  # Gateway-backed LangGraph runtime
 ```
 
 完整 API 说明见 [`skills/public/claude-to-deerflow/SKILL.md`](skills/public/claude-to-deerflow/SKILL.md)。

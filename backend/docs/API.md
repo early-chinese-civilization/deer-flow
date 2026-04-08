@@ -15,7 +15,7 @@ All APIs are accessed through the Nginx reverse proxy at port 2026.
 
 Base URL: `/api/langgraph`
 
-The LangGraph API is provided by the LangGraph server and follows the LangGraph SDK conventions.
+The LangGraph API is provided by the Gateway-backed LangGraph runtime and follows the LangGraph SDK conventions.
 
 ### Threads
 
@@ -553,7 +553,7 @@ location /api/ {
 
 ## WebSocket Support
 
-The LangGraph server supports WebSocket connections for real-time streaming. Connect to:
+The Gateway-backed LangGraph runtime supports WebSocket connections for real-time streaming. Connect to:
 
 ```
 ws://localhost:2026/api/langgraph/threads/{thread_id}/runs/stream

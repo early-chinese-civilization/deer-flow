@@ -10,12 +10,12 @@ built on LangGraph that orchestrates sub-agents for research, code execution, we
 
 ## Architecture
 
-DeerFlow exposes two API surfaces behind an Nginx reverse proxy:
+DeerFlow exposes two public API surfaces behind an Nginx reverse proxy:
 
-| Service        | Direct Port | Via Proxy                        | Purpose                          |
-|----------------|-------------|----------------------------------|----------------------------------|
-| Gateway API    | 8001        | `$DEERFLOW_GATEWAY_URL`          | REST endpoints (models, skills, memory, uploads) |
-| LangGraph API  | 2024        | `$DEERFLOW_LANGGRAPH_URL`        | Agent threads, runs, streaming   |
+| Service           | Direct Port   | Via Proxy                        | Purpose                                   |
+|-------------------|---------------|----------------------------------|-------------------------------------------|
+| Gateway API       | 8001          | `$DEERFLOW_GATEWAY_URL`          | REST endpoints (models, skills, memory, uploads) |
+| LangGraph Runtime | 8001 (`/api`) | `$DEERFLOW_LANGGRAPH_URL`        | Gateway-backed agent threads, runs, streaming |
 
 ## Environment Variables
 
@@ -25,7 +25,7 @@ All URLs are configurable via environment variables. **Read these env vars befor
 |-------------------------|------------------------------------------|------------------------------------|
 | `DEERFLOW_URL`          | `http://localhost:2026`                  | Unified proxy base URL             |
 | `DEERFLOW_GATEWAY_URL`  | `${DEERFLOW_URL}`                        | Gateway API base (models, skills, memory, uploads) |
-| `DEERFLOW_LANGGRAPH_URL`| `${DEERFLOW_URL}/api/langgraph`          | LangGraph API base (threads, runs) |
+| `DEERFLOW_LANGGRAPH_URL`| `${DEERFLOW_URL}/api/langgraph`          | Gateway-backed LangGraph runtime base (threads, runs) |
 
 When making curl calls, always resolve the URL like this:
 
@@ -96,10 +96,10 @@ data: <json_data>
 ```
 
 Key event types:
-- `metadata` — run metadata including `run_id`
-- `values` — full state snapshot with `messages` array
-- `messages-tuple` — incremental message updates (AI text chunks, tool calls, tool results)
-- `end` — stream is complete
+- `metadata` - run metadata including `run_id`
+- `values` - full state snapshot with `messages` array
+- `messages-tuple` - incremental message updates (AI text chunks, tool calls, tool results)
+- `end` - stream is complete
 
 **Context modes** (set via `context`):
 - Flash mode: `thinking_enabled: false, is_plan_mode: false, subagent_enabled: false`
@@ -159,7 +159,7 @@ curl -s -X POST "$DEERFLOW_GATEWAY_URL/api/threads/<thread_id>/uploads" \
   -F "files=@/path/to/file.pdf"
 ```
 
-Supports PDF, PPTX, XLSX, DOCX — automatically converts to Markdown.
+Supports PDF, PPTX, XLSX, DOCX - automatically converts to Markdown.
 
 ### 10. List Uploaded Files
 
@@ -214,4 +214,4 @@ The stream returns SSE events. To extract the final AI response from a `values` 
 - For quick questions, use flash mode (fastest, no planning).
 - For research tasks, use pro or ultra mode (enables planning and sub-agents).
 - You can upload files first, then reference them in your message.
-- Thread IDs persist — you can return to a conversation later.
+- Thread IDs persist - you can return to a conversation later.

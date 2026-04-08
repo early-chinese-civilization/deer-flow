@@ -115,22 +115,21 @@ If `docker ps` still reports a permission error after `usermod`, fully log out a
 
 ```
 Host Machine
-  ↓
-Docker Compose (deer-flow-dev)
-  ├→ nginx (port 2026) ← Reverse proxy
-  ├→ web (port 3000) ← Frontend with hot-reload
-  ├→ api (port 8001) ← Gateway API with hot-reload
-   ├→ langgraph (port 2024) ← LangGraph server with hot-reload
-   └→ provisioner (optional, port 8002) ← Started only in provisioner/K8s sandbox mode
+  -> Docker Compose (deer-flow-dev)
+  |- nginx (port 2026) -> Reverse proxy
+  |- web (port 3000) -> Frontend with hot-reload
+  |- api (port 8001) -> Gateway API with hot-reload
+  |- langgraph (port 2024) -> LangGraph server with hot-reload
+  `- provisioner (optional, port 8002) -> Started only in provisioner/K8s sandbox mode
 ```
 
 **Benefits of Docker Development**:
-- ✅ Consistent environment across different machines
-- ✅ No need to install Node.js, Python, or nginx locally
-- ✅ Isolated dependencies and services
-- ✅ Easy cleanup and reset
-- ✅ Hot-reload for all services
-- ✅ Production-like environment
+- Consistent environment across different machines
+- No need to install Node.js, Python, or nginx locally
+- Isolated dependencies and services
+- Easy cleanup and reset
+- Hot-reload for all services
+- Production-like environment
 
 ### Option 2: Local Development
 
@@ -172,7 +171,12 @@ Required tools:
 
 If you need to start services individually:
 
-1. **Start backend services**:
+1. **Apply database migrations when backend schema changes**:
+   ```bash
+   make migrate
+   ```
+
+2. **Start backend services**:
    ```bash
    # Terminal 1: Start LangGraph Server (port 2024)
    cd backend
@@ -187,20 +191,20 @@ If you need to start services individually:
    pnpm dev
    ```
 
-2. **Start nginx**:
+3. **Start nginx**:
    ```bash
    make nginx
    # or directly: nginx -c $(pwd)/docker/nginx/nginx.local.conf -g 'daemon off;'
    ```
 
-3. **Access the application**:
+4. **Access the application**:
    - Web Interface: http://localhost:2026
 
 #### Nginx Configuration
 
 The nginx configuration provides:
 - Unified entry point on port 2026
-- Routes `/api/langgraph/*` to LangGraph Server (2024)
+- Routes `/api/langgraph/*` to the Gateway-backed LangGraph runtime (Gateway `/api/*` on 8001)
 - Routes other `/api/*` endpoints to Gateway API (8001)
 - Routes non-API requests to Frontend (3000)
 - Centralized CORS handling
@@ -211,41 +215,40 @@ The nginx configuration provides:
 
 ```
 deer-flow/
-├── config.example.yaml      # Configuration template
-├── extensions_config.example.json  # MCP and Skills configuration template
-├── Makefile                 # Build and development commands
-├── scripts/
-│   └── docker.sh           # Docker management script
-├── docker/
-│   ├── docker-compose-dev.yaml  # Docker Compose configuration
-│   └── nginx/
-│       ├── nginx.conf      # Nginx config for Docker
-│       └── nginx.local.conf # Nginx config for local dev
-├── backend/                 # Backend application
-│   ├── src/
-│   │   ├── gateway/        # Gateway API (port 8001)
-│   │   ├── agents/         # LangGraph agents (port 2024)
-│   │   ├── mcp/            # Model Context Protocol integration
-│   │   ├── skills/         # Skills system
-│   │   └── sandbox/        # Sandbox execution
-│   ├── docs/               # Backend documentation
-│   └── Makefile            # Backend commands
-├── frontend/               # Frontend application
-│   └── Makefile            # Frontend commands
-└── skills/                 # Agent skills
-    ├── public/             # Public skills
-    └── custom/             # Custom skills
+|- config.example.yaml              # Configuration template
+|- extensions_config.example.json   # MCP and Skills configuration template
+|- Makefile                         # Build and development commands
+|- scripts/
+|  `- docker.sh                     # Docker management script
+|- docker/
+|  |- docker-compose-dev.yaml       # Docker Compose configuration
+|  `- nginx/
+|     |- nginx.conf                 # Nginx config for Docker
+|     `- nginx.local.conf           # Nginx config for local dev
+|- backend/                         # Backend application
+|  |- src/
+|  |  |- gateway/                   # Gateway API (port 8001)
+|  |  |- agents/                    # LangGraph agents (port 2024)
+|  |  |- mcp/                       # Model Context Protocol integration
+|  |  |- skills/                    # Skills system
+|  |  `- sandbox/                   # Sandbox execution
+|  |- docs/                         # Backend documentation
+|  `- Makefile                      # Backend commands
+|- frontend/                        # Frontend application
+|  `- Makefile                      # Frontend commands
+`- skills/                          # Agent skills
+   |- public/                       # Public skills
+   `- custom/                       # Custom skills
 ```
 
 ## Architecture
 
 ```
 Browser
-  ↓
-Nginx (port 2026) ← Unified entry point
-  ├→ Frontend (port 3000) ← / (non-API requests)
-  ├→ Gateway API (port 8001) ← /api/models, /api/mcp, /api/skills, /api/threads/*/artifacts
-  └→ LangGraph Server (port 2024) ← /api/langgraph/* (agent interactions)
+  -> Nginx (port 2026) -> Unified entry point
+  |- Frontend (port 3000) -> / (non-API requests)
+  |- Gateway API (port 8001) -> /api/models, /api/mcp, /api/skills, /api/threads/*/artifacts
+  `- Gateway-backed LangGraph runtime -> /api/langgraph/* (agent interactions)
 ```
 
 ## Development Workflow
@@ -304,7 +307,7 @@ Every pull request runs the backend regression workflow at [.github/workflows/ba
 
 - **Backend (Python)**: We use `ruff` for linting and formatting. Run `make format` before committing.
 - **Frontend (TypeScript)**: We use ESLint and Prettier. Run `pnpm format:write` before committing.
-- CI enforces formatting — PRs with unformatted code will fail the lint check.
+- CI enforces formatting - PRs with unformatted code will fail the lint check.
 
 ## Documentation
 

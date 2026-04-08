@@ -517,7 +517,7 @@ Then make sure DeerFlow is running (default at `http://localhost:2026`) and use 
 ```bash
 DEERFLOW_URL=http://localhost:2026            # Unified proxy base URL
 DEERFLOW_GATEWAY_URL=http://localhost:2026    # Gateway API
-DEERFLOW_LANGGRAPH_URL=http://localhost:2026/api/langgraph  # LangGraph API
+DEERFLOW_LANGGRAPH_URL=http://localhost:2026/api/langgraph  # Gateway-backed LangGraph runtime
 ```
 
 See [`skills/public/claude-to-deerflow/SKILL.md`](skills/public/claude-to-deerflow/SKILL.md) for the full API reference.
