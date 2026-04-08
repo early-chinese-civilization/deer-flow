@@ -1,62 +1,42 @@
-"""Thread CRUD, state, and history endpoints.
-
-Combines the existing thread-local filesystem cleanup with LangGraph
-Platform-compatible thread management backed by the checkpointer.
-
-Channel values returned in state responses are serialized through
-:func:`deerflow.runtime.serialization.serialize_channel_values` to
-ensure LangChain message objects are converted to JSON-safe dicts
-matching the LangGraph Platform wire format expected by the
-``useStream`` React hook.
-"""
+"""Thread CRUD, state, and history endpoints backed by Store + checkpointer."""
 
 from __future__ import annotations
 
 import logging
 import time
 import uuid
+from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from psycopg import OperationalError
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.db.models import Chat, User
-from app.gateway.db.repository import ChatRepository
-from app.gateway.deps import (
-    get_checkpointer,
-    get_current_user_optional_no_db,
-    get_db_optional,
-    get_store,
-)
-from app.gateway.services.ownership import check_chat_access, require_thread_access
+from app.gateway.db.models import User
+from app.gateway.db.repository import WorkspaceRepository
+from app.gateway.deps import get_checkpointer, get_current_user, get_db, get_store
+from app.gateway.services.ownership import require_thread_access
 from app.gateway.services.runtime_state import (
     is_runtime_state_unavailable,
     to_runtime_state_http_exception,
 )
+from app.gateway.services.thread_store import (
+    StoreUnavailableError,
+    ThreadRecord,
+    coerce_owner_user_id,
+    delete_thread_record,
+    get_thread_record,
+    get_workspace_id,
+    put_thread_record,
+    search_thread_records,
+    upsert_thread_record,
+)
 from deerflow.config.paths import Paths, get_paths
 from deerflow.runtime import serialize_channel_values
 
-# ---------------------------------------------------------------------------
-# Store namespace
-# ---------------------------------------------------------------------------
-
-THREADS_NS: tuple[str, ...] = ("threads",)
-"""Namespace used by the Store for thread metadata records."""
-
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/threads", tags=["threads"])
-
-
-class StoreUnavailableError(RuntimeError):
-    """Raised when the auxiliary thread metadata Store is temporarily unavailable."""
-
-
-# ---------------------------------------------------------------------------
-# Response / request models
-# ---------------------------------------------------------------------------
 
 
 class ThreadDeleteResponse(BaseModel):
@@ -70,6 +50,7 @@ class ThreadResponse(BaseModel):
     """Response model for a single thread."""
 
     thread_id: str = Field(description="Unique thread identifier")
+    workspace_id: str | None = Field(default=None, description="Bound workspace ID")
     status: str = Field(default="idle", description="Thread status: idle, busy, interrupted, error")
     created_at: str = Field(default="", description="ISO timestamp")
     updated_at: str = Field(default="", description="ISO timestamp")
@@ -114,7 +95,7 @@ class ThreadPatchRequest(BaseModel):
 
 
 class ThreadStateUpdateRequest(BaseModel):
-    """Request body for updating thread state (human-in-the-loop resume)."""
+    """Request body for updating thread state."""
 
     values: dict[str, Any] | None = Field(default=None, description="Channel values to merge")
     checkpoint_id: str | None = Field(default=None, description="Checkpoint to branch from")
@@ -140,11 +121,6 @@ class ThreadHistoryRequest(BaseModel):
     before: str | None = Field(default=None, description="Cursor for pagination")
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _delete_thread_data(thread_id: str, paths: Paths | None = None) -> ThreadDeleteResponse:
     """Delete local persisted filesystem data for a thread."""
     path_manager = paths or get_paths()
@@ -153,7 +129,6 @@ def _delete_thread_data(thread_id: str, paths: Paths | None = None) -> ThreadDel
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except FileNotFoundError:
-        # Not critical — thread data may not exist on disk
         logger.debug("No local thread data to delete for %s", thread_id)
         return ThreadDeleteResponse(success=True, message=f"No local data for {thread_id}")
     except Exception as exc:
@@ -164,200 +139,142 @@ def _delete_thread_data(thread_id: str, paths: Paths | None = None) -> ThreadDel
     return ThreadDeleteResponse(success=True, message=f"Deleted local thread data for {thread_id}")
 
 
-async def _store_get(store, thread_id: str) -> dict | None:
-    """Fetch a thread record from the Store; returns ``None`` if absent."""
-    try:
-        item = await store.aget(THREADS_NS, thread_id)
-    except Exception as exc:
-        if _is_store_unavailable(exc):
-            raise StoreUnavailableError("Thread metadata store unavailable") from exc
-        raise
-    return item.value if item is not None else None
+def _stringify_timestamp(value: Any) -> str:
+    """Serialize Store timestamps for API responses."""
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
 
 
-async def _store_put(store, record: dict) -> None:
-    """Write a thread record to the Store."""
-    try:
-        await store.aput(THREADS_NS, record["thread_id"], record)
-    except Exception as exc:
-        if _is_store_unavailable(exc):
-            raise StoreUnavailableError("Thread metadata store unavailable") from exc
-        raise
+def _timestamp_sort_key(value: Any) -> float:
+    """Normalize Store timestamps so thread lists sort consistently."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                return 0.0
+    return 0.0
 
 
-async def _store_search(store, *, limit: int) -> list[Any]:
-    """Search Store-backed thread records."""
-    try:
-        return await store.asearch(THREADS_NS, limit=limit)
-    except Exception as exc:
-        if _is_store_unavailable(exc):
-            raise StoreUnavailableError("Thread metadata store unavailable") from exc
-        raise
-
-
-async def _store_upsert(store, thread_id: str, *, metadata: dict | None = None, values: dict | None = None) -> None:
-    """Create or refresh a thread record in the Store.
-
-    On creation the record is written with ``status="idle"``.  On update only
-    ``updated_at`` (and optionally ``metadata`` / ``values``) are changed so
-    that existing fields are preserved.
-
-    ``values`` carries the agent-state snapshot exposed to the frontend
-    (currently just ``{"title": "..."}``).
-    """
-    now = time.time()
-    existing = await _store_get(store, thread_id)
-    if existing is None:
-        await _store_put(
-            store,
-            {
-                "thread_id": thread_id,
-                "status": "idle",
-                "created_at": now,
-                "updated_at": now,
-                "metadata": metadata or {},
-                "values": values or {},
-            },
-        )
-    else:
-        val = dict(existing)
-        val["updated_at"] = now
-        if metadata:
-            val.setdefault("metadata", {}).update(metadata)
-        if values:
-            val.setdefault("values", {}).update(values)
-        await _store_put(store, val)
-
-def _is_store_unavailable(exc: Exception) -> bool:
-    """Return whether the error indicates a transient Store connectivity issue."""
-    if isinstance(exc, OperationalError):
-        return True
-    message = str(exc).lower()
-    return "connection is closed" in message or "closed connection" in message
-
-
-def _raise_runtime_state_http_exception(exc: Exception, *, thread_id: str, operation: str) -> None:
-    """Raise a stable 503 when the runtime-state backend is unavailable."""
-    if not is_runtime_state_unavailable(exc):
-        raise ValueError("Exception is not a runtime-state availability error")
-
-    logger.warning(
-        "Runtime state backend unavailable while %s for thread %s",
-        operation,
-        thread_id,
-    )
-    raise to_runtime_state_http_exception(exc) from exc
-
-
-def _build_thread_response_from_checkpoint(
+def _root_checkpoint_config(
     thread_id: str,
-    checkpoint_tuple: Any,
     *,
-    record: dict | None = None,
+    checkpoint_id: str | None = None,
+) -> dict[str, dict[str, str]]:
+    """Build the root checkpoint config for a thread."""
+    configurable: dict[str, str] = {
+        "thread_id": thread_id,
+        "checkpoint_ns": "",
+    }
+    if checkpoint_id:
+        configurable["checkpoint_id"] = checkpoint_id
+    return {"configurable": configurable}
+
+
+def _build_thread_response(
+    record: ThreadRecord,
+    *,
+    values: dict[str, Any] | None = None,
+    status: str | None = None,
 ) -> ThreadResponse:
-    """Build a response using checkpoint truth with optional Store metadata."""
-    checkpoint = getattr(checkpoint_tuple, "checkpoint", {}) or {}
-    metadata = getattr(checkpoint_tuple, "metadata", {}) or {}
-    channel_values = checkpoint.get("channel_values", {})
-
-    values = dict((record or {}).get("values", {}))
-    if title := channel_values.get("title"):
-        values["title"] = title
-
-    created_at = (record or {}).get("created_at") or metadata.get("created_at", "")
-    updated_at = (record or {}).get("updated_at") or metadata.get(
-        "updated_at",
-        metadata.get("created_at", ""),
-    )
-
+    """Build a response model from a Store-backed thread record."""
     return ThreadResponse(
-        thread_id=thread_id,
-        status=_derive_thread_status(checkpoint_tuple),
-        created_at=str(created_at),
-        updated_at=str(updated_at),
-        metadata=(record or {}).get("metadata", {}),
-        values=values,
+        thread_id=record["thread_id"],
+        workspace_id=get_workspace_id(record),
+        status=status or str(record.get("status", "idle")),
+        created_at=_stringify_timestamp(record.get("created_at")),
+        updated_at=_stringify_timestamp(record.get("updated_at")),
+        metadata=dict(record.get("metadata") or {}),
+        values=values if values is not None else dict(record.get("values") or {}),
     )
 
 
-def _build_thread_response_from_chat(chat: Chat, *, record: dict | None = None) -> ThreadResponse:
-    """Build a response from product chat truth with optional Store metadata."""
-    values = dict((record or {}).get("values", {}))
-    if chat.title:
-        values["title"] = chat.title
-
-    return ThreadResponse(
-        thread_id=str(chat.thread_id),
-        status=chat.status or "idle",
-        created_at=chat.created_at.isoformat() if chat.created_at else "",
-        updated_at=chat.updated_at.isoformat() if chat.updated_at else "",
-        metadata=(record or {}).get("metadata", {}),
-        values=values,
-    )
-
-
-def _derive_thread_status(checkpoint_tuple) -> str:
-    """Derive thread status from checkpoint metadata."""
+def _derive_thread_status(checkpoint_tuple: Any, default_status: str = "idle") -> str:
+    """Derive thread status from checkpoint metadata when available."""
     if checkpoint_tuple is None:
-        return "idle"
-    pending_writes = getattr(checkpoint_tuple, "pending_writes", None) or []
+        return default_status
 
-    # Check for error in pending writes
-    for pw in pending_writes:
-        if len(pw) >= 2 and pw[1] == "__error__":
+    pending_writes = getattr(checkpoint_tuple, "pending_writes", None) or []
+    for pending_write in pending_writes:
+        if len(pending_write) >= 2 and pending_write[1] == "__error__":
             return "error"
 
-    # Check for pending next tasks (indicates interrupt)
     tasks = getattr(checkpoint_tuple, "tasks", None)
     if tasks:
         return "interrupted"
+    return default_status
 
-    return "idle"
 
+async def _cleanup_failed_thread_creation(
+    *,
+    store,
+    checkpointer,
+    thread_id: str,
+    rollback_db: Callable[[], Awaitable[None]],
+    delete_checkpoint: bool,
+    delete_store_record_on_failure: bool,
+) -> None:
+    """Rollback partially-created thread resources after creation fails."""
+    try:
+        await rollback_db()
+    except Exception:
+        logger.warning("Failed to rollback workspace creation for thread %s", thread_id, exc_info=True)
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
+    if delete_store_record_on_failure and store is not None:
+        try:
+            await delete_thread_record(store, thread_id)
+        except Exception:
+            logger.warning("Failed to remove store record for thread %s", thread_id, exc_info=True)
+
+    if delete_checkpoint and hasattr(checkpointer, "adelete_thread"):
+        try:
+            await checkpointer.adelete_thread(thread_id)
+        except Exception:
+            logger.warning("Failed to remove checkpoint thread %s after create failure", thread_id, exc_info=True)
 
 
 @router.delete("/{thread_id}", response_model=ThreadDeleteResponse)
 async def delete_thread_data(
     thread_id: str,
     request: Request,
-    current_user: User | None = Depends(get_current_user_optional_no_db),
-    db: AsyncSession | None = Depends(get_db_optional),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> ThreadDeleteResponse:
-    """Delete local persisted filesystem data for a thread.
+    """Delete local filesystem data, Store metadata, bound workspace, and checkpoints."""
+    store = get_store(request)
+    thread_record = await require_thread_access(
+        store=store,
+        thread_id=thread_id,
+        current_user=current_user,
+    )
 
-    Cleans DeerFlow-managed thread directories, removes checkpoint data,
-    and removes the thread record from the Store.
-    """
-    # Check ownership if database is available
-    if db is not None:
-        allowed, error_msg = await check_chat_access(db, thread_id, current_user)
-        if not allowed:
-            raise HTTPException(status_code=403, detail=error_msg)
-
-        # Delete chat record (cascades to messages)
-        await ChatRepository.delete_chat(db, thread_id)
-
-    # Clean local filesystem
     response = _delete_thread_data(thread_id)
 
-    # Remove from Store (best-effort)
-    store = get_store(request)
+    workspace_id = get_workspace_id(thread_record)
+    if workspace_id is not None:
+        try:
+            await WorkspaceRepository.delete_workspace(db, workspace_id)
+        except Exception as exc:
+            logger.exception("Failed to delete workspace %s for thread %s", workspace_id, thread_id)
+            raise HTTPException(status_code=500, detail="Failed to delete workspace") from exc
+
     if store is not None:
         try:
-            await store.adelete(THREADS_NS, thread_id)
+            await delete_thread_record(store, thread_id)
         except Exception:
             logger.debug("Could not delete store record for thread %s (not critical)", thread_id)
 
-    # Remove checkpoints (best-effort)
     checkpointer = getattr(request.app.state, "checkpointer", None)
-    if checkpointer is not None:
+    if checkpointer is not None and hasattr(checkpointer, "adelete_thread"):
         try:
-            if hasattr(checkpointer, "adelete_thread"):
-                await checkpointer.adelete_thread(thread_id)
+            await checkpointer.adelete_thread(thread_id)
         except Exception:
             logger.debug("Could not delete checkpoints for thread %s (not critical)", thread_id)
 
@@ -368,95 +285,74 @@ async def delete_thread_data(
 async def create_thread(
     body: ThreadCreateRequest,
     request: Request,
-    current_user: User | None = Depends(get_current_user_optional_no_db),
-    db: AsyncSession | None = Depends(get_db_optional),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> ThreadResponse:
-    """Create a new thread.
-
-    Product chat rows are the business-layer existence anchor. Runtime state is
-    only consulted to detect orphaned checkpoint-only threads.
-    """
+    """Create a new authenticated thread backed by Store metadata."""
     store = get_store(request)
+    if store is None:
+        raise HTTPException(status_code=503, detail="Thread metadata store unavailable")
+
     checkpointer = get_checkpointer(request)
     thread_id = body.thread_id or str(uuid.uuid4())
     now = time.time()
-    config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+    config = _root_checkpoint_config(thread_id)
 
-    existing_record: dict | None = None
-    if store is not None:
-        try:
-            existing_record = await _store_get(store, thread_id)
-        except StoreUnavailableError:
-            logger.warning(
-                "Store unavailable while checking thread %s during create; falling back to checkpoint/PG",
-                thread_id,
-            )
+    try:
+        existing_record = await get_thread_record(store, thread_id)
+    except StoreUnavailableError as exc:
+        raise HTTPException(status_code=503, detail="Thread metadata store unavailable") from exc
 
-    existing_chat: Chat | None = None
-    if current_user is not None and db is not None:
-        try:
-            existing_chat = await ChatRepository.get_chat_by_thread_id(db, thread_id)
-        except Exception as exc:
-            logger.exception("Failed to check chat record for thread %s", thread_id)
-            raise HTTPException(status_code=500, detail="Failed to create thread") from exc
+    try:
+        existing_checkpoint = await checkpointer.aget_tuple(config)
+    except Exception as exc:
+        if is_runtime_state_unavailable(exc):
+            raise to_runtime_state_http_exception(exc) from exc
+        logger.exception("Failed to check existing checkpoint for thread %s", thread_id)
+        raise HTTPException(status_code=500, detail="Failed to create thread") from exc
 
-        if existing_chat is not None:
-            return _build_thread_response_from_chat(existing_chat, record=existing_record)
-
-        try:
-            existing_checkpoint = await checkpointer.aget_tuple(config)
-        except Exception as exc:
-            if is_runtime_state_unavailable(exc):
-                _raise_runtime_state_http_exception(exc, thread_id=thread_id, operation="checking thread existence")
-            logger.exception("Failed to check existing checkpoint for thread %s", thread_id)
-            raise HTTPException(status_code=500, detail="Failed to create thread") from exc
-
-        if existing_checkpoint is not None:
+    if existing_record is not None:
+        owner_user_id = coerce_owner_user_id(existing_record)
+        if owner_user_id is None:
+            raise HTTPException(status_code=403, detail="Thread is missing an owner")
+        if owner_user_id != current_user.id:
+            raise HTTPException(status_code=403, detail=f"Thread belongs to user {owner_user_id}")
+        if existing_checkpoint is None:
             raise HTTPException(
                 status_code=409,
-                detail="Thread exists in runtime state but is missing product projection",
+                detail="Thread exists in thread metadata but is missing runtime state",
             )
+        return _build_thread_response(existing_record)
 
-    else:
-        try:
-            existing_checkpoint = await checkpointer.aget_tuple(config)
-        except Exception as exc:
-            if is_runtime_state_unavailable(exc):
-                _raise_runtime_state_http_exception(exc, thread_id=thread_id, operation="checking thread existence")
-            logger.exception("Failed to check existing checkpoint for thread %s", thread_id)
-            raise HTTPException(status_code=500, detail="Failed to create thread") from exc
+    if existing_checkpoint is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Thread exists in runtime state but is missing thread metadata",
+        )
 
-        if existing_checkpoint is not None:
-            return _build_thread_response_from_checkpoint(
-                thread_id,
-                existing_checkpoint,
-                record=existing_record,
-            )
+    workspace = await WorkspaceRepository.create_workspace(
+        db=db,
+        owner_user_id=current_user.id,
+        name=None,
+        commit=False,
+    )
+    created_record: ThreadRecord = {
+        "thread_id": thread_id,
+        "owner_user_id": current_user.id,
+        "workspace_id": str(workspace.id),
+        "status": "idle",
+        "created_at": now,
+        "updated_at": now,
+        "metadata": dict(body.metadata),
+        "values": {},
+    }
+    checkpoint_created = False
+    store_record_written = False
 
-    created_chat: Chat | None = None
-    chat_created_in_request = False
-    # Create chat record if user is logged in
-    if current_user is not None and db is not None:
-        try:
-            import uuid as uuid_module
-
-            created_chat = await ChatRepository.create_chat(
-                db=db,
-                thread_id=thread_id,
-                owner_user_id=current_user.id,
-                workspace_id=uuid_module.uuid4(),  # Auto-generate workspace for v1
-                status="idle",
-            )
-            chat_created_in_request = True
-        except Exception as exc:
-            logger.exception("Failed to create chat record for thread %s", thread_id)
-            raise HTTPException(status_code=500, detail="Failed to create chat record") from exc
-
-    # Write an empty checkpoint so state endpoints work immediately
     try:
         from langgraph.checkpoint.base import empty_checkpoint
 
-        ckpt_metadata = {
+        checkpoint_metadata = {
             "step": -1,
             "source": "input",
             "writes": None,
@@ -464,130 +360,69 @@ async def create_thread(
             **body.metadata,
             "created_at": now,
         }
-        await checkpointer.aput(config, empty_checkpoint(), ckpt_metadata, {})
+        await checkpointer.aput(config, empty_checkpoint(), checkpoint_metadata, {})
+        checkpoint_created = True
+
+        await put_thread_record(store, created_record)
+        store_record_written = True
+
+        await db.commit()
     except Exception as exc:
-        if chat_created_in_request and db is not None:
-            try:
-                await ChatRepository.delete_chat(db, thread_id)
-            except Exception:
-                logger.warning(
-                    "Failed to compensate chat creation for thread %s after checkpoint failure",
-                    thread_id,
-                    exc_info=True,
-                )
+        await _cleanup_failed_thread_creation(
+            store=store,
+            checkpointer=checkpointer,
+            thread_id=thread_id,
+            rollback_db=db.rollback,
+            delete_checkpoint=checkpoint_created,
+            delete_store_record_on_failure=store_record_written,
+        )
+        if isinstance(exc, StoreUnavailableError):
+            raise HTTPException(status_code=503, detail="Thread metadata store unavailable") from exc
         if is_runtime_state_unavailable(exc):
-            _raise_runtime_state_http_exception(exc, thread_id=thread_id, operation="creating root checkpoint")
-        logger.exception("Failed to create checkpoint for thread %s", thread_id)
+            raise to_runtime_state_http_exception(exc) from exc
+        logger.exception("Failed to create thread %s", thread_id)
         raise HTTPException(status_code=500, detail="Failed to create thread") from exc
 
-    # Write thread record to Store
-    if store is not None:
-        try:
-            await _store_put(
-                store,
-                {
-                    "thread_id": thread_id,
-                    "status": "idle",
-                    "created_at": now,
-                    "updated_at": now,
-                    "metadata": body.metadata,
-                },
-            )
-        except StoreUnavailableError:
-            logger.warning("Store unavailable while writing thread %s; continuing without Store sync", thread_id)
-        except Exception:
-            logger.warning(
-                "Failed to write thread %s to store; continuing without Store sync",
-                thread_id,
-                exc_info=True,
-            )
-
     logger.info("Thread created: %s", thread_id)
-    if created_chat is not None:
-        return _build_thread_response_from_chat(created_chat, record=existing_record)
-
-    return ThreadResponse(
-        thread_id=thread_id,
-        status="idle",
-        created_at=str(now),
-        updated_at=str(now),
-        metadata=body.metadata,
-    )
+    return _build_thread_response(created_record)
 
 
 @router.post("/search", response_model=list[ThreadResponse])
 async def search_threads(
     body: ThreadSearchRequest,
     request: Request,
-    current_user: User | None = Depends(get_current_user_optional_no_db),
-    db: AsyncSession | None = Depends(get_db_optional),
+    current_user: User = Depends(get_current_user),
 ) -> list[ThreadResponse]:
-    """Search and list threads using product tables first."""
+    """Search thread metadata from Store for the authenticated user."""
     store = get_store(request)
-    merged: dict[str, ThreadResponse] = {}
-    store_records: dict[str, dict[str, Any]] = {}
+    if store is None:
+        raise HTTPException(status_code=503, detail="Thread metadata store unavailable")
 
-    if store is not None:
-        try:
-            items = await _store_search(store, limit=10_000)
-        except Exception:
-            logger.warning("Store search failed - continuing without auxiliary metadata", exc_info=True)
-            items = []
+    try:
+        items = await search_thread_records(store, limit=10_000)
+    except StoreUnavailableError as exc:
+        raise HTTPException(status_code=503, detail="Thread metadata store unavailable") from exc
 
-        for item in items:
-            value = item.value
-            if isinstance(value, dict) and value.get("thread_id"):
-                store_records[str(value["thread_id"])] = value
-
-    if db is not None and current_user is not None:
-        try:
-            result = await db.execute(
-                select(Chat)
-                .where(Chat.owner_user_id == current_user.id)
-                .order_by(Chat.updated_at.desc())
-            )
-            chats = result.scalars().all()
-
-            for chat in chats:
-                thread_id = str(chat.thread_id)
-                merged[thread_id] = _build_thread_response_from_chat(
-                    chat,
-                    record=store_records.get(thread_id),
-                )
-        except Exception:
-            logger.warning("PG search failed - falling back to Store", exc_info=True)
-
-    for thread_id, val in store_records.items():
-        if thread_id in merged:
+    matching_records: list[ThreadRecord] = []
+    for item in items:
+        value = getattr(item, "value", None)
+        if not isinstance(value, dict) or not value.get("thread_id"):
             continue
+        if coerce_owner_user_id(value) != current_user.id:
+            continue
+        if body.status and value.get("status") != body.status:
+            continue
+        metadata = value.get("metadata") or {}
+        if any(metadata.get(key) != expected for key, expected in body.metadata.items()):
+            continue
+        matching_records.append(value)
 
-        if db is not None:
-            chat = await ChatRepository.get_chat_by_thread_id(db, thread_id)
-            if current_user is not None:
-                if chat is None or chat.owner_user_id != current_user.id:
-                    continue
-            elif chat is not None:
-                continue
-
-        merged[thread_id] = ThreadResponse(
-            thread_id=thread_id,
-            status=val.get("status", "idle"),
-            created_at=str(val.get("created_at", "")),
-            updated_at=str(val.get("updated_at", "")),
-            metadata=val.get("metadata", {}),
-            values=val.get("values", {}),
-        )
-
-    results = list(merged.values())
-
-    if body.metadata:
-        results = [r for r in results if all(r.metadata.get(k) == v for k, v in body.metadata.items())]
-
-    if body.status:
-        results = [r for r in results if r.status == body.status]
-
-    results.sort(key=lambda r: r.updated_at, reverse=True)
-    return results[body.offset : body.offset + body.limit]
+    matching_records.sort(
+        key=lambda record: _timestamp_sort_key(record.get("updated_at") or record.get("created_at")),
+        reverse=True,
+    )
+    paged_records = matching_records[body.offset : body.offset + body.limit]
+    return [_build_thread_response(record) for record in paged_records]
 
 
 @router.patch("/{thread_id}", response_model=ThreadResponse)
@@ -595,121 +430,71 @@ async def patch_thread(
     thread_id: str,
     body: ThreadPatchRequest,
     request: Request,
-    current_user: User | None = Depends(get_current_user_optional_no_db),
-    db: AsyncSession | None = Depends(get_db_optional),
+    current_user: User = Depends(get_current_user),
 ) -> ThreadResponse:
-    """Merge metadata into a thread record."""
-    # Check ownership if database is available
-    if db is not None:
-        allowed, error_msg = await check_chat_access(db, thread_id, current_user)
-        if not allowed:
-            raise HTTPException(status_code=403, detail=error_msg)
-
+    """Merge metadata into a Store-backed thread record."""
     store = get_store(request)
-    if store is None:
-        raise HTTPException(status_code=503, detail="Store not available")
-
-    try:
-        record = await _store_get(store, thread_id)
-    except StoreUnavailableError as exc:
-        raise HTTPException(status_code=503, detail="Thread metadata store unavailable") from exc
-    if record is None:
-        raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
-
-    now = time.time()
-    updated = dict(record)
-    updated.setdefault("metadata", {}).update(body.metadata)
-    updated["updated_at"] = now
-
-    try:
-        await _store_put(store, updated)
-    except StoreUnavailableError as exc:
-        raise HTTPException(status_code=503, detail="Thread metadata store unavailable") from exc
-    except Exception:
-        logger.exception("Failed to patch thread %s", thread_id)
-        raise HTTPException(status_code=500, detail="Failed to update thread")
-
-    return ThreadResponse(
+    thread_record = await require_thread_access(
+        store=store,
         thread_id=thread_id,
-        status=updated.get("status", "idle"),
-        created_at=str(updated.get("created_at", "")),
-        updated_at=str(now),
-        metadata=updated.get("metadata", {}),
+        current_user=current_user,
     )
+
+    try:
+        updated_record = await upsert_thread_record(
+            store,
+            thread_id,
+            metadata=body.metadata,
+        )
+    except StoreUnavailableError as exc:
+        raise HTTPException(status_code=503, detail="Thread metadata store unavailable") from exc
+    except Exception as exc:
+        logger.exception("Failed to patch thread %s", thread_id)
+        raise HTTPException(status_code=500, detail="Failed to update thread") from exc
+
+    if not updated_record.get("workspace_id"):
+        updated_record["workspace_id"] = get_workspace_id(thread_record)
+    return _build_thread_response(updated_record)
 
 
 @router.get("/{thread_id}", response_model=ThreadResponse)
 async def get_thread(
     thread_id: str,
     request: Request,
-    current_user: User | None = Depends(get_current_user_optional_no_db),
-    db: AsyncSession | None = Depends(get_db_optional),
+    current_user: User = Depends(get_current_user),
 ) -> ThreadResponse:
-    """Get thread info.
-
-    Reads metadata from the Store and derives the accurate execution
-    status from the checkpointer.  Falls back to the checkpointer alone
-    for threads that pre-date Store adoption (backward compat).
-    """
-    # Check ownership if database is available
-    await require_thread_access(db=db, thread_id=thread_id, current_user=current_user)
-
+    """Get thread metadata from Store and runtime state from the checkpointer."""
     store = get_store(request)
+    thread_record = await require_thread_access(
+        store=store,
+        thread_id=thread_id,
+        current_user=current_user,
+    )
     checkpointer = get_checkpointer(request)
 
-    record: dict | None = None
-    store_unavailable = False
-    if store is not None:
-        try:
-            record = await _store_get(store, thread_id)
-        except StoreUnavailableError:
-            store_unavailable = True
-            logger.warning(
-                "Store unavailable while reading thread %s; falling back to checkpoint/PG",
-                thread_id,
-            )
-
-    # Derive accurate status from the checkpointer
-    config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
     try:
-        checkpoint_tuple = await checkpointer.aget_tuple(config)
+        checkpoint_tuple = await checkpointer.aget_tuple(
+            _root_checkpoint_config(thread_id)
+        )
     except Exception as exc:
         if is_runtime_state_unavailable(exc):
-            _raise_runtime_state_http_exception(exc, thread_id=thread_id, operation="reading thread")
+            raise to_runtime_state_http_exception(exc) from exc
         logger.exception("Failed to get checkpoint for thread %s", thread_id)
         raise HTTPException(status_code=500, detail="Failed to get thread") from exc
 
-    if record is None and checkpoint_tuple is None:
-        if store_unavailable:
-            raise HTTPException(status_code=503, detail="Thread metadata store unavailable")
-        raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
+    if checkpoint_tuple is None:
+        return _build_thread_response(thread_record)
 
-    # If the thread exists in the checkpointer but not the store (e.g. legacy
-    # data), synthesize a minimal store record from the checkpoint metadata.
-    if record is None and checkpoint_tuple is not None:
-        ckpt_meta = getattr(checkpoint_tuple, "metadata", {}) or {}
-        record = {
-            "thread_id": thread_id,
-            "status": "idle",
-            "created_at": ckpt_meta.get("created_at", ""),
-            "updated_at": ckpt_meta.get("updated_at", ckpt_meta.get("created_at", "")),
-            "metadata": {k: v for k, v in ckpt_meta.items() if k not in ("created_at", "updated_at", "step", "source", "writes", "parents")},
-        }
+    checkpoint = getattr(checkpoint_tuple, "checkpoint", {}) or {}
+    channel_values = serialize_channel_values(checkpoint.get("channel_values", {}))
+    title = (thread_record.get("values") or {}).get("title")
+    if title and "title" not in channel_values:
+        channel_values["title"] = title
 
-    if record is None:
-        raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
-
-    status = _derive_thread_status(checkpoint_tuple) if checkpoint_tuple is not None else record.get("status", "idle")
-    checkpoint = getattr(checkpoint_tuple, "checkpoint", {}) or {} if checkpoint_tuple is not None else {}
-    channel_values = checkpoint.get("channel_values", {})
-
-    return ThreadResponse(
-        thread_id=thread_id,
-        status=status,
-        created_at=str(record.get("created_at", "")),
-        updated_at=str(record.get("updated_at", "")),
-        metadata=record.get("metadata", {}),
-        values=serialize_channel_values(channel_values),
+    return _build_thread_response(
+        thread_record,
+        values=channel_values,
+        status=_derive_thread_status(checkpoint_tuple, default_status=str(thread_record.get("status", "idle"))),
     )
 
 
@@ -717,23 +502,23 @@ async def get_thread(
 async def get_thread_state(
     thread_id: str,
     request: Request,
-    current_user: User | None = Depends(get_current_user_optional_no_db),
-    db: AsyncSession | None = Depends(get_db_optional),
+    current_user: User = Depends(get_current_user),
 ) -> ThreadStateResponse:
-    """Get the latest state snapshot for a thread.
-
-    Channel values are serialized to ensure LangChain message objects
-    are converted to JSON-safe dicts.
-    """
-    await require_thread_access(db=db, thread_id=thread_id, current_user=current_user)
+    """Get the latest runtime state snapshot for a thread."""
+    await require_thread_access(
+        store=get_store(request),
+        thread_id=thread_id,
+        current_user=current_user,
+    )
     checkpointer = get_checkpointer(request)
 
-    config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
     try:
-        checkpoint_tuple = await checkpointer.aget_tuple(config)
+        checkpoint_tuple = await checkpointer.aget_tuple(
+            _root_checkpoint_config(thread_id)
+        )
     except Exception as exc:
         if is_runtime_state_unavailable(exc):
-            _raise_runtime_state_http_exception(exc, thread_id=thread_id, operation="reading thread state")
+            raise to_runtime_state_http_exception(exc) from exc
         logger.exception("Failed to get state for thread %s", thread_id)
         raise HTTPException(status_code=500, detail="Failed to get thread state") from exc
 
@@ -742,24 +527,18 @@ async def get_thread_state(
 
     checkpoint = getattr(checkpoint_tuple, "checkpoint", {}) or {}
     metadata = getattr(checkpoint_tuple, "metadata", {}) or {}
-    checkpoint_id = None
-    ckpt_config = getattr(checkpoint_tuple, "config", {})
-    if ckpt_config:
-        checkpoint_id = ckpt_config.get("configurable", {}).get("checkpoint_id")
-
-    channel_values = checkpoint.get("channel_values", {})
-
-    parent_config = getattr(checkpoint_tuple, "parent_config", None)
+    checkpoint_id = getattr(checkpoint_tuple, "config", {}).get("configurable", {}).get("checkpoint_id")
     parent_checkpoint_id = None
+    parent_config = getattr(checkpoint_tuple, "parent_config", None)
     if parent_config:
         parent_checkpoint_id = parent_config.get("configurable", {}).get("checkpoint_id")
 
     tasks_raw = getattr(checkpoint_tuple, "tasks", []) or []
-    next_tasks = [t.name for t in tasks_raw if hasattr(t, "name")]
-    tasks = [{"id": getattr(t, "id", ""), "name": getattr(t, "name", "")} for t in tasks_raw]
+    next_tasks = [task.name for task in tasks_raw if hasattr(task, "name")]
+    tasks = [{"id": getattr(task, "id", ""), "name": getattr(task, "name", "")} for task in tasks_raw]
 
     return ThreadStateResponse(
-        values=serialize_channel_values(channel_values),
+        values=serialize_channel_values(checkpoint.get("channel_values", {})),
         next=next_tasks,
         metadata=metadata,
         checkpoint={"id": checkpoint_id, "ts": str(metadata.get("created_at", ""))},
@@ -771,40 +550,37 @@ async def get_thread_state(
 
 
 @router.post("/{thread_id}/state", response_model=ThreadStateResponse)
-async def update_thread_state(thread_id: str, body: ThreadStateUpdateRequest, request: Request) -> ThreadStateResponse:
-    """Update thread state (e.g. for human-in-the-loop resume or title rename).
-
-    Writes a new checkpoint that merges *body.values* into the latest
-    channel values, then syncs any updated ``title`` field back to the Store
-    so that ``/threads/search`` reflects the change immediately.
-    """
-    checkpointer = get_checkpointer(request)
+async def update_thread_state(
+    thread_id: str,
+    body: ThreadStateUpdateRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> ThreadStateResponse:
+    """Write a new checkpoint and best-effort mirror title changes into Store."""
     store = get_store(request)
+    await require_thread_access(
+        store=store,
+        thread_id=thread_id,
+        current_user=current_user,
+    )
+    checkpointer = get_checkpointer(request)
 
-    # checkpoint_ns must be present in the config for aput — default to ""
-    # (the root graph namespace).  checkpoint_id is optional; omitting it
-    # fetches the latest checkpoint for the thread.
-    read_config: dict[str, Any] = {
-        "configurable": {
-            "thread_id": thread_id,
-            "checkpoint_ns": "",
-        }
-    }
-    if body.checkpoint_id:
-        read_config["configurable"]["checkpoint_id"] = body.checkpoint_id
+    read_config = _root_checkpoint_config(
+        thread_id,
+        checkpoint_id=body.checkpoint_id,
+    )
 
     try:
         checkpoint_tuple = await checkpointer.aget_tuple(read_config)
     except Exception as exc:
         if is_runtime_state_unavailable(exc):
-            _raise_runtime_state_http_exception(exc, thread_id=thread_id, operation="loading thread state for update")
+            raise to_runtime_state_http_exception(exc) from exc
         logger.exception("Failed to get state for thread %s", thread_id)
         raise HTTPException(status_code=500, detail="Failed to get thread state") from exc
 
     if checkpoint_tuple is None:
         raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
 
-    # Work on mutable copies so we don't accidentally mutate cached objects.
     checkpoint: dict[str, Any] = dict(getattr(checkpoint_tuple, "checkpoint", {}) or {})
     metadata: dict[str, Any] = dict(getattr(checkpoint_tuple, "metadata", {}) or {})
     channel_values: dict[str, Any] = dict(checkpoint.get("channel_values", {}))
@@ -820,39 +596,35 @@ async def update_thread_state(thread_id: str, body: ThreadStateUpdateRequest, re
         metadata["step"] = metadata.get("step", 0) + 1
         metadata["writes"] = {body.as_node: body.values}
 
-    # aput requires checkpoint_ns in the config — use the same config used for the
-    # read (which always includes checkpoint_ns="").  Do NOT include checkpoint_id
-    # so that aput generates a fresh checkpoint ID for the new snapshot.
-    write_config: dict[str, Any] = {
-        "configurable": {
-            "thread_id": thread_id,
-            "checkpoint_ns": "",
-        }
-    }
     try:
-        new_config = await checkpointer.aput(write_config, checkpoint, metadata, {})
+        new_config = await checkpointer.aput(
+            _root_checkpoint_config(thread_id),
+            checkpoint,
+            metadata,
+            {},
+        )
     except Exception as exc:
         if is_runtime_state_unavailable(exc):
-            _raise_runtime_state_http_exception(exc, thread_id=thread_id, operation="writing updated thread state")
+            raise to_runtime_state_http_exception(exc) from exc
         logger.exception("Failed to update state for thread %s", thread_id)
         raise HTTPException(status_code=500, detail="Failed to update thread state") from exc
 
-    new_checkpoint_id: str | None = None
-    if isinstance(new_config, dict):
-        new_checkpoint_id = new_config.get("configurable", {}).get("checkpoint_id")
-
-    # Sync title changes to the Store so /threads/search reflects them immediately.
-    if store is not None and body.values and "title" in body.values:
+    if store is not None:
         try:
-            await _store_upsert(store, thread_id, values={"title": body.values["title"]})
+            values = {"title": body.values["title"]} if body.values and "title" in body.values else None
+            await upsert_thread_record(store, thread_id, values=values)
         except Exception:
-            logger.debug("Failed to sync title to store for thread %s (non-fatal)", thread_id)
+            logger.debug("Failed to sync store metadata for thread %s after state update", thread_id, exc_info=True)
+
+    checkpoint_id = None
+    if isinstance(new_config, dict):
+        checkpoint_id = new_config.get("configurable", {}).get("checkpoint_id")
 
     return ThreadStateResponse(
         values=serialize_channel_values(channel_values),
         next=[],
         metadata=metadata,
-        checkpoint_id=new_checkpoint_id,
+        checkpoint_id=checkpoint_id,
         created_at=str(metadata.get("created_at", "")),
     )
 
@@ -862,49 +634,50 @@ async def get_thread_history(
     thread_id: str,
     body: ThreadHistoryRequest,
     request: Request,
-    current_user: User | None = Depends(get_current_user_optional_no_db),
-    db: AsyncSession | None = Depends(get_db_optional),
+    current_user: User = Depends(get_current_user),
 ) -> list[HistoryEntry]:
-    """Get checkpoint history for a thread."""
-    await require_thread_access(db=db, thread_id=thread_id, current_user=current_user)
+    """Get checkpoint history for an owned thread."""
+    await require_thread_access(
+        store=get_store(request),
+        thread_id=thread_id,
+        current_user=current_user,
+    )
     checkpointer = get_checkpointer(request)
 
-    config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
-    if body.before:
-        config["configurable"]["checkpoint_id"] = body.before
+    config = _root_checkpoint_config(
+        thread_id,
+        checkpoint_id=body.before,
+    )
 
     entries: list[HistoryEntry] = []
     try:
         async for checkpoint_tuple in checkpointer.alist(config, limit=body.limit):
-            ckpt_config = getattr(checkpoint_tuple, "config", {})
+            checkpoint_config = getattr(checkpoint_tuple, "config", {})
             parent_config = getattr(checkpoint_tuple, "parent_config", None)
             metadata = getattr(checkpoint_tuple, "metadata", {}) or {}
             checkpoint = getattr(checkpoint_tuple, "checkpoint", {}) or {}
 
-            checkpoint_id = ckpt_config.get("configurable", {}).get("checkpoint_id", "")
-            parent_id = None
+            checkpoint_id = checkpoint_config.get("configurable", {}).get("checkpoint_id", "")
+            parent_checkpoint_id = None
             if parent_config:
-                parent_id = parent_config.get("configurable", {}).get("checkpoint_id")
+                parent_checkpoint_id = parent_config.get("configurable", {}).get("checkpoint_id")
 
-            channel_values = checkpoint.get("channel_values", {})
-
-            # Derive next tasks
             tasks_raw = getattr(checkpoint_tuple, "tasks", []) or []
-            next_tasks = [t.name for t in tasks_raw if hasattr(t, "name")]
+            next_tasks = [task.name for task in tasks_raw if hasattr(task, "name")]
 
             entries.append(
                 HistoryEntry(
                     checkpoint_id=checkpoint_id,
-                    parent_checkpoint_id=parent_id,
+                    parent_checkpoint_id=parent_checkpoint_id,
                     metadata=metadata,
-                    values=serialize_channel_values(channel_values),
+                    values=serialize_channel_values(checkpoint.get("channel_values", {})),
                     created_at=str(metadata.get("created_at", "")),
                     next=next_tasks,
                 )
             )
     except Exception as exc:
         if is_runtime_state_unavailable(exc):
-            _raise_runtime_state_http_exception(exc, thread_id=thread_id, operation="reading thread history")
+            raise to_runtime_state_http_exception(exc) from exc
         logger.exception("Failed to get history for thread %s", thread_id)
         raise HTTPException(status_code=500, detail="Failed to get thread history") from exc
 

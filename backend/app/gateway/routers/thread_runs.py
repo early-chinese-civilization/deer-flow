@@ -18,15 +18,14 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.gateway.services as gateway_services
 from app.gateway.db.models import User
 from app.gateway.deps import (
     get_checkpointer,
-    get_current_user_optional_no_db,
-    get_db_optional,
+    get_current_user,
     get_run_manager,
+    get_store,
     get_stream_bridge,
 )
 from app.gateway.services.ownership import require_thread_access
@@ -34,6 +33,7 @@ from app.gateway.services.runtime_state import (
     is_runtime_state_unavailable,
     to_runtime_state_http_exception,
 )
+from app.gateway.services.thread_store import ThreadRecord
 from deerflow.runtime import RunRecord, serialize_channel_values
 
 logger = logging.getLogger(__name__)
@@ -99,6 +99,25 @@ def _record_to_response(record: RunRecord) -> RunResponse:
     )
 
 
+def _root_checkpoint_config(thread_id: str) -> dict[str, dict[str, str]]:
+    """Build the root checkpoint config for a thread."""
+    return {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+
+
+async def _require_owned_thread(
+    *,
+    request: Request,
+    thread_id: str,
+    current_user: User,
+) -> ThreadRecord:
+    """Load and authorize the Store-backed thread record for this request."""
+    return await require_thread_access(
+        store=get_store(request),
+        thread_id=thread_id,
+        current_user=current_user,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -109,13 +128,21 @@ async def create_run(
     thread_id: str,
     body: RunCreateRequest,
     request: Request,
-    current_user: User | None = Depends(get_current_user_optional_no_db),
-    db: AsyncSession | None = Depends(get_db_optional),
+    current_user: User = Depends(get_current_user),
 ) -> RunResponse:
     """Create a background run (returns immediately)."""
-    await require_thread_access(db=db, thread_id=thread_id, current_user=current_user)
+    thread_record = await _require_owned_thread(
+        request=request,
+        thread_id=thread_id,
+        current_user=current_user,
+    )
 
-    record = await gateway_services.start_run(body, thread_id, request)
+    record = await gateway_services.start_run(
+        body,
+        thread_id,
+        request,
+        thread_record=thread_record,
+    )
     return _record_to_response(record)
 
 
@@ -124,8 +151,7 @@ async def stream_run(
     thread_id: str,
     body: RunCreateRequest,
     request: Request,
-    current_user: User | None = Depends(get_current_user_optional_no_db),
-    db: AsyncSession | None = Depends(get_db_optional),
+    current_user: User = Depends(get_current_user),
 ) -> StreamingResponse:
     """Create a run and stream events via SSE.
 
@@ -133,11 +159,20 @@ async def stream_run(
     resource URL, matching the LangGraph Platform protocol.  The
     ``useStream`` React hook uses this to extract run metadata.
     """
-    await require_thread_access(db=db, thread_id=thread_id, current_user=current_user)
+    thread_record = await _require_owned_thread(
+        request=request,
+        thread_id=thread_id,
+        current_user=current_user,
+    )
 
     bridge = get_stream_bridge(request)
     run_mgr = get_run_manager(request)
-    record = await gateway_services.start_run(body, thread_id, request)
+    record = await gateway_services.start_run(
+        body,
+        thread_id,
+        request,
+        thread_record=thread_record,
+    )
 
     return StreamingResponse(
         gateway_services.sse_consumer(bridge, record, request, run_mgr),
@@ -154,9 +189,24 @@ async def stream_run(
 
 
 @router.post("/{thread_id}/runs/wait", response_model=dict)
-async def wait_run(thread_id: str, body: RunCreateRequest, request: Request) -> dict:
+async def wait_run(
+    thread_id: str,
+    body: RunCreateRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> dict:
     """Create a run and block until it completes, returning the final state."""
-    record = await gateway_services.start_run(body, thread_id, request)
+    thread_record = await _require_owned_thread(
+        request=request,
+        thread_id=thread_id,
+        current_user=current_user,
+    )
+    record = await gateway_services.start_run(
+        body,
+        thread_id,
+        request,
+        thread_record=thread_record,
+    )
 
     if record.task is not None:
         try:
@@ -165,9 +215,8 @@ async def wait_run(thread_id: str, body: RunCreateRequest, request: Request) -> 
             pass
 
     checkpointer = get_checkpointer(request)
-    config = {"configurable": {"thread_id": thread_id}}
     try:
-        checkpoint_tuple = await checkpointer.aget_tuple(config)
+        checkpoint_tuple = await checkpointer.aget_tuple(_root_checkpoint_config(thread_id))
         if checkpoint_tuple is not None:
             checkpoint = getattr(checkpoint_tuple, "checkpoint", {}) or {}
             channel_values = checkpoint.get("channel_values", {})
@@ -186,16 +235,35 @@ async def wait_run(thread_id: str, body: RunCreateRequest, request: Request) -> 
 
 
 @router.get("/{thread_id}/runs", response_model=list[RunResponse])
-async def list_runs(thread_id: str, request: Request) -> list[RunResponse]:
+async def list_runs(
+    thread_id: str,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> list[RunResponse]:
     """List all runs for a thread."""
+    await _require_owned_thread(
+        request=request,
+        thread_id=thread_id,
+        current_user=current_user,
+    )
     run_mgr = get_run_manager(request)
     records = await run_mgr.list_by_thread(thread_id)
     return [_record_to_response(r) for r in records]
 
 
 @router.get("/{thread_id}/runs/{run_id}", response_model=RunResponse)
-async def get_run(thread_id: str, run_id: str, request: Request) -> RunResponse:
+async def get_run(
+    thread_id: str,
+    run_id: str,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> RunResponse:
     """Get details of a specific run."""
+    await _require_owned_thread(
+        request=request,
+        thread_id=thread_id,
+        current_user=current_user,
+    )
     run_mgr = get_run_manager(request)
     record = run_mgr.get(run_id)
     if record is None or record.thread_id != thread_id:
@@ -208,6 +276,7 @@ async def cancel_run(
     thread_id: str,
     run_id: str,
     request: Request,
+    current_user: User = Depends(get_current_user),
     wait: bool = Query(default=False, description="Block until run completes after cancel"),
     action: Literal["interrupt", "rollback"] = Query(default="interrupt", description="Cancel action"),
 ) -> Response:
@@ -218,6 +287,11 @@ async def cancel_run(
     - wait=true: Block until the run fully stops, return 204
     - wait=false: Return immediately with 202
     """
+    await _require_owned_thread(
+        request=request,
+        thread_id=thread_id,
+        current_user=current_user,
+    )
     run_mgr = get_run_manager(request)
     record = run_mgr.get(run_id)
     if record is None or record.thread_id != thread_id:
@@ -241,8 +315,18 @@ async def cancel_run(
 
 
 @router.get("/{thread_id}/runs/{run_id}/join")
-async def join_run(thread_id: str, run_id: str, request: Request) -> StreamingResponse:
+async def join_run(
+    thread_id: str,
+    run_id: str,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
     """Join an existing run's SSE stream."""
+    await _require_owned_thread(
+        request=request,
+        thread_id=thread_id,
+        current_user=current_user,
+    )
     bridge = get_stream_bridge(request)
     run_mgr = get_run_manager(request)
     record = run_mgr.get(run_id)
@@ -265,6 +349,7 @@ async def stream_existing_run(
     thread_id: str,
     run_id: str,
     request: Request,
+    current_user: User = Depends(get_current_user),
     action: Literal["interrupt", "rollback"] | None = Query(default=None, description="Cancel action"),
     wait: int = Query(default=0, description="Block until cancelled (1) or return immediately (0)"),
 ):
@@ -275,6 +360,11 @@ async def stream_existing_run(
     is present the run is cancelled first; the response then streams any
     remaining buffered events so the client observes a clean shutdown.
     """
+    await _require_owned_thread(
+        request=request,
+        thread_id=thread_id,
+        current_user=current_user,
+    )
     run_mgr = get_run_manager(request)
     record = run_mgr.get(run_id)
     if record is None or record.thread_id != thread_id:

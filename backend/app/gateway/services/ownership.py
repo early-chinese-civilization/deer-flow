@@ -1,104 +1,58 @@
-"""Ownership and lazy-takeover helpers for thread-backed chat resources."""
+"""Store-backed ownership helpers for thread resources."""
 
 from __future__ import annotations
 
-import logging
-import uuid
-
 from fastapi import HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.db.models import Chat, User
-from app.gateway.db.repository import ChatRepository
-
-logger = logging.getLogger(__name__)
-
-
-def _build_forbidden_error(detail: str | None) -> HTTPException:
-    """Create a consistent 403 response for thread ownership failures."""
-    return HTTPException(status_code=403, detail=detail or "Thread access denied")
+from app.gateway.db.models import User
+from app.gateway.services.thread_store import (
+    StoreUnavailableError,
+    ThreadRecord,
+    coerce_owner_user_id,
+    get_thread_record,
+)
 
 
-async def ensure_chat_ownership(
-    db: AsyncSession,
-    thread_id: str,
-    current_user: User | None,
-    *,
-    auto_create_workspace: bool = True,
-) -> Chat | None:
-    """Ensure a chat row exists for a thread when a signed-in user opens it.
+def _thread_not_found_error(thread_id: str) -> HTTPException:
+    """Return the canonical 404 for missing thread metadata."""
+    return HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
 
-    Legacy threads may pre-date the product chat tables. When a logged-in user
-    opens one of those threads for the first time, we lazily take ownership by
-    creating the corresponding ``chats`` row. Anonymous access remains read-only
-    and does not create product records.
-    """
-    chat = await ChatRepository.get_chat_by_thread_id(db, thread_id)
-    if chat is not None:
-        return chat
 
+def _store_unavailable_error() -> HTTPException:
+    """Return the canonical 503 for Store connectivity failures."""
+    return HTTPException(status_code=503, detail="Thread metadata store unavailable")
+
+
+def _require_authenticated_user(current_user: User | None) -> User:
+    """Return the authenticated user or raise a 401."""
     if current_user is None:
-        logger.debug("Anonymous access to legacy thread %s does not trigger takeover", thread_id)
-        return None
-
-    workspace_id = uuid.uuid4() if auto_create_workspace else None
-    logger.info("User %s is taking over legacy thread %s", current_user.id, thread_id)
-    return await ChatRepository.create_chat(
-        db=db,
-        thread_id=thread_id,
-        owner_user_id=current_user.id,
-        workspace_id=workspace_id,
-        status="idle",
-    )
-
-
-async def check_chat_access(
-    db: AsyncSession,
-    thread_id: str,
-    current_user: User | None,
-) -> tuple[bool, str | None]:
-    """Return whether the caller may access the thread's chat record."""
-    chat = await ChatRepository.get_chat_by_thread_id(db, thread_id)
-    if chat is None:
-        return True, None
-
-    if current_user is None:
-        return False, "Authentication is required to access this thread"
-
-    if chat.owner_user_id != current_user.id:
-        return False, f"Thread belongs to user {chat.owner_user_id}"
-
-    return True, None
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return current_user
 
 
 async def require_thread_access(
     *,
-    db: AsyncSession | None,
+    store,
     thread_id: str,
     current_user: User | None,
-    auto_create_workspace: bool = True,
-) -> Chat | None:
-    """Guard thread access and optionally perform lazy takeover.
+) -> ThreadRecord:
+    """Validate that the caller owns the requested thread record."""
+    user = _require_authenticated_user(current_user)
+    if store is None:
+        raise _store_unavailable_error()
 
-    This is the single router-facing helper for Phase 2 semantics:
-    1. Existing chats must pass owner checks.
-    2. Logged-in users opening legacy threads lazily create the chat row.
-    3. Anonymous callers may keep read-only access to legacy threads.
-    """
-    if db is None:
-        return None
+    try:
+        record = await get_thread_record(store, thread_id)
+    except StoreUnavailableError as exc:
+        raise _store_unavailable_error() from exc
 
-    allowed, error_message = await check_chat_access(db, thread_id, current_user)
-    if not allowed:
-        raise _build_forbidden_error(error_message)
+    if record is None:
+        raise _thread_not_found_error(thread_id)
 
-    chat = await ensure_chat_ownership(
-        db,
-        thread_id,
-        current_user,
-        auto_create_workspace=auto_create_workspace,
-    )
-    if chat is not None and current_user is not None and chat.owner_user_id != current_user.id:
-        raise _build_forbidden_error(f"Thread belongs to user {chat.owner_user_id}")
+    owner_user_id = coerce_owner_user_id(record)
+    if owner_user_id is None:
+        raise HTTPException(status_code=403, detail="Thread is missing an owner")
+    if owner_user_id != user.id:
+        raise HTTPException(status_code=403, detail=f"Thread belongs to user {owner_user_id}")
 
-    return chat
+    return record
