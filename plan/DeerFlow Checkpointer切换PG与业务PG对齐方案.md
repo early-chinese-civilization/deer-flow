@@ -108,8 +108,8 @@
 - backend 补齐 `langgraph-checkpoint-postgres`、`psycopg[binary]`、`psycopg-pool` 依赖
 - `config.yaml` / `config.example.yaml` 的 `checkpointer` 段统一改为：
   - `type: postgres`
-  - `connection_string: $DEER_FLOW_CHECKPOINTER_DATABASE_URL`
-- v1 默认要求 `DEER_FLOW_CHECKPOINTER_DATABASE_URL` 与 `DATABASE_URL` 指向同一个物理 PG
+- `connection_string: $DATABASE_URL`
+- v1 默认统一复用 `DATABASE_URL` 指向同一个物理 PG
 - `backend/langgraph.json` 必须新增 `store.path`，使 LangGraph Server 与 Gateway 一起走统一 store provider
 
 ### 2. 真相分层与接口边界
@@ -185,7 +185,7 @@
   - 允许引入 PG 依赖包
 - 实施内容
   - 补齐 PG checkpointer/store 依赖
-  - 新增 `DEER_FLOW_CHECKPOINTER_DATABASE_URL`
+- 统一复用 `DATABASE_URL`
   - 修改 `config.yaml` / `config.example.yaml`
   - 为 `backend/langgraph.json` 新增 `store.path`
 - 完成标准

@@ -3,7 +3,7 @@
 ## 1. 本阶段目标
 
 - 落 `workspaces / workspace_files`
-- 引入 `/api/chats/**`
+- 沿用 `/api/threads/**` 主链承载 chat 创建、列表与详情
 - 建立 chat 与 workspace 的稳定绑定
 - 实现 canonical workspace 到 thread workspace 的映射
 - 保持 Workspace 在 v1 为隐藏式内部资源
@@ -23,7 +23,7 @@
 
 ### 3.2 当前阶段启用能力
 
-- Phase 3 先完成后端模型、接口语义和映射骨架
+- Phase 3 先完成后端模型、`threads` 主链接口语义和映射骨架
 - v1 不做 Workspace 独立管理菜单，不做用户可见列表
 - v1 不做“新建 chat 时选择已有 workspace”入口
 - v1 每次新建 chat 时由后端自动创建新的隐藏 workspace 并绑定
@@ -45,8 +45,9 @@
 
 ## 6. 涉及 API
 
-- `POST /api/chats`
-- `GET /api/chats`
+- `POST /api/threads`
+- `POST /api/threads/search`
+- `GET /api/threads/{thread_id}`
 - Workspace 在 v1 不作为用户主流程接口面暴露
 
 ## 7. 允许修改范围

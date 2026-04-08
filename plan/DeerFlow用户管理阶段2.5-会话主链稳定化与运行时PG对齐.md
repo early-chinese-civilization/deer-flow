@@ -73,7 +73,7 @@
   - 当前仓库已确认 Gateway 与 LangGraph Server 都依赖 custom checkpointer
 - 实施内容
   - 补齐 PG 依赖
-  - 新增 `DEER_FLOW_CHECKPOINTER_DATABASE_URL`
+- 统一复用 `DATABASE_URL`
   - 修改 `config.yaml / config.example.yaml`
   - 为 `backend/langgraph.json` 新增 `store.path`
 - 完成标准

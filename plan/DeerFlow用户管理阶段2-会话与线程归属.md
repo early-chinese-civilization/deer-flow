@@ -19,7 +19,6 @@
   - `owner_user_id`
   - `workspace_id nullable`
   - `agent_id nullable`
-  - `agent_snapshot jsonb`
 - `messages`
   - `thread_id`
   - `role`

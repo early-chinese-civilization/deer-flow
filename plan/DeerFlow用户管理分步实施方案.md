@@ -14,7 +14,7 @@
 2. chats + messages + lazy takeover
 3. workspaces + chat 闭环
 4. agents 业务化
-5. skills 业务化与版本化
+5. skills 业务化与实时同步
 6. knowledge base 接入
 7. user memories 与 legacy 清理
 

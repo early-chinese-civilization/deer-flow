@@ -22,7 +22,7 @@
 - DeerFlow v1 不维护 `auth_sessions` 作为正式认证模型
 - LangGraph `checkpointer / store` 本轮不强迁入 PG
 - 所有 owner 归属只能由服务端 `current_user` 写入
-- chat 绑定 agent 时冻结资源版本是硬规则，不是可选优化
+- chat 绑定 agent 后按当前资源实时解析，缺失引用按忽略处理，不阻断模型执行
 - Phase 1-3 不开放 Workspace 前端复用入口，但模型必须预留最终可见可复用能力
 - 优先保留 `/api/threads/**` 与 `/api/runs/**` 兼容层
 - 前期先做 owner 过滤与服务端归属，后期再逐步清理 legacy 全局实现
@@ -40,11 +40,11 @@
 
 ### 阶段 3
 
-`隐藏式 workspaces + /api/chats + workspace 映射`
+`隐藏式 workspaces + threads 主链绑定 + workspace 映射`
 
 ### 阶段 4
 
-`agents + agent_snapshot`
+`agents + 实时资源关联`
 
 ### 阶段 5
 
@@ -144,6 +144,7 @@
 - 引入 `workspaces / workspace_files`
 - 每次新建 chat 时由后端自动创建新的隐藏 workspace 并稳定绑定
 - 旧 chat 在首次打开或首次写入时补默认 workspace
+- 不新增独立 `/api/chats` 公共接口，继续沿用 `/api/threads/**` 兼容主链
 - canonical workspace 是唯一业务主真相，thread workspace 只是运行时投影
 - Gateway 负责 run 前 `canonical -> thread` 同步、run 后 `thread -> canonical` 回写
 - v1 冲突策略固定为“后写覆盖”
@@ -152,28 +153,29 @@
 
 - `agents` 从全局文件转为业务资源
 - system default agent 继续兼容
-- chat 绑定 agent 时必须写入 `agent_snapshot`
-- `agent_snapshot` 必须冻结 agent 核心配置、`skill_version_ids`、`knowledge_base_version_ids`
+- chat 仅绑定当前 `agent_id`
+- 运行时按当前 agent 配置、当前 skill 引用、当前 Knowledge Base 引用实时解析
+- 缺失 skill / Knowledge Base 引用时记录 warning 后继续执行模型
 - 支持同一个 agent 被多个 chat 复用
 
 ## 9. 阶段 5 详细执行口径
 
 ### 5A 业务化
 
-- `skills / skill_versions` 入库
+- `skills` 入库
 - system skills 与 user skills 分层
 
 ### 5B 运行时
 
 - user skills 同步到 OSS
-- 运行时将需要的 skills 投影到 sandbox 可见目录
-- chat 绑定 agent 时冻结的 `skill_version_ids` 必须稳定写入 `chat_skill_versions`
+- 运行时按 agent 当前绑定实时组装 skills 目录
+- skill 路径缺失或同步未完成时跳过对应 skill，不阻断模型执行
 
 ## 10. 阶段 6 详细执行口径
 
 ### 6A 资源层
 
-- `knowledge_bases / knowledge_base_files / knowledge_base_versions` 落库
+- `knowledge_bases / knowledge_base_files` 落库
 - 原始文件上传到 OSS
 
 ### 6B 索引层
@@ -183,9 +185,9 @@
 
 ### 6C 运行时接入
 
-- chat / agent 能读取绑定的 Knowledge Base
-- Gateway 在运行前组装检索上下文
-- chat 绑定 agent 时冻结的 `knowledge_base_version_ids` 必须稳定写入 `chat_knowledge_base_versions`
+- chat / agent 能读取当前绑定的 Knowledge Base
+- Gateway 在运行前按当前引用组装检索上下文
+- Knowledge Base 引用缺失、文件缺失或路径不可达时跳过对应增强，不阻断模型执行
 
 ## 11. 阶段 7 详细执行口径
 
