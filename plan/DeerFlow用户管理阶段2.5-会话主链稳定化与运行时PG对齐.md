@@ -4,7 +4,7 @@
 
 - 本阶段位于阶段 2 与阶段 3 之间
 - 本阶段不是新增业务能力阶段，而是阶段 2 的稳定化收尾阶段
-- 本阶段负责把 chat / thread / user_id / messages 这些已落地的产品语义，与 runtime 真相正式收口
+- 本阶段负责把 thread / user_id / messages 这些已落地的产品语义，与 runtime 真相正式收口
 - 阶段 3 默认暂停，直到阶段 2.5 完成
 
 ## 2. 本阶段目标
@@ -12,13 +12,13 @@
 - 将 LangGraph `checkpointer / store` 正式切换到 PG
 - 收口 runtime 真相与业务 PG 的边界
 - 将 compat 主链稳定为正式产品入口
-- 让 `chats.thread_id` 不只是产品主键，也成为稳定的跨层锚点
+- 让 `threads.thread_id` 不只是产品主键，也成为稳定的跨层锚点
 - 让 `messages` 从“已可用镜像”提升为“与 latest root checkpoint 有明确对应关系的产品投影”
 
 ## 3. 前置依赖
 
 - 阶段 1 的 `current_user` 已稳定可用
-- 阶段 2 的 `chats / messages / user_id / lazy takeover` 已基本完成
+- 阶段 2 的 `threads / messages / user_id / lazy takeover` 已基本完成
 - `/api/threads/**` 兼容层当前仍可用
 - 管理口径上已确认：阶段 2 进入封板收尾，不再继续扩业务范围
 
@@ -33,7 +33,7 @@
 
 - `checkpointer` 切换到 PG
 - `store` 与 `checkpointer` 一起切换到 PG
-- 为 `chats` 引入：
+- 为 `threads` 引入：
   - `latest_checkpoint_id`
   - `latest_checkpoint_at`
   - `projection_synced_at`
@@ -46,7 +46,7 @@
 ## 6. 明确不做事项
 
 - 不进入 workspace canonical 映射
-- 不引入 `/api/chats`
+- 不引入历史设想中的 `/api/chats`
 - 不提前做阶段 3 的 workspace 绑定闭环
 - 不做 agents / skills / knowledge base / user memories
 - 不把 `messages` 提升为 runtime 真相
@@ -55,7 +55,7 @@
 ## 7. 本阶段固定规则
 
 - runtime 真相继续在 `checkpointer / store`
-- 产品真相继续在 `chats / messages`
+- 产品真相继续在 `threads / messages`
 - compat 主链是正式产品入口，raw `/api/langgraph` 仅调试
 - 读前补齐失败时采用“可用性优先”：
   - 返回 runtime 数据
@@ -88,23 +88,23 @@
 - 回滚目标
   - 回滚到阶段 2 完成时的上一套可用版本与配置
 
-### 8.2 阶段 2.5B：投影基座与 chats 锚点字段
+### 8.2 阶段 2.5B：投影基座与 threads 锚点字段
 
 - 输入前提
   - 阶段 2.5A 完成
 - 实施内容
-  - 为 `chats` 增加 `latest_checkpoint_*`
+  - 为 `threads` 增加 `latest_checkpoint_*`
   - 引入统一 projection service
   - 将 `messages` 写入统一收口到 projection service
 - 完成标准
-  - 新建 thread 后 `chats.latest_checkpoint_id` 非空
+  - 新建 thread 后 `threads.latest_checkpoint_id` 非空
   - 单轮对话后 `messages` 与 latest root checkpoint 的最终可见消息集合一致
 - smoke test
   - 新线程可完成首轮对话并写入 PG 锚点
   - 同一线程重复投影不会造成旧消息残留
 - 回滚条件
-  - chat 锚点与 message 集合无法形成稳定对应关系
-  - 同一事务中只更新 chat 或只更新 messages
+  - thread 锚点与 message 集合无法形成稳定对应关系
+  - 同一事务中只更新 thread 或只更新 messages
 - 回滚目标
   - 回滚到阶段 2.5A 完成状态
 
@@ -160,7 +160,7 @@
 
 ## 10. 禁止改动范围
 
-- 不提前进入 `frontend` 的 workspace 菜单与 `/api/chats` 主流程
+- 不提前进入 `frontend` 的 workspace 菜单与历史设想中的 `/api/chats` 主流程
 - 不提前做 canonical workspace 与 thread workspace 的闭环实现
 - 不提前做 agents / skills / knowledge base / user memories 的业务化迁移
 - 不把阶段 2.5 混成“顺手做阶段 3”的过渡大杂烩

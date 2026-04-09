@@ -125,7 +125,7 @@
 
 ## 8. 禁止改动范围
 
-- 不提前改 `chats / messages / workspaces / agents / skills / knowledge base`
+- 不提前改 `threads / messages / workspaces / agents / skills / knowledge base`
 - 不扩展 `frontend/src/server/better-auth/*` 成正式认证中心
 
 ## 9. 自动验证命令

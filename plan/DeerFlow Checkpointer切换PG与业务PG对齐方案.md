@@ -6,7 +6,7 @@
 本轮保留以下总方向不变：
 
 - `checkpointer/store` 是 runtime 真相，承接 `state/history`、checkpoint lineage、resume/interrupt、完整 `channel_values`
-- `chats/messages` 是产品真相，承接 `user_id`、列表、标题、用户可见消息、产品查询
+- `threads/messages` 是产品真相，承接 `user_id`、列表、标题、用户可见消息、产品查询
 - 二者通过最新 root checkpoint 投影到 PG 对齐，而不是把 checkpointer 内部结构直接业务化
 
 本轮固定决策如下：
@@ -45,7 +45,7 @@
 ### 4. 当前最核心的不一致点
 
 - checkpointer 仍落在 SQLite，本地文件路径是 `backend/.deer-flow/checkpoints.db`
-- 业务 PG 已承接 `users/chats/messages`
+- 业务 PG 已承接 `users/threads/messages`
 - 当前列表、详情、历史、恢复分别读 PG 和 runtime 语义，天然存在“双真相短时漂移”
 - `config.yaml` / `config.example.yaml` 里关于“checkpointer 不影响 LangGraph Server”的旧注释与真实实现冲突
 - raw `/api/langgraph` 与 compat `/api/langgraph-compat` 的边界如果不锁死，后续 `user_id`、投影、列表一致性会再次分叉
@@ -61,7 +61,7 @@
   - lazy takeover
   - user_id 绑定
   - 显式 `state/title` 更新
-  - 这些流程只有在 chat 行、最新 root checkpoint 锚点、首轮 PG 投影全部完成后才算成功，否则请求直接失败
+  - 这些流程只有在 thread 行、最新 root checkpoint 锚点、首轮 PG 投影全部完成后才算成功，否则请求直接失败
 - 有界最终一致
   - SSE 过程中的消息投影
   - 运行不因投影失败中断，但 PG 允许短暂滞后
@@ -117,7 +117,7 @@
 - `thread_id` 继续作为唯一跨层主键，贯通：
   - checkpointer
   - store
-  - `chats.thread_id`
+  - `threads.thread_id`
   - `messages.thread_id`
 - `checkpointer/store` 继续承接：
   - 最新 state
@@ -125,7 +125,7 @@
   - interrupt / resume
   - 完整 `values.messages`
   - tool 过程与 channel values
-- `chats/messages` 继续承接：
+- `threads/messages` 继续承接：
   - `user_id` / title / status / 列表排序
   - 用户可见消息投影
   - 产品查询与权限控制
@@ -138,18 +138,18 @@
 
 ### 3. PG 投影与幂等规则
 
-- `chats` 新增以下字段：
+- `threads` 新增以下字段：
   - `latest_checkpoint_id`
   - `latest_checkpoint_at`
   - `projection_synced_at`
 - 新增统一 projection service，输入为“当前 latest root checkpoint”，输出为：
-  - `chats.title`
-  - `chats.status`
-  - `chats.latest_checkpoint_*`
+  - `threads.title`
+  - `threads.status`
+  - `threads.latest_checkpoint_*`
   - `messages` 的最终用户可见消息集合
 - 实施时必须遵守以下规则：
   - projection service 在真正落库前，必须重新读取一次当前 latest root checkpoint，不能直接使用触发事件携带的旧 checkpoint
-  - `chats.latest_checkpoint_id`、`latest_checkpoint_at`、`projection_synced_at` 与 `messages` 必须在同一数据库事务内提交
+  - `threads.latest_checkpoint_id`、`latest_checkpoint_at`、`projection_synced_at` 与 `messages` 必须在同一数据库事务内提交
   - `messages` 继续按 `(thread_id, source_message_id)` 做幂等 upsert
   - 当前投影结果之外的旧消息行必须在同一事务内删除
   - 旧 checkpoint 投影不能回退 `latest_checkpoint_id`
@@ -168,12 +168,12 @@
   - 若补齐失败，返回 runtime 数据，并记录 `projection_failure`、`targeted_reconciliation_failure`、`projection_lag`
 - `create_thread`
   - 固定顺序：
-    1. 创建 `chat`
+    1. 创建 `thread`
     2. 创建空 root checkpoint
     3. 立即投影一次并写回 `latest_checkpoint_id`
     4. 返回线程已创建
 - lazy takeover
-  - 仅对“checkpointer 里有 thread、PG 里无 chat”的线程生效
+  - 仅对“checkpointer 里有 thread、PG 里无 thread 记录”的线程生效
   - takeover 后必须立即完成一次 checkpoint -> PG 投影，否则请求失败
 
 ## 实施顺序、Runbook 与回滚
@@ -199,20 +199,20 @@
 - 回滚目标
   - 回滚到上一套可用应用版本与上一套配置
 
-### Phase B. projection 基座与 chats 新字段
+### Phase B. projection 基座与 threads 新字段
 
 - 输入前提
   - Phase A 完成
 - 实施内容
-  - 为 `chats` 增加 `latest_checkpoint_id`、`latest_checkpoint_at`、`projection_synced_at`
+  - 为 `threads` 增加 `latest_checkpoint_id`、`latest_checkpoint_at`、`projection_synced_at`
   - 引入统一 projection service
   - 将 `messages` 写入统一收口到 projection service
 - 完成标准
-  - 新建 thread 后 chat 行存在且 `latest_checkpoint_id` 非空
+  - 新建 thread 后 thread 行存在且 `latest_checkpoint_id` 非空
   - 单轮对话后 `messages` 与 latest root checkpoint 的最终可见消息集合一致
 - 失败信号
-  - 同一 thread 出现 chat 锚点与 message 集合不一致
-  - 同一事务中只更新了 chat 或只更新了 messages
+  - 同一 thread 出现 thread 锚点与 message 集合不一致
+  - 同一事务中只更新了 thread 或只更新了 messages
 - 回滚条件
   - projection 基座导致新 thread 或新对话无法形成稳定锚点
 - 回滚目标
@@ -273,7 +273,7 @@
 
 - 新建 thread
   - 动作：调用 `create_thread`
-  - 期望结果：`chats` 有记录，且 `latest_checkpoint_id` 已写入
+  - 期望结果：`threads` 有记录，且 `latest_checkpoint_id` 已写入
   - 可观测证据：PG 查询结果与 `getState` 返回的 latest root checkpoint 一致
 - 单轮对话
   - 动作：发送一轮消息并完成运行
@@ -315,7 +315,7 @@
 
 - `projection_lag_seconds`
   - 定义为当前时间减去 `projection_synced_at`
-  - 仅对 `chats.latest_checkpoint_id` 落后于 latest root checkpoint 的线程计算
+  - 仅对 `threads.latest_checkpoint_id` 落后于 latest root checkpoint 的线程计算
 
 ### 3. 已决策项
 
@@ -328,7 +328,7 @@
 
 ### 4. 待确认项与 Owner
 
-- 同物理 PG、同 schema、不同表组的容量与连接池是否被接受
+- 一物理 PG、一 schema、不一表组的容量与连接池是否被接受
   - Owner：SRE/DBA
 - root checkpoint 是否覆盖全部用户可见消息
   - Owner：Backend

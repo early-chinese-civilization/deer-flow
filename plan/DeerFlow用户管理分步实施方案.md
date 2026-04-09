@@ -11,8 +11,8 @@
 ## 当前推荐阶段顺序
 
 1. Auth(`kc_*` HttpOnly cookie) + `.env` + PG(users) + `current_user`
-2. chats + messages + lazy takeover
-3. workspaces + chat 闭环
+2. threads + messages + lazy takeover
+3. workspaces + thread 闭环
 4. agents 业务化
 5. skills 业务化与实时同步
 6. knowledge base 接入

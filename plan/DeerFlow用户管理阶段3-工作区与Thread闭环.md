@@ -1,16 +1,16 @@
-# DeerFlow用户管理阶段3-工作区与Chat闭环
+# DeerFlow用户管理阶段3-工作区与Thread闭环
 
 ## 1. 本阶段目标
 
 - 落 `workspaces / workspace_files`
-- 沿用 `/api/threads/**` 主链承载 chat 创建、列表与详情
-- 建立 chat 与 workspace 的稳定绑定
+- 沿用 `/api/threads/**` 主链承载 thread 创建、列表与详情
+- 建立 thread 与 workspace 的稳定绑定
 - 实现 canonical workspace 到 thread workspace 的映射
 - 保持 Workspace 在 v1 为隐藏式内部资源
 
 ## 2. 前置依赖
 
-- 阶段 2 的 `chats.thread_id` 已建立
+- 阶段 2 的 `threads.thread_id` 已建立
 - user_id 校验已具备基础能力
 
 ## 3. 最终产品目标与当前阶段启用能力
@@ -19,14 +19,14 @@
 
 - Workspace 是用户级正式资源
 - Workspace 未来可见、可复用、可独立管理
-- 新建 chat 未来可选择已有 workspace；若未选择，再自动创建默认 workspace
+- 新建 thread 未来可选择已有 workspace；若未选择，再自动创建默认 workspace
 
 ### 3.2 当前阶段启用能力
 
 - Phase 3 先完成后端模型、`threads` 主链接口语义和映射骨架
 - v1 不做 Workspace 独立管理菜单，不做用户可见列表
-- v1 不做“新建 chat 时选择已有 workspace”入口
-- v1 每次新建 chat 时由后端自动创建新的隐藏 workspace 并绑定
+- v1 不做“新建 thread 时选择已有 workspace”入口
+- v1 每次新建 thread 时由后端自动创建新的隐藏 workspace 并绑定
 
 ## 4. canonical workspace 与 thread workspace 主从规则
 
@@ -36,12 +36,12 @@
 - run 后固定执行 `thread workspace -> canonical workspace` 回写
 - v1 冲突策略固定为“后写覆盖”，不做自动合并、不做双向冲突决策、不做用户提示式冲突管理
 
-## 5. chat 绑定规则
+## 5. thread 绑定规则
 
-- 新建 chat 时不允许用户选择已有 workspace
-- 每次新建 chat 时自动创建默认 workspace
-- 用户重新打开该 chat 时，继续使用已绑定的 workspace
-- 阶段 2 中遗留的 `workspace_id = null` chat，在首次打开或首次写入时补默认 workspace
+- 新建 thread 时不允许用户选择已有 workspace
+- 每次新建 thread 时自动创建默认 workspace
+- 用户重新打开该 thread 时，继续使用已绑定的 workspace
+- 阶段 2 中遗留的 `workspace_id = null` thread，在首次打开或首次写入时补默认 workspace
 
 ## 6. 涉及 API
 
@@ -62,7 +62,7 @@
 
 - 本阶段不处理 skills / KB 运行时投影
 - 本阶段不引入复杂的 workspace 冲突合并策略
-- 本阶段不做 Workspace 可见菜单与跨 chat 复用入口
+- 本阶段不做 Workspace 可见菜单与跨 thread 复用入口
 
 ## 9. 风险与注意事项
 
@@ -72,7 +72,7 @@
 
 ## 10. 验收动作
 
-- chat 可稳定创建并绑定 workspace
+- thread 可稳定创建并绑定 workspace
 - 默认 workspace 自动创建逻辑可用
 - canonical workspace 与 thread workspace 的同步和回写闭环可跑通
 - Workspace 在 v1 对用户保持隐藏

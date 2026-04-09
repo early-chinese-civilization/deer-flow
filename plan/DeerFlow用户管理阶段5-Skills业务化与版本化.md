@@ -9,7 +9,7 @@
 ## 2. 前置依赖
 
 - agents 业务化已完成
-- chat 已能稳定绑定 agent
+- thread 已能稳定绑定 agent
 
 ## 3. 分层策略
 
@@ -29,13 +29,13 @@
 ## 4. 资源关系
 
 - agent 绑定的是 skill 资源
-- chat 不再保存 skill 的历史副本
+- thread 不再保存 skill 的历史副本
 - 运行时每次都按 agent 当前绑定实时解析 skill
-- 历史 chat 会跟随 skill 当前内容变化而变化，这是已接受的 tradeoff
+- 历史 thread 会跟随 skill 当前内容变化而变化，这是已接受的 tradeoff
 
 ## 5. 运行时容错规则
 
-- chat 创建或绑定 agent 时不再保存 skill 的历史副本
+- thread 创建或绑定 agent 时不再保存 skill 的历史副本
 - 运行时缺失 skill 路径、OSS 尚未同步完成或 skill 已被删除时，跳过对应 skill
 - 缺失单个 skill 不阻断整次模型调用
 
@@ -53,7 +53,7 @@
 
 ## 8. 风险与注意事项
 
-- 历史 chat 会随 skill 当前内容变化而变化，这是当前方案已接受的 tradeoff
+- 历史 thread 会随 skill 当前内容变化而变化，这是当前方案已接受的 tradeoff
 - 若只做 OSS 存储，不保留 PG 主资源关系，前端无法做稳定管理和回显
 - 若缺失 skill 不做软失败处理，会直接扩大运行时报错面
 

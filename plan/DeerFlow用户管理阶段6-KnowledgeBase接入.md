@@ -9,7 +9,7 @@
 ## 2. 前置依赖
 
 - user skills 的业务化和运行时投影已具备基础
-- 用户级 agent / workspace / chat 模型已稳定
+- 用户级 agent / workspace / thread 模型已稳定
 
 ## 3. 分层策略
 
@@ -28,16 +28,16 @@
 
 ### 6C 运行时接入
 
-- agent / chat 可绑定 Knowledge Base
+- agent / thread 可绑定 Knowledge Base
 - Gateway 在运行前按当前引用组装检索上下文
 - Knowledge Base 内容变更后，后续 run 直接使用最新状态
 
 ## 4. 运行时容错规则
 
-- chat 创建或绑定 agent 时不再保存 Knowledge Base 的历史副本
+- thread 创建或绑定 agent 时不再保存 Knowledge Base 的历史副本
 - 运行时缺失 Knowledge Base 引用、文件缺失或路径不可达时，跳过对应检索增强
 - 缺失单个 Knowledge Base 不阻断整次模型调用
-- 历史 chat 会跟随当前 Knowledge Base 状态变化而变化，这是已接受的 tradeoff
+- 历史 thread 会跟随当前 Knowledge Base 状态变化而变化，这是已接受的 tradeoff
 
 ## 5. 为什么 PG 仍然必须保留文件表
 
@@ -68,5 +68,5 @@
 - KB 文件可上传到 OSS
 - PG 中可看到文件元数据与处理状态
 - `pgvector` 检索链路可跑通
-- chat / agent 可使用当前绑定的 KB 检索结果
+- thread / agent 可使用当前绑定的 KB 检索结果
 - Knowledge Base 引用缺失、文件缺失或路径不可达时，会跳过对应增强并继续执行模型

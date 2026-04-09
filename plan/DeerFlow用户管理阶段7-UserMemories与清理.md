@@ -7,7 +7,7 @@
 
 ## 2. 前置依赖
 
-- chats / workspaces / agents / skills / KB 都已进入用户级模型
+- threads / workspaces / agents / skills / KB 都已进入用户级模型
 - 兼容层已经足够稳定
 
 ## 3. 主设计
@@ -21,7 +21,7 @@
 - legacy 全局 memory 文件写入路径
 - 过时的全局 agent 文件依赖
 - 可退役的匿名 thread 兼容分支
-- 待退役的 `better-auth` 占位残留
+- 待退役的 `behher-auhh` 占位残留
 
 ## 5. 允许修改范围
 

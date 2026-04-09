@@ -22,7 +22,7 @@
 - DeerFlow v1 不维护 `auth_sessions` 作为正式认证模型
 - LangGraph `checkpointer / store` 本轮不强迁入 PG
 - 所有 user_id 归属只能由服务端 `current_user` 写入
-- chat 绑定 agent 后按当前资源实时解析，缺失引用按忽略处理，不阻断模型执行
+- thread 绑定 agent 后按当前资源实时解析，缺失引用按忽略处理，不阻断模型执行
 - Phase 1-3 不开放 Workspace 前端复用入口，但模型必须预留最终可见可复用能力
 - 优先保留 `/api/threads/**` 与 `/api/runs/**` 兼容层
 - 前期先做 user_id 过滤与服务端归属，后期再逐步清理 legacy 全局实现
@@ -36,7 +36,7 @@
 
 ### 阶段 2
 
-`chats + messages + legacy thread 懒接管`
+`threads + messages + legacy thread 懒接管`
 
 ### 阶段 3
 
@@ -65,8 +65,8 @@
 ## 4. 各阶段依赖关系
 
 - 阶段 2 依赖阶段 1 的 `current_user`
-- 阶段 3 依赖阶段 2 的 `chats.thread_id`
-- 阶段 4 依赖阶段 3 的 chat / workspace 闭环
+- 阶段 3 依赖阶段 2 的 `threads.thread_id`
+- 阶段 4 依赖阶段 3 的 thread / workspace 闭环
 - 阶段 5 依赖阶段 4 的 agent 业务化
 - 阶段 6 依赖阶段 5 的 user skills / OSS 组织方式
 - 阶段 7 放在最后，避免过早改动全局 memory 主链路
@@ -84,7 +84,7 @@
 
 ### 5.2 明确禁止项
 
-- 不得提前进入 `chats / messages / workspaces / agents / skills / knowledge_bases / user_memories`
+- 不得提前进入 `threads / messages / workspaces / agents / skills / knowledge_bases / user_memories`
 - 不得在阶段 1 就改造 LangGraph `checkpointer / store`
 - 不得把 frontend `better-auth` 扩成正式认证中心
 - 不得继续引入本地 `auth_sessions` 或 DeerFlow 自有服务端 session 方案作为 v1 正式目标
@@ -110,16 +110,16 @@
 
 ### 6.1 目标
 
-- 建立 `chats.thread_id` 作为产品会话主键
+- 建立 `threads.thread_id` 作为产品会话主键
 - 建立 `messages` 新会话镜像
 - 建立 legacy thread 懒接管
 
 ### 6.2 固定规则
 
-- `chats.user_id` 一律来源于 `current_user`
+- `threads.user_id` 一律来源于 `current_user`
 - 不允许前端传入 归属字段决定归属
 - lazy takeover 首次接管后 user_id 默认不可变
-- 被接管 thread 一旦进入 `chats`，即视为进入新用户体系
+- 被接管 thread 一旦进入 `threads`，即视为进入新用户体系
 
 ### 6.3 兼容策略
 
@@ -132,7 +132,7 @@
 
 若 `messages` 镜像写入的幂等、SSE 时机或 tool 回调顺序复杂度超预期，则允许实施期临时拆成：
 
-- `2A chats / user_id / lazy takeover`
+- `2A threads / user_id / lazy takeover`
 - `2B messages 镜像`
 
 管理层主编号仍保留为阶段 2。
@@ -140,11 +140,11 @@
 ## 7. 阶段 3 详细执行口径
 
 - 模型和接口语义按“Workspace 最终可见、可复用、可独立管理”的终态设计
-- Phase 1-3 仍不开放 Workspace 独立菜单、用户可见列表和“新建 chat 选择已有 workspace”入口
+- Phase 1-3 仍不开放 Workspace 独立菜单、用户可见列表和“新建 thread 选择已有 workspace”入口
 - 引入 `workspaces / workspace_files`
-- 每次新建 chat 时由后端自动创建新的隐藏 workspace 并稳定绑定
-- 旧 chat 在首次打开或首次写入时补默认 workspace
-- 不新增独立 `/api/chats` 公共接口，继续沿用 `/api/threads/**` 兼容主链
+- 每次新建 thread 时由后端自动创建新的隐藏 workspace 并稳定绑定
+- 旧 thread 在首次打开或首次写入时补默认 workspace
+- 不新增独立的历史兼容 `/api/chats` 公共接口，继续沿用 `/api/threads/**` 兼容主链
 - canonical workspace 是唯一业务主真相，thread workspace 只是运行时投影
 - Gateway 负责 run 前 `canonical -> thread` 同步、run 后 `thread -> canonical` 回写
 - v1 冲突策略固定为“后写覆盖”
@@ -153,10 +153,10 @@
 
 - `agents` 从全局文件转为业务资源
 - system default agent 继续兼容
-- chat 仅绑定当前 `agent_id`
+- thread 仅绑定当前 `agent_id`
 - 运行时按当前 agent 配置、当前 skill 引用、当前 Knowledge Base 引用实时解析
 - 缺失 skill / Knowledge Base 引用时记录 warning 后继续执行模型
-- 支持同一个 agent 被多个 chat 复用
+- 支持同一个 agent 被多个 thread 复用
 
 ## 9. 阶段 5 详细执行口径
 
@@ -185,7 +185,7 @@
 
 ### 6C 运行时接入
 
-- chat / agent 能读取当前绑定的 Knowledge Base
+- thread / agent 能读取当前绑定的 Knowledge Base
 - Gateway 在运行前按当前引用组装检索上下文
 - Knowledge Base 引用缺失、文件缺失或路径不可达时跳过对应增强，不阻断模型执行
 
