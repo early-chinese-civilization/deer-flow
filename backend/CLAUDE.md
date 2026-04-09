@@ -107,10 +107,15 @@ make stop       # Stop all services
 make install    # Install backend dependencies
 make dev        # Run LangGraph server only (port 2024)
 make gateway    # Run Gateway API only (port 8001)
+uv run alembic upgrade head  # Apply the current baseline + follow-up migrations
 make test       # Run all backend tests
 make lint       # Lint with ruff
 make format     # Format code with ruff
 ```
+
+Alembic note:
+- `backend/alembic/versions/` is currently squashed to a single baseline revision for the Gateway-owned schema
+- Fresh databases should be initialized with `cd backend && uv run alembic upgrade head` before starting the Gateway
 
 Regression tests related to Docker/provisioner behavior:
 - `tests/test_docker_sandbox_mode_detection.py` (mode detection from `config.yaml`)

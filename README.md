@@ -118,6 +118,15 @@ That prompt is intended for coding agents. It tells the agent to clone the repo 
    ```yaml
    models:
      - name: gpt-4                       # Internal identifier
+
+4. **Initialize the Gateway database schema**
+
+   The backend uses Alembic and currently bootstraps fresh PostgreSQL databases from a single baseline migration. Before starting the Gateway against a new database, run:
+
+   ```bash
+   cd backend
+   uv run alembic upgrade head
+   ```
        display_name: GPT-4               # Human-readable name
        use: langchain_openai:ChatOpenAI  # LangChain class path
        model: gpt-4                      # Model identifier for API
