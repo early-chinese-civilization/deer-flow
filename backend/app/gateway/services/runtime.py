@@ -13,13 +13,10 @@ from fastapi import HTTPException, Request
 from langchain_core.messages import HumanMessage
 
 from app.gateway.db.engine import get_db_session
+from app.gateway.db.repository import ThreadRepository
 from app.gateway.deps import get_checkpointer, get_run_manager, get_store, get_stream_bridge
-from app.gateway.services.thread_store import (
-    StoreUnavailableError,
-    ThreadRecord,
-    get_workspace_id,
-    upsert_thread_record,
-)
+from app.gateway.services.ownership import ThreadAccessRecord
+from app.gateway.services.thread_store import upsert_thread_record
 from app.gateway.services.workspace_sync import sync_canonical_to_thread, sync_thread_to_canonical
 from deerflow.config.paths import get_paths
 from deerflow.runtime import (
@@ -59,6 +56,21 @@ def _coerce_workspace_uuid(workspace_id: str | None) -> uuid.UUID | None:
     except ValueError:
         logger.warning("Skipping invalid workspace_id %s in thread metadata", workspace_id)
         return None
+
+
+def _get_thread_workspace_id(thread_record: Any | None) -> str | None:
+    """Extract a bound workspace identifier from a DB-backed thread object."""
+    if thread_record is None:
+        return None
+    if isinstance(thread_record, ThreadAccessRecord):
+        thread_record = thread_record.thread
+    if isinstance(thread_record, dict):
+        raw_workspace_id = thread_record.get("workspace_id")
+    else:
+        raw_workspace_id = getattr(thread_record, "workspace_id", None)
+    if raw_workspace_id is None:
+        return None
+    return str(raw_workspace_id)
 
 
 async def _sync_bound_workspace_to_thread(
@@ -201,10 +213,10 @@ async def _sync_thread_product_state_after_run(
     checkpointer: Any,
     store: Any,
     *,
-    sync_store_metadata: bool,
+    sync_thread_metadata: bool,
     workspace_id: str | None,
 ) -> None:
-    """Update Store metadata and bound workspace after a run completes."""
+    """Update Store-first thread metadata and the bound workspace after a run completes."""
     await asyncio.wait({run_task})
 
     thread_id = record.thread_id
@@ -226,19 +238,31 @@ async def _sync_thread_product_state_after_run(
         if isinstance(raw_title, str) and raw_title.strip():
             title = raw_title
 
-    if sync_store_metadata and store is not None:
+    if store is not None:
         try:
-            values = {"title": title} if title else None
-            await upsert_thread_record(
-                store,
-                thread_id,
-                status=status,
-                values=values,
-            )
-        except StoreUnavailableError:
-            logger.warning("Store unavailable while syncing completed thread %s", thread_id)
+            update_kwargs: dict[str, Any] = {
+                "thread_id": thread_id,
+                "status": status,
+            }
+            if title is not None:
+                update_kwargs["values"] = {"title": title}
+                await upsert_thread_record(store=store, **update_kwargs)
         except Exception:
-            logger.debug("Failed to sync store metadata for thread %s", thread_id, exc_info=True)
+            logger.warning("Failed to sync Store thread metadata for %s", thread_id, exc_info=True)
+
+    if sync_thread_metadata:
+        try:
+            async with get_db_session() as db:
+                update_kwargs: dict[str, Any] = {
+                    "db": db,
+                    "thread_id": thread_id,
+                    "status": status,
+                }
+                if title is not None:
+                    update_kwargs["title"] = title
+                await ThreadRepository.update_thread(**update_kwargs)
+        except Exception:
+            logger.warning("Failed to sync DB thread metadata for %s", thread_id, exc_info=True)
 
     try:
         await _sync_thread_workspace_to_bound_workspace(
@@ -254,15 +278,15 @@ async def start_run(
     thread_id: str,
     request: Request,
     *,
-    thread_record: ThreadRecord | None = None,
+    thread_record: Any | None = None,
 ) -> RunRecord:
     """Create a RunRecord and launch the background agent task."""
     bridge = get_stream_bridge(request)
     run_mgr = get_run_manager(request)
     checkpointer = get_checkpointer(request)
     store = get_store(request)
-    sync_store_metadata = thread_record is not None
-    workspace_id = get_workspace_id(thread_record)
+    sync_thread_metadata = thread_record is not None
+    workspace_id = _get_thread_workspace_id(thread_record)
 
     disconnect = DisconnectMode.cancel if body.on_disconnect == "cancel" else DisconnectMode.continue_
 
@@ -280,18 +304,29 @@ async def start_run(
     except UnsupportedStrategyError as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
 
-    if sync_store_metadata and store is not None:
+    if sync_thread_metadata:
+        if store is not None:
+            try:
+                await upsert_thread_record(
+                    store=store,
+                    thread_id=thread_id,
+                    status="busy",
+                    metadata=body.metadata,
+                )
+            except Exception:
+                logger.warning("Failed to mark Store thread %s busy", thread_id, exc_info=True)
         try:
-            await upsert_thread_record(
-                store,
-                thread_id,
-                status="busy",
-                metadata=body.metadata,
-            )
-        except StoreUnavailableError:
-            logger.warning("Store unavailable while marking thread %s busy", thread_id)
+            async with get_db_session() as db:
+                update_kwargs: dict[str, Any] = {
+                    "db": db,
+                    "thread_id": thread_id,
+                    "status": "busy",
+                }
+                if body.metadata is not None:
+                    update_kwargs["metadata"] = body.metadata
+                await ThreadRepository.update_thread(**update_kwargs)
         except Exception:
-            logger.debug("Failed to mark thread %s busy in store", thread_id, exc_info=True)
+            logger.warning("Failed to mark DB thread %s busy", thread_id, exc_info=True)
 
     try:
         await _sync_bound_workspace_to_thread(
@@ -345,7 +380,7 @@ async def start_run(
             record,
             checkpointer,
             store,
-            sync_store_metadata=sync_store_metadata,
+            sync_thread_metadata=sync_thread_metadata,
             workspace_id=workspace_id,
         )
     )

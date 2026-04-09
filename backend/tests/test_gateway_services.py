@@ -349,100 +349,12 @@ def test_build_run_config_no_request_config():
 
 
 @pytest.mark.anyio
-async def test_project_from_stream_event_updates_chat_title_and_anchor():
-    from app.gateway.services.projection import ProjectionService
-
-    thread_id = str(uuid4())
-    chat = SimpleNamespace(
-        title=None,
-        latest_checkpoint_id=None,
-        latest_checkpoint_at=None,
-        projection_synced_at=None,
-    )
-    db = SimpleNamespace(
-        execute=AsyncMock(),
-        get=AsyncMock(return_value=chat),
-        commit=AsyncMock(),
-        rollback=AsyncMock(),
-    )
-
-    with patch(
-        "app.gateway.services.projection.MessageRepository.sync_visible_messages",
-        AsyncMock(return_value=2),
-    ) as sync_messages:
-        result = await ProjectionService.project_from_stream_event(
-            db=db,
-            thread_id=thread_id,
-            event="values",
-            data={
-                "title": "Projected title",
-                "messages": [
-                    {"id": "m1", "type": "human", "content": "hello"},
-                    {"id": "m2", "type": "ai", "content": "world"},
-                ],
-            },
-            checkpoint_id="ckpt-1",
-        )
-
-    assert sync_messages.await_args.kwargs["commit"] is False
-    assert result["projected"] is True
-    assert chat.title == "Projected title"
-    assert chat.latest_checkpoint_id == "ckpt-1"
-    assert chat.latest_checkpoint_at is not None
-    assert chat.projection_synced_at is not None
-
-
-@pytest.mark.anyio
-async def test_project_from_checkpoint_updates_title_even_without_messages():
-    from app.gateway.services.projection import ProjectionService
-
-    thread_id = str(uuid4())
-    chat = SimpleNamespace(
-        title=None,
-        latest_checkpoint_id=None,
-        latest_checkpoint_at=None,
-        projection_synced_at=None,
-    )
-    db = SimpleNamespace(
-        execute=AsyncMock(),
-        get=AsyncMock(return_value=chat),
-        commit=AsyncMock(),
-        rollback=AsyncMock(),
-    )
-    checkpoint_tuple = SimpleNamespace(
-        config={"configurable": {"thread_id": thread_id, "checkpoint_id": "ckpt-2"}},
-        checkpoint={
-            "ts": "2026-04-06T00:00:00Z",
-            "channel_values": {"title": "Checkpoint title", "messages": []},
-        },
-        metadata={},
-        parent_config=None,
-        pending_writes=[],
-    )
-
-    with patch(
-        "app.gateway.services.projection.MessageRepository.sync_visible_messages",
-        AsyncMock(return_value=0),
-    ) as sync_messages:
-        result = await ProjectionService.project_from_checkpoint(
-            db=db,
-            thread_id=thread_id,
-            checkpoint_tuple=checkpoint_tuple,
-        )
-
-    assert sync_messages.await_args.kwargs["commit"] is False
-    assert result["projected"] is True
-    assert chat.title == "Checkpoint title"
-    assert chat.latest_checkpoint_id == "ckpt-2"
-    assert chat.latest_checkpoint_at is not None
-
-
-@pytest.mark.anyio
-async def test_sync_thread_product_state_after_run_projects_checkpoint_and_updates_status(monkeypatch):
+async def test_sync_thread_product_state_after_run_updates_store_and_db_thread_status_and_title(monkeypatch):
     from app.gateway.services.runtime import _sync_thread_product_state_after_run
     from deerflow.runtime import RunStatus
 
     thread_id = str(uuid4())
+    workspace_id = str(uuid4())
     completed_task = asyncio.get_running_loop().create_future()
     completed_task.set_result(None)
     record = SimpleNamespace(thread_id=thread_id, status=RunStatus.success)
@@ -461,20 +373,177 @@ async def test_sync_thread_product_state_after_run_projects_checkpoint_and_updat
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-    project_mock = AsyncMock(return_value={"projected": True})
-    update_chat_mock = AsyncMock()
-
     monkeypatch.setattr("app.gateway.services.runtime.get_db_session", lambda: _SessionContext())
-    monkeypatch.setattr("app.gateway.services.runtime.ProjectionService.project_from_checkpoint", project_mock)
-    monkeypatch.setattr("app.gateway.services.runtime.ChatRepository.update_chat", update_chat_mock)
+    upsert_thread_record_mock = AsyncMock()
+    update_thread_mock = AsyncMock()
+    sync_workspace_mock = AsyncMock()
+    monkeypatch.setattr("app.gateway.services.runtime.upsert_thread_record", upsert_thread_record_mock)
+    monkeypatch.setattr("app.gateway.services.runtime.ThreadRepository.update_thread", update_thread_mock)
+    monkeypatch.setattr("app.gateway.services.runtime._sync_thread_workspace_to_bound_workspace", sync_workspace_mock)
 
     await _sync_thread_product_state_after_run(
         completed_task,
         record,
         SimpleNamespace(aget_tuple=AsyncMock(return_value=checkpoint_tuple)),
-        None,
+        SimpleNamespace(),
+        sync_thread_metadata=True,
+        workspace_id=workspace_id,
     )
 
-    assert project_mock.await_count == 1
-    update_chat_mock.assert_awaited_once()
-    assert update_chat_mock.await_args.kwargs["status"] == "idle"
+    upsert_thread_record_mock.assert_awaited_once()
+    assert upsert_thread_record_mock.await_args.kwargs["thread_id"] == thread_id
+    assert upsert_thread_record_mock.await_args.kwargs["status"] == "idle"
+    assert upsert_thread_record_mock.await_args.kwargs["values"] == {"title": "Projected title"}
+    update_thread_mock.assert_awaited_once()
+    assert update_thread_mock.await_args.kwargs["thread_id"] == thread_id
+    assert update_thread_mock.await_args.kwargs["status"] == "idle"
+    assert update_thread_mock.await_args.kwargs["title"] == "Projected title"
+    sync_workspace_mock.assert_awaited_once_with(thread_id=thread_id, workspace_id=workspace_id)
+
+
+@pytest.mark.anyio
+async def test_start_run_marks_store_busy_before_db_mirror(monkeypatch):
+    from app.gateway.services.runtime import start_run
+    from deerflow.runtime import DisconnectMode, RunStatus
+
+    thread = SimpleNamespace(
+        thread_id="thread-1",
+        workspace_id=uuid4(),
+    )
+    body = SimpleNamespace(
+        on_disconnect="cancel",
+        assistant_id=None,
+        metadata={"source": "ui"},
+        input={"messages": [{"role": "user", "content": "hi"}]},
+        config=None,
+        multitask_strategy="reject",
+        stream_mode=None,
+        stream_subgraphs=False,
+        interrupt_before=None,
+        interrupt_after=None,
+    )
+    bridge = SimpleNamespace()
+    checkpointer = SimpleNamespace()
+    store = SimpleNamespace()
+    record = SimpleNamespace(
+        run_id="run-1",
+        thread_id="thread-1",
+        assistant_id=None,
+        status=RunStatus.pending,
+        metadata={},
+        kwargs={},
+        multitask_strategy="reject",
+        created_at="",
+        updated_at="",
+        on_disconnect=DisconnectMode.cancel,
+        task=None,
+    )
+    run_mgr = SimpleNamespace(create_or_reject=AsyncMock(return_value=record))
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                stream_bridge=bridge,
+                run_manager=run_mgr,
+                checkpointer=checkpointer,
+                store=store,
+            )
+        )
+    )
+
+    async def _run_agent(*args, **kwargs):
+        return None
+
+    sync_after_run_mock = AsyncMock(return_value=None)
+    sync_workspace_mock = AsyncMock(return_value=None)
+    upsert_thread_record_mock = AsyncMock(return_value=None)
+    update_thread_mock = AsyncMock(return_value=None)
+
+    monkeypatch.setattr("app.gateway.services.runtime.run_agent", _run_agent)
+    monkeypatch.setattr("app.gateway.services.runtime._sync_thread_product_state_after_run", sync_after_run_mock)
+    monkeypatch.setattr("app.gateway.services.runtime._sync_bound_workspace_to_thread", sync_workspace_mock)
+    monkeypatch.setattr("app.gateway.services.runtime.upsert_thread_record", upsert_thread_record_mock)
+    monkeypatch.setattr("app.gateway.services.runtime.ThreadRepository.update_thread", update_thread_mock)
+
+    await start_run(
+        body,
+        "thread-1",
+        request,
+        thread_record=thread,
+    )
+    await asyncio.sleep(0)
+
+    upsert_thread_record_mock.assert_awaited_once()
+    assert upsert_thread_record_mock.await_args.kwargs["thread_id"] == "thread-1"
+    assert upsert_thread_record_mock.await_args.kwargs["status"] == "busy"
+    assert upsert_thread_record_mock.await_args.kwargs["metadata"] == {"source": "ui"}
+    update_thread_mock.assert_awaited_once()
+    assert update_thread_mock.await_args.kwargs["thread_id"] == "thread-1"
+    assert update_thread_mock.await_args.kwargs["status"] == "busy"
+    assert update_thread_mock.await_args.kwargs["metadata"] == {"source": "ui"}
+    sync_workspace_mock.assert_awaited_once_with(
+        thread_id="thread-1",
+        workspace_id=str(thread.workspace_id),
+    )
+
+
+@pytest.mark.anyio
+async def test_start_run_skips_workspace_sync_when_thread_is_unbound(monkeypatch):
+    from app.gateway.services.runtime import start_run
+    from deerflow.runtime import DisconnectMode, RunStatus
+
+    body = SimpleNamespace(
+        on_disconnect="cancel",
+        assistant_id=None,
+        metadata=None,
+        input={"messages": [{"role": "user", "content": "hi"}]},
+        config=None,
+        multitask_strategy="reject",
+        stream_mode=None,
+        stream_subgraphs=False,
+        interrupt_before=None,
+        interrupt_after=None,
+    )
+    record = SimpleNamespace(
+        run_id="run-1",
+        thread_id="thread-1",
+        assistant_id=None,
+        status=RunStatus.pending,
+        metadata={},
+        kwargs={},
+        multitask_strategy="reject",
+        created_at="",
+        updated_at="",
+        on_disconnect=DisconnectMode.cancel,
+        task=None,
+    )
+    run_mgr = SimpleNamespace(create_or_reject=AsyncMock(return_value=record))
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                stream_bridge=SimpleNamespace(),
+                run_manager=run_mgr,
+                checkpointer=SimpleNamespace(),
+                store=SimpleNamespace(),
+            )
+        )
+    )
+
+    async def _run_agent(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("app.gateway.services.runtime.run_agent", _run_agent)
+    monkeypatch.setattr("app.gateway.services.runtime._sync_thread_product_state_after_run", AsyncMock(return_value=None))
+    sync_workspace_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr("app.gateway.services.runtime._sync_bound_workspace_to_thread", sync_workspace_mock)
+    monkeypatch.setattr("app.gateway.services.runtime.upsert_thread_record", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.gateway.services.runtime.ThreadRepository.update_thread", AsyncMock(return_value=None))
+
+    await start_run(
+        body,
+        "thread-1",
+        request,
+        thread_record=SimpleNamespace(thread_id="thread-1", workspace_id=None),
+    )
+    await asyncio.sleep(0)
+
+    sync_workspace_mock.assert_awaited_once_with(thread_id="thread-1", workspace_id=None)

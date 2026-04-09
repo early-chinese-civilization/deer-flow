@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-REQUIRED_GATEWAY_TABLES = frozenset({"users", "workspaces", "workspace_files"})
+REQUIRED_GATEWAY_TABLES = frozenset({"users", "workspaces", "workspace_files", "threads"})
 
 _TABLES_SQL = text(
     "select table_name from information_schema.tables "

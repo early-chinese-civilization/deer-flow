@@ -1,13 +1,4 @@
-"""Runs endpoints — create, stream, wait, cancel.
-
-Implements the LangGraph Platform runs API on top of
-:class:`deerflow.agents.runs.RunManager` and
-:class:`deerflow.agents.stream_bridge.StreamBridge`.
-
-SSE format is aligned with the LangGraph Platform protocol so that
-the ``useStream`` React hook from ``@langchain/langgraph-sdk/react``
-works without modification.
-"""
+"""Runs endpoints - create, stream, wait, cancel."""
 
 from __future__ import annotations
 
@@ -18,12 +9,14 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.gateway.services as gateway_services
 from app.gateway.db.models import User
 from app.gateway.deps import (
     get_checkpointer,
     get_current_user,
+    get_db,
     get_run_manager,
     get_store,
     get_stream_bridge,
@@ -33,16 +26,10 @@ from app.gateway.services.runtime_state import (
     is_runtime_state_unavailable,
     to_runtime_state_http_exception,
 )
-from app.gateway.services.thread_store import ThreadRecord
 from deerflow.runtime import RunRecord, serialize_channel_values
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/threads", tags=["runs"])
-
-
-# ---------------------------------------------------------------------------
-# Request / response models
-# ---------------------------------------------------------------------------
 
 
 class RunCreateRequest(BaseModel):
@@ -80,11 +67,6 @@ class RunResponse(BaseModel):
     updated_at: str = ""
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _record_to_response(record: RunRecord) -> RunResponse:
     return RunResponse(
         run_id=record.run_id,
@@ -106,21 +88,18 @@ def _root_checkpoint_config(thread_id: str) -> dict[str, dict[str, str]]:
 
 async def _require_owned_thread(
     *,
-    request: Request,
     thread_id: str,
+    request: Request,
     current_user: User,
-) -> ThreadRecord:
-    """Load and authorize the Store-backed thread record for this request."""
+    db: AsyncSession,
+) -> Any:
+    """Load and authorize the DB-backed thread record for this request."""
     return await require_thread_access(
+        db=db,
         store=get_store(request),
         thread_id=thread_id,
         current_user=current_user,
     )
-
-
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
 
 
 @router.post("/{thread_id}/runs", response_model=RunResponse)
@@ -129,12 +108,14 @@ async def create_run(
     body: RunCreateRequest,
     request: Request,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> RunResponse:
     """Create a background run (returns immediately)."""
     thread_record = await _require_owned_thread(
-        request=request,
         thread_id=thread_id,
+        request=request,
         current_user=current_user,
+        db=db,
     )
 
     record = await gateway_services.start_run(
@@ -152,17 +133,14 @@ async def stream_run(
     body: RunCreateRequest,
     request: Request,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
-    """Create a run and stream events via SSE.
-
-    The response includes a ``Content-Location`` header with the run's
-    resource URL, matching the LangGraph Platform protocol.  The
-    ``useStream`` React hook uses this to extract run metadata.
-    """
+    """Create a run and stream events via SSE."""
     thread_record = await _require_owned_thread(
-        request=request,
         thread_id=thread_id,
+        request=request,
         current_user=current_user,
+        db=db,
     )
 
     bridge = get_stream_bridge(request)
@@ -181,9 +159,7 @@ async def stream_run(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
-            # LangGraph Platform includes run metadata in this header.
-            # The SDK's _get_run_metadata_from_response() parses it.
-            "Content-Location": (f"/api/threads/{thread_id}/runs/{record.run_id}/stream?thread_id={thread_id}&run_id={record.run_id}"),
+            "Content-Location": f"/api/threads/{thread_id}/runs/{record.run_id}/stream?thread_id={thread_id}&run_id={record.run_id}",
         },
     )
 
@@ -194,12 +170,14 @@ async def wait_run(
     body: RunCreateRequest,
     request: Request,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Create a run and block until it completes, returning the final state."""
     thread_record = await _require_owned_thread(
-        request=request,
         thread_id=thread_id,
+        request=request,
         current_user=current_user,
+        db=db,
     )
     record = await gateway_services.start_run(
         body,
@@ -239,16 +217,19 @@ async def list_runs(
     thread_id: str,
     request: Request,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> list[RunResponse]:
     """List all runs for a thread."""
+    _ = request
     await _require_owned_thread(
-        request=request,
         thread_id=thread_id,
+        request=request,
         current_user=current_user,
+        db=db,
     )
     run_mgr = get_run_manager(request)
     records = await run_mgr.list_by_thread(thread_id)
-    return [_record_to_response(r) for r in records]
+    return [_record_to_response(record) for record in records]
 
 
 @router.get("/{thread_id}/runs/{run_id}", response_model=RunResponse)
@@ -257,12 +238,14 @@ async def get_run(
     run_id: str,
     request: Request,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> RunResponse:
     """Get details of a specific run."""
     await _require_owned_thread(
-        request=request,
         thread_id=thread_id,
+        request=request,
         current_user=current_user,
+        db=db,
     )
     run_mgr = get_run_manager(request)
     record = run_mgr.get(run_id)
@@ -277,20 +260,16 @@ async def cancel_run(
     run_id: str,
     request: Request,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
     wait: bool = Query(default=False, description="Block until run completes after cancel"),
     action: Literal["interrupt", "rollback"] = Query(default="interrupt", description="Cancel action"),
 ) -> Response:
-    """Cancel a running or pending run.
-
-    - action=interrupt: Stop execution, keep current checkpoint (can be resumed)
-    - action=rollback: Stop execution, revert to pre-run checkpoint state
-    - wait=true: Block until the run fully stops, return 204
-    - wait=false: Return immediately with 202
-    """
+    """Cancel a running or pending run."""
     await _require_owned_thread(
-        request=request,
         thread_id=thread_id,
+        request=request,
         current_user=current_user,
+        db=db,
     )
     run_mgr = get_run_manager(request)
     record = run_mgr.get(run_id)
@@ -320,12 +299,14 @@ async def join_run(
     run_id: str,
     request: Request,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """Join an existing run's SSE stream."""
     await _require_owned_thread(
-        request=request,
         thread_id=thread_id,
+        request=request,
         current_user=current_user,
+        db=db,
     )
     bridge = get_stream_bridge(request)
     run_mgr = get_run_manager(request)
@@ -350,27 +331,21 @@ async def stream_existing_run(
     run_id: str,
     request: Request,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
     action: Literal["interrupt", "rollback"] | None = Query(default=None, description="Cancel action"),
     wait: int = Query(default=0, description="Block until cancelled (1) or return immediately (0)"),
 ):
-    """Join an existing run's SSE stream (GET), or cancel-then-stream (POST).
-
-    The LangGraph SDK's ``joinStream`` and ``useStream`` stop button both use
-    ``POST`` to this endpoint.  When ``action=interrupt`` or ``action=rollback``
-    is present the run is cancelled first; the response then streams any
-    remaining buffered events so the client observes a clean shutdown.
-    """
+    """Join an existing run's SSE stream (GET), or cancel-then-stream (POST)."""
     await _require_owned_thread(
-        request=request,
         thread_id=thread_id,
         current_user=current_user,
+        db=db,
     )
     run_mgr = get_run_manager(request)
     record = run_mgr.get(run_id)
     if record is None or record.thread_id != thread_id:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
-    # Cancel if an action was requested (stop-button / interrupt flow)
     if action is not None:
         cancelled = await run_mgr.cancel(run_id, action=action)
         if cancelled and wait and record.task is not None:

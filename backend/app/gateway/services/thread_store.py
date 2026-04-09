@@ -9,9 +9,6 @@ from psycopg import OperationalError
 
 THREADS_NS: tuple[str, ...] = ("threads",)
 
-_UNSET = object()
-
-
 class ThreadValues(TypedDict, total=False):
     """User-facing values mirrored into the thread metadata record."""
 
@@ -22,8 +19,6 @@ class ThreadRecord(TypedDict, total=False):
     """Normalized Store payload for thread metadata."""
 
     thread_id: str
-    owner_user_id: int | None
-    workspace_id: str | None
     status: str
     created_at: float
     updated_at: float
@@ -44,32 +39,17 @@ def is_store_unavailable(exc: Exception) -> bool:
     return "connection is closed" in message or "closed connection" in message
 
 
-def coerce_owner_user_id(record: ThreadRecord | dict[str, Any] | None) -> int | None:
-    """Normalize the stored owner identifier into an integer when possible."""
-    if not isinstance(record, dict):
-        return None
-
-    raw_value = record.get("owner_user_id")
-    if raw_value is None:
-        return None
-    if isinstance(raw_value, bool):
-        return None
-    if isinstance(raw_value, int):
-        return raw_value
-    if isinstance(raw_value, str) and raw_value.isdigit():
-        return int(raw_value)
-    return None
+_THREAD_RECORD_KEYS = frozenset(ThreadRecord.__annotations__.keys())
 
 
-def get_workspace_id(record: ThreadRecord | dict[str, Any] | None) -> str | None:
-    """Return the workspace identifier stored in the thread metadata record."""
-    if not isinstance(record, dict):
-        return None
-
-    raw_value = record.get("workspace_id")
-    if raw_value is None:
-        return None
-    return str(raw_value)
+def _sanitize_thread_record(record: dict[str, Any]) -> ThreadRecord:
+    """Keep only Store-supported runtime keys from raw thread metadata."""
+    sanitized = {
+        key: value
+        for key, value in dict(record).items()
+        if key in _THREAD_RECORD_KEYS
+    }
+    return cast(ThreadRecord, sanitized)
 
 
 async def get_thread_record(store, thread_id: str) -> ThreadRecord | None:
@@ -83,13 +63,13 @@ async def get_thread_record(store, thread_id: str) -> ThreadRecord | None:
 
     if item is None or not isinstance(item.value, dict):
         return None
-    return cast(ThreadRecord, item.value)
+    return _sanitize_thread_record(item.value)
 
 
 async def put_thread_record(store, record: ThreadRecord) -> None:
     """Write a thread metadata record to the Store."""
     try:
-        await store.aput(THREADS_NS, record["thread_id"], record)
+        await store.aput(THREADS_NS, record["thread_id"], _sanitize_thread_record(record))
     except Exception as exc:
         if is_store_unavailable(exc):
             raise StoreUnavailableError("Thread metadata store unavailable") from exc
@@ -120,8 +100,6 @@ async def upsert_thread_record(
     store,
     thread_id: str,
     *,
-    owner_user_id: int | None | object = _UNSET,
-    workspace_id: str | None | object = _UNSET,
     metadata: dict[str, Any] | None = None,
     values: dict[str, Any] | None = None,
     status: str | None = None,
@@ -141,22 +119,13 @@ async def upsert_thread_record(
             "metadata": dict(metadata or {}),
             "values": cast(ThreadValues, dict(values or {})),
         }
-        if owner_user_id is not _UNSET:
-            record["owner_user_id"] = cast(int | None, owner_user_id)
-        if workspace_id is not _UNSET:
-            record["workspace_id"] = cast(str | None, workspace_id)
-
         await put_thread_record(store, record)
         return record
 
-    record = cast(ThreadRecord, dict(existing))
+    record = _sanitize_thread_record(dict(existing))
     record["updated_at"] = now
     if status is not None:
         record["status"] = status
-    if owner_user_id is not _UNSET:
-        record["owner_user_id"] = cast(int | None, owner_user_id)
-    if workspace_id is not _UNSET:
-        record["workspace_id"] = cast(str | None, workspace_id)
     if metadata:
         record.setdefault("metadata", {}).update(metadata)
     if values:

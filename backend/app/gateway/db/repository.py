@@ -1,4 +1,4 @@
-"""Database access helpers for Gateway-owned auth and workspace tables."""
+"""Database access helpers for Gateway-owned auth, thread, and workspace tables."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.db.models import User, Workspace, WorkspaceFile
+from app.gateway.db.models import Thread, User, Workspace, WorkspaceFile
 
 
 def _as_optional_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
@@ -101,27 +101,137 @@ class UserRepository:
         return result.scalar_one_or_none()
 
 
+class ThreadRepository:
+    """Persistence helpers for canonical thread records."""
+
+    @staticmethod
+    async def create_thread(
+        db: AsyncSession,
+        *,
+        thread_id: str,
+        user_id: int,
+        workspace_id: str | uuid.UUID | None,
+        title: str | None = None,
+        status: str = "idle",
+        metadata: dict[str, Any] | None = None,
+        commit: bool = True,
+    ) -> Thread:
+        """Create a thread row."""
+        thread = Thread(
+            thread_id=thread_id,
+            user_id=user_id,
+            workspace_id=_as_optional_uuid(workspace_id),
+            title=title,
+            status=status,
+            thread_metadata=dict(metadata or {}),
+        )
+        db.add(thread)
+        await db.flush()
+        await db.refresh(thread)
+        if commit:
+            await db.commit()
+            await db.refresh(thread)
+        return thread
+
+    @staticmethod
+    async def get_thread_by_id(
+        db: AsyncSession,
+        thread_id: str,
+    ) -> Thread | None:
+        """Load a thread row by thread_id."""
+        result = await db.execute(select(Thread).where(Thread.thread_id == thread_id))
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def search_threads(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        status: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Thread]:
+        """Search threads owned by a user."""
+        stmt = select(Thread).where(Thread.user_id == user_id)
+        if status is not None:
+            stmt = stmt.where(Thread.status == status)
+        if metadata:
+            stmt = stmt.where(Thread.thread_metadata.contains(metadata))
+
+        stmt = stmt.order_by(Thread.updated_at.desc(), Thread.created_at.desc())
+        stmt = stmt.offset(offset).limit(limit)
+
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def update_thread(
+        db: AsyncSession,
+        *,
+        thread_id: str,
+        title: str | None = None,
+        status: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        commit: bool = True,
+    ) -> Thread | None:
+        """Patch title, status, and metadata for an existing thread."""
+        thread = await ThreadRepository.get_thread_by_id(db, thread_id)
+        if thread is None:
+            return None
+
+        if title is not None:
+            thread.title = title
+        if status is not None:
+            thread.status = status
+        if metadata:
+            merged_metadata = dict(thread.thread_metadata or {})
+            merged_metadata.update(metadata)
+            thread.thread_metadata = merged_metadata
+
+        await db.flush()
+        await db.refresh(thread)
+        if commit:
+            await db.commit()
+            await db.refresh(thread)
+        return thread
+
+    @staticmethod
+    async def delete_thread(
+        db: AsyncSession,
+        *,
+        thread_id: str,
+        commit: bool = True,
+    ) -> bool:
+        """Delete a thread row."""
+        result = await db.execute(delete(Thread).where(Thread.thread_id == thread_id))
+        if commit:
+            await db.commit()
+        return result.rowcount > 0
+
+
 class WorkspaceRepository:
     """Persistence helpers for workspace records."""
 
     @staticmethod
     async def create_workspace(
         db: AsyncSession,
-        owner_user_id: int,
+        user_id: int,
         name: str | None = None,
         *,
         commit: bool = True,
     ) -> Workspace:
         """Create a workspace record."""
         workspace = Workspace(
-            owner_user_id=owner_user_id,
+            user_id=user_id,
             name=name,
         )
         db.add(workspace)
         await db.flush()
+        await db.refresh(workspace)
         if commit:
             await db.commit()
-        await db.refresh(workspace)
+            await db.refresh(workspace)
         return workspace
 
     @staticmethod
@@ -158,16 +268,7 @@ class WorkspaceRepository:
         workspace_id: str | uuid.UUID,
         files: list[dict[str, Any]],
     ) -> int:
-        """Sync workspace files (upsert files, delete missing).
-
-        Args:
-            db: Database session
-            workspace_id: Workspace ID
-            files: List of dicts with keys: file_path, content, file_size
-
-        Returns:
-            Number of files synced
-        """
+        """Sync workspace files (upsert files, delete missing)."""
         workspace_uuid = _as_optional_uuid(workspace_id)
         if workspace_uuid is None:
             return 0
@@ -180,11 +281,11 @@ class WorkspaceRepository:
         insert_values = [
             {
                 "workspace_id": workspace_uuid,
-                "file_path": f["file_path"],
-                "content": f["content"],
-                "file_size": f["file_size"],
+                "file_path": file_info["file_path"],
+                "content": file_info["content"],
+                "file_size": file_info["file_size"],
             }
-            for f in files
+            for file_info in files
         ]
         stmt = insert(WorkspaceFile).values(insert_values)
         stmt = stmt.on_conflict_do_update(
@@ -196,7 +297,7 @@ class WorkspaceRepository:
         )
         await db.execute(stmt)
 
-        file_paths = [f["file_path"] for f in files]
+        file_paths = [file_info["file_path"] for file_info in files]
         await db.execute(
             delete(WorkspaceFile).where(
                 WorkspaceFile.workspace_id == workspace_uuid,
