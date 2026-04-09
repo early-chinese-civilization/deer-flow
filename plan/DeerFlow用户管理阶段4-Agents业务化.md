@@ -37,7 +37,7 @@
 
 ## 6. 涉及字段
 
-- `agents.owner_user_id`
+- `agents.user_id`
 - `agents.config_json`
 - `agent_skills`
 - `agent_knowledge_bases`

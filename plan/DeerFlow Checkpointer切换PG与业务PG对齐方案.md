@@ -6,7 +6,7 @@
 本轮保留以下总方向不变：
 
 - `checkpointer/store` 是 runtime 真相，承接 `state/history`、checkpoint lineage、resume/interrupt、完整 `channel_values`
-- `chats/messages` 是产品真相，承接 owner、列表、标题、用户可见消息、产品查询
+- `chats/messages` 是产品真相，承接 `user_id`、列表、标题、用户可见消息、产品查询
 - 二者通过最新 root checkpoint 投影到 PG 对齐，而不是把 checkpointer 内部结构直接业务化
 
 本轮固定决策如下：
@@ -48,7 +48,7 @@
 - 业务 PG 已承接 `users/chats/messages`
 - 当前列表、详情、历史、恢复分别读 PG 和 runtime 语义，天然存在“双真相短时漂移”
 - `config.yaml` / `config.example.yaml` 里关于“checkpointer 不影响 LangGraph Server”的旧注释与真实实现冲突
-- raw `/api/langgraph` 与 compat `/api/langgraph-compat` 的边界如果不锁死，后续 owner、投影、列表一致性会再次分叉
+- raw `/api/langgraph` 与 compat `/api/langgraph-compat` 的边界如果不锁死，后续 `user_id`、投影、列表一致性会再次分叉
 
 ## 一致性模型与核心定义
 
@@ -59,7 +59,7 @@
 - 强一致
   - `create_thread`
   - lazy takeover
-  - owner 绑定
+  - user_id 绑定
   - 显式 `state/title` 更新
   - 这些流程只有在 chat 行、最新 root checkpoint 锚点、首轮 PG 投影全部完成后才算成功，否则请求直接失败
 - 有界最终一致
@@ -74,7 +74,7 @@
 
 - PG 投影允许短暂滞后
 - compat 详情读接口返回前必须尝试补齐最新 root checkpoint
-- `create_thread / lazy takeover / owner 绑定` 不允许以“稍后补齐”为理由绕过强一致要求
+- `create_thread / lazy takeover / user_id 绑定` 不允许以“稍后补齐”为理由绕过强一致要求
 
 ### 2. 核心定义
 
@@ -126,15 +126,15 @@
   - 完整 `values.messages`
   - tool 过程与 channel values
 - `chats/messages` 继续承接：
-  - owner / title / status / 列表排序
+  - `user_id` / title / status / 列表排序
   - 用户可见消息投影
   - 产品查询与权限控制
 - raw `/api/langgraph`
   - 仅调试入口
-  - 不承诺 owner / PG 产品投影 / 产品一致性语义
+  - 不承诺 user_id / PG 产品投影 / 产品一致性语义
 - compat `/api/langgraph-compat`
   - 正式产品入口
-  - 负责 owner 语义、PG 投影和读前修复
+  - 负责 user_id 语义、PG 投影和读前修复
 
 ### 3. PG 投影与幂等规则
 
@@ -231,7 +231,7 @@
   - 详情读接口在 PG 滞后时能尝试自动补齐
 - 失败信号
   - compat 主链详情不可用
-  - owner 校验、takeover、投影行为再次分叉
+  - user_id 校验、takeover、投影行为再次分叉
 - 回滚条件
   - PG-first 或读前修复导致正式主链可用性下降
 - 回滚目标

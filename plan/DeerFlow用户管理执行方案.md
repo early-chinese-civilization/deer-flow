@@ -21,11 +21,11 @@
 - `current_user` 的正式解析链路是：`kc_access_token -> /userinfo`，失败后 `kc_refresh_token -> refresh -> /userinfo`
 - DeerFlow v1 不维护 `auth_sessions` 作为正式认证模型
 - LangGraph `checkpointer / store` 本轮不强迁入 PG
-- 所有 owner 归属只能由服务端 `current_user` 写入
+- 所有 user_id 归属只能由服务端 `current_user` 写入
 - chat 绑定 agent 后按当前资源实时解析，缺失引用按忽略处理，不阻断模型执行
 - Phase 1-3 不开放 Workspace 前端复用入口，但模型必须预留最终可见可复用能力
 - 优先保留 `/api/threads/**` 与 `/api/runs/**` 兼容层
-- 前期先做 owner 过滤与服务端归属，后期再逐步清理 legacy 全局实现
+- 前期先做 user_id 过滤与服务端归属，后期再逐步清理 legacy 全局实现
 - 如阶段验证失败，必须立即中断，不允许继续推进到下一阶段
 
 ## 3. 总体执行顺序
@@ -116,9 +116,9 @@
 
 ### 6.2 固定规则
 
-- `chats.owner_user_id` 一律来源于 `current_user`
-- 不允许前端传入 owner 决定归属
-- lazy takeover 首次接管后 owner 默认不可变
+- `chats.user_id` 一律来源于 `current_user`
+- 不允许前端传入 归属字段决定归属
+- lazy takeover 首次接管后 user_id 默认不可变
 - 被接管 thread 一旦进入 `chats`，即视为进入新用户体系
 
 ### 6.3 兼容策略
@@ -126,13 +126,13 @@
 - 首批只记录新登录后创建或访问的新体系会话
 - 历史消息不做全量回填
 - `/api/threads/**` 继续保留
-- owner 校验按“已接管 thread 优先”逐步打开
+- user_id 校验按“已接管 thread 优先”逐步打开
 
 ### 6.4 预备分支
 
 若 `messages` 镜像写入的幂等、SSE 时机或 tool 回调顺序复杂度超预期，则允许实施期临时拆成：
 
-- `2A chats / owner / lazy takeover`
+- `2A chats / user_id / lazy takeover`
 - `2B messages 镜像`
 
 管理层主编号仍保留为阶段 2。
@@ -203,9 +203,9 @@
 - refresh 恢复失败会导致用户重新跳回第三方登录
 - 解决顺序优先参考 `ecc_agent` 已验证行为，再做 DeerFlow 安全增强
 
-### 12.2 owner 风险
+### 12.2 user_id 归属风险
 
-- 若阶段 2 未固定 owner 来源，会导致 thread 归属争议和权限判断漂移
+- 若阶段 2 未固定 user_id 来源，会导致 thread 归属争议和权限判断漂移
 
 ### 12.3 workspace 风险
 

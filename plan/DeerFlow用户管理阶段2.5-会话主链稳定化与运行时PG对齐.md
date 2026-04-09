@@ -4,7 +4,7 @@
 
 - 本阶段位于阶段 2 与阶段 3 之间
 - 本阶段不是新增业务能力阶段，而是阶段 2 的稳定化收尾阶段
-- 本阶段负责把 chat / thread / owner / messages 这些已落地的产品语义，与 runtime 真相正式收口
+- 本阶段负责把 chat / thread / user_id / messages 这些已落地的产品语义，与 runtime 真相正式收口
 - 阶段 3 默认暂停，直到阶段 2.5 完成
 
 ## 2. 本阶段目标
@@ -18,7 +18,7 @@
 ## 3. 前置依赖
 
 - 阶段 1 的 `current_user` 已稳定可用
-- 阶段 2 的 `chats / messages / owner / lazy takeover` 已基本完成
+- 阶段 2 的 `chats / messages / user_id / lazy takeover` 已基本完成
 - `/api/threads/**` 兼容层当前仍可用
 - 管理口径上已确认：阶段 2 进入封板收尾，不再继续扩业务范围
 
@@ -124,7 +124,7 @@
   - 补齐失败时详情仍可读，并出现可观测 failure / lag
 - 回滚条件
   - compat 主链详情不可用
-  - owner / takeover / 投影行为再次分叉
+  - user_id / takeover / 投影行为再次分叉
 - 回滚目标
   - 回滚到阶段 2.5B 完成状态
 

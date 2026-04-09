@@ -115,7 +115,7 @@
 - 使用 Keycloak `/userinfo` 获取当前用户
 - 必要时先 refresh 再 userinfo
 - 把当前用户对象写入 `request.state.current_user`
-- 供后续 owner 校验和资源归属逻辑复用
+- 供后续 user_id 校验和资源归属逻辑复用
 
 ### 2.5 Cookie 安全要求
 
