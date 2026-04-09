@@ -2,25 +2,6 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-
-## First-Principles Working Policy
-
-Always reason from first principles: start from the original requirement and the root problem, not from conventions, templates, or habitual implementation paths.
-
-### Required Behavior
-
-1. Do not assume the user already knows exactly what they want.
-When the user's goal, motivation, constraints, or success criteria are unclear, stop and clarify before implementation.
-
-2. If the goal is clear but the proposed path is not the shortest or best path, say so directly.
-Do not follow a longer or weaker implementation path just because it was suggested first. Recommend the simpler, more direct, more robust path and explain why it is better.
-
-3. Do not patch symptoms. Always pursue root cause.
-Every fix, design choice, and tradeoff must be grounded in the underlying cause of the problem. Every decision should be able to answer: "why this approach?"
-
-4. Communicate only what affects the decision.
-Lead with the conclusion, then the reasoning. Remove repetition, generic framing, and background that does not change the decision or action.
-
 ## Project Overview
 
 DeerFlow is a LangGraph-based AI super agent system with a full-stack architecture. The backend provides a "super agent" with sandbox execution, persistent memory, subagent delegation, and extensible tool integration - all operating in per-thread isolated environments.
