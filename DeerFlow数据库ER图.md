@@ -9,9 +9,9 @@ erDiagram
     users ||--o{ skills : "拥有"
     users ||--o{ memories : "拥有"
     
-    workspaces ||--o{ workspace_files : "包含"
     workspaces ||--o{ threads : "绑定"
     
+    agents ||--o{ threads : "关联"
     agents ||--o{ agents_skills : "绑定"
     skills ||--o{ agents_skills : "被使用"
     
@@ -33,17 +33,7 @@ erDiagram
         UUID id PK
         BIGINT user_id FK
         VARCHAR name
-        TIMESTAMPTZ created_at
-        TIMESTAMPTZ updated_at
-        TIMESTAMPTZ deleted_at
-    }
-    
-    workspace_files {
-        BIGINT id PK
-        UUID workspace_id FK
-        VARCHAR name
-        TEXT file_path UK
-        VARCHAR content_type "MIME类型"
+        TEXT file_path "Workspace OSS 根前缀"
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at
         TIMESTAMPTZ deleted_at
@@ -52,6 +42,7 @@ erDiagram
     threads {
         VARCHAR thread_id PK
         BIGINT user_id FK
+        BIGINT agent_id FK
         UUID workspace_id FK "可选"
         TEXT title
         VARCHAR status "idle/busy/interrupted/error"
@@ -64,12 +55,10 @@ erDiagram
     agents {
         BIGSERIAL id PK
         BIGINT user_id FK
-        VARCHAR name UK
+        VARCHAR name "用户内唯一"
         TEXT description
-        VARCHAR model "覆盖默认模型"
-        JSONB tool_groups_json
-        TEXT soul_markdown "人格定义"
-        JSONB extensions_config_json "MCP配置"
+        TEXT soul "人格定义"
+        JSONB mcp_config "MCP配置"
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at
         TIMESTAMPTZ deleted_at
@@ -78,10 +67,10 @@ erDiagram
     skills {
         BIGSERIAL id PK
         BIGINT user_id FK "NULL=系统级"
-        VARCHAR name UK
+        VARCHAR name "用户内唯一"
         VARCHAR display_name
         TEXT description
-        VARCHAR file_directory "OSS路径"
+        VARCHAR file_path "当前生效版本 OSS 根前缀"
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at
         TIMESTAMPTZ deleted_at
@@ -92,6 +81,7 @@ erDiagram
         BIGINT agent_id FK
         BIGINT skill_id FK
         INT display_order "排序"
+        BOOLEAN enabled "是否启用"
         TIMESTAMPTZ created_at
     }
     
@@ -104,6 +94,8 @@ erDiagram
         TIMESTAMPTZ deleted_at
     }
 ```
+
+- 运行时文件与 Skill 内容由 Docker 容器内挂载的对象存储目录提供，不单独建文件内容表，因此不存在 `workspace_files` 实体。
 
 ---
 
@@ -162,5 +154,3 @@ erDiagram
 ```
 
 ---
-
-

@@ -56,6 +56,7 @@
 | id | UUID | 否 | uuid4() | 工作空间ID（主键） |
 | user_id | BIGINT | 否 | - | 用户ID（外键） |
 | name | VARCHAR(255) | 是 | - | 工作空间显示名称 |
+| file_path | TEXT | 是 | - | 工作空间在 OSS 中的根前缀 |
 | created_at | TIMESTAMPTZ | 否 | NOW() | 创建时间 |
 | updated_at | TIMESTAMPTZ | 否 | NOW() | 更新时间 |
 | deleted_at | TIMESTAMPTZ | 是 | - | 软删除时间 |
@@ -69,46 +70,17 @@
 - `ix_workspaces_user_id`: (user_id)
 - `ix_workspaces_deleted_at`: (deleted_at)
 
+**说明**:
+- `file_path` 存储 Workspace 在 OSS 中的根前缀，例如 `workspaces/{workspace_id}/`
+- 文件列表、删除以及 Docker 运行时挂载定位均基于该前缀完成
+
 **关系**:
 - 多对一: `user`
-- 一对多: `workspace_files` (级联删除)
 - 一对多: `threads`
 
 ---
 
-### 1.3 workspace_files 表
-
-工作空间文件表，存储工作空间内的文件元数据（实际文件存储在 OSS）。
-
-| 字段名 | 类型 | 可空 | 默认值 | 说明 |
-|--------|------|------|--------|------|
-| id | BIGINT | 否 | AUTO_INCREMENT | 文件ID（主键） |
-| workspace_id | UUID | 否 | - | 工作空间ID（外键） |
-| name | VARCHAR(255) | 否 | - | 文件名称 |
-| file_path | TEXT | 否 | - | 工作空间内的相对路径 |
-| content_type | VARCHAR(100) | 是 | - | MIME类型 |
-| created_at | TIMESTAMPTZ | 否 | NOW() | 创建时间 |
-| updated_at | TIMESTAMPTZ | 否 | NOW() | 更新时间 |
-| deleted_at | TIMESTAMPTZ | 是 | - | 软删除时间 |
-
-**主键**: `id`
-
-**外键**:
-- `workspace_id` → `workspaces.id` (ON DELETE CASCADE)
-
-**索引**:
-- `ix_workspace_files_workspace_id`: (workspace_id)
-- `ix_workspace_files_deleted_at`: (deleted_at)
-
-**唯一约束**:
-- `uq_workspace_files_workspace_path`: (workspace_id, file_path)
-
-**关系**:
-- 多对一: `workspace`
-
----
-
-### 1.4 threads 表
+### 1.3 threads 表
 
 线程表，存储用户对话线程的业务记录。
 
@@ -116,6 +88,7 @@
 |--------|------|------|--------|------|
 | thread_id | VARCHAR(255) | 否 | - | 线程ID（主键） |
 | user_id | BIGINT | 否 | - | 用户ID（外键） |
+| agent_id | BIGINT | 否 | - | 关联的Agent ID（外键） |
 | workspace_id | UUID | 是 | - | 绑定的工作空间ID（可选） |
 | title | TEXT | 是 | - | 线程标题 |
 | status | VARCHAR(50) | 否 | 'idle' | idle/busy/interrupted/error |
@@ -128,6 +101,7 @@
 
 **外键**:
 - `user_id` → `users.id` (ON DELETE CASCADE)
+- `agent_id` → `agents.id` (ON DELETE SET NULL)
 - `workspace_id` → `workspaces.id` (ON DELETE SET NULL)
 
 **索引**:
@@ -137,11 +111,15 @@
 
 **关系**:
 - 多对一: `user`
+- 多对一: `agent`
 - 多对一: `workspace`
+
+**说明**:
+- `agent_id` 用于绑定线程当前使用的 Agent；新建会话时必须指定（可使用默认 Agent）
 
 ---
 
-### 1.5 agents 表
+### 1.4 agents 表
 
 用户自定义 Agent 表，存储 Agent 配置。
 
@@ -151,10 +129,8 @@
 | user_id | BIGINT | 否 | - | 用户ID（外键） |
 | name | VARCHAR(255) | 否 | - | Agent名称 |
 | description | TEXT | 是 | - | Agent描述 |
-| model | VARCHAR(255) | 是 | - | 覆盖系统默认模型 |
-| tool_groups_json | JSONB | 是 | - | 工具组白名单 |
-| soul_markdown | TEXT | 是 | - | Agent人格定义 |
-| extensions_config_json | JSONB | 是 | - | Agent专属MCP配置 |
+| soul | TEXT | 是 | - | Agent人格定义 |
+| mcp_config | JSONB | 是 | - | Agent专属MCP配置 |
 | created_at | TIMESTAMPTZ | 否 | NOW() | 创建时间 |
 | updated_at | TIMESTAMPTZ | 否 | NOW() | 更新时间 |
 | deleted_at | TIMESTAMPTZ | 是 | - | 软删除时间 |
@@ -173,11 +149,12 @@
 
 **关系**:
 - 多对一: `user`
+- 一对多: `threads`
 - 一对多: `agents_skills`
 
 ---
 
-### 1.6 skills 表
+### 1.5 skills 表
 
 技能表，统一存储系统级和用户级技能。
 
@@ -188,7 +165,7 @@
 | name | VARCHAR(255) | 否 | - | Skill名称（唯一标识） |
 | display_name | VARCHAR(255) | 是 | - | 显示名称 |
 | description | TEXT | 是 | - | Skill描述 |
-| file_directory | VARCHAR(500) | 否 | - | OSS文件目录路径 |
+| file_path | VARCHAR(500) | 否 | - | 当前生效版本的 Skill 根前缀 |
 | created_at | TIMESTAMPTZ | 否 | NOW() | 创建时间 |
 | updated_at | TIMESTAMPTZ | 否 | NOW() | 更新时间 |
 | deleted_at | TIMESTAMPTZ | 是 | - | 软删除时间 |
@@ -206,8 +183,10 @@
 - `uq_skills_user_name_deleted`: (user_id, name, deleted_at)
 
 **说明**:
+- `file_path` 指向当前生效版本的 Skill 根前缀；发布新版本后切换到新的前缀
 - `user_id = NULL`: 系统级技能，所有用户共享
 - `user_id = 具体值`: 用户级技能，按用户隔离
+- Skill 上传采用“临时归档直传 + finalize 同步校验”模式；校验失败不落库
 
 **关系**:
 - 多对一: `user`
@@ -215,9 +194,9 @@
 
 ---
 
-### 1.7 agents_skills 表
+### 1.6 agents_skills 表
 
-Agent 与 Skill 的多对多关联表。
+Agent 与 Skill 的多对多关联表，支持单个 Agent 对单个 Skill 的启用/禁用控制。
 
 | 字段名 | 类型 | 可空 | 默认值 | 说明 |
 |--------|------|------|--------|------|
@@ -225,6 +204,7 @@ Agent 与 Skill 的多对多关联表。
 | agent_id | BIGINT | 否 | - | Agent ID（外键） |
 | skill_id | BIGINT | 否 | - | Skill ID（外键） |
 | display_order | INT | 否 | 0 | 显示顺序（用于排序） |
+| enabled | BOOLEAN | 否 | true | 是否启用该 Skill 绑定 |
 | created_at | TIMESTAMPTZ | 否 | NOW() | 创建时间 |
 
 **主键**: `id`
@@ -243,10 +223,11 @@ Agent 与 Skill 的多对多关联表。
 **说明**:
 - 通过 `skills.user_id` 自动区分系统级和用户级技能
 - `display_order` 用于控制 Agent 中 Skill 的执行/展示顺序
+- `enabled` 用于控制单个 Agent 对单个 Skill 是否生效
 
 ---
 
-### 1.8 memories 表
+### 1.7 memories 表
 
 用户记忆表，存储用户长期记忆数据。
 
@@ -375,11 +356,8 @@ Agent 与 Skill 的多对多关联表。
 
 | 数据库 | 表数量 | 说明 |
 |--------|--------|------|
-| flow | 8 | 业务表（用户、工作空间、线程、Agent、Skill、记忆等） |
+| flow | 7 | 业务表（用户、工作空间、线程、Agent、Skill、记忆等） |
 | check_point | 6 | LangGraph 框架表（检查点、存储、迁移等） |
-| **总计** | **14** | |
+| **总计** | **13** | |
 
 ---
-
-
-
