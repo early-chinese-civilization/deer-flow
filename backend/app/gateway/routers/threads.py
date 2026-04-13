@@ -410,6 +410,7 @@ async def create_thread(
         db=db,
         thread_id=thread_id,
         user_id=current_user.id,
+        agent_id=None,
         workspace_id=workspace.id,
         metadata=body.metadata,
         commit=False,
@@ -668,7 +669,7 @@ async def update_thread_state(
 ) -> ThreadStateResponse:
     """Write a new checkpoint and sync title changes into Store then DB."""
     store = _require_store(request)
-    access_record = await require_thread_access(
+    await require_thread_access(
         db=db,
         store=store,
         thread_id=thread_id,

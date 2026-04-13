@@ -5,11 +5,11 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.db.models import Thread, User, Workspace, WorkspaceFile
+from app.gateway.db.models import Agent, Memory, Skill, Thread, User, Workspace
 
 
 def _as_optional_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
@@ -110,6 +110,7 @@ class ThreadRepository:
         *,
         thread_id: str,
         user_id: int,
+        agent_id: int | None = None,
         workspace_id: str | uuid.UUID | None,
         title: str | None = None,
         status: str = "idle",
@@ -120,6 +121,7 @@ class ThreadRepository:
         thread = Thread(
             thread_id=thread_id,
             user_id=user_id,
+            agent_id=agent_id,
             workspace_id=_as_optional_uuid(workspace_id),
             title=title,
             status=status,
@@ -163,7 +165,7 @@ class ThreadRepository:
         stmt = stmt.offset(offset).limit(limit)
 
         result = await db.execute(stmt)
-        return list(result.scalars().all())
+        return result.scalars().all()
 
     @staticmethod
     async def update_thread(
@@ -247,74 +249,13 @@ class WorkspaceRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def list_workspace_files(
-        db: AsyncSession,
-        workspace_id: str | uuid.UUID,
-    ) -> list[WorkspaceFile]:
-        """List all files in a workspace."""
-        workspace_uuid = _as_optional_uuid(workspace_id)
-        if workspace_uuid is None:
-            return []
-        result = await db.execute(
-            select(WorkspaceFile)
-            .where(WorkspaceFile.workspace_id == workspace_uuid)
-            .order_by(WorkspaceFile.file_path)
-        )
-        return list(result.scalars().all())
-
-    @staticmethod
-    async def sync_workspace_files(
-        db: AsyncSession,
-        workspace_id: str | uuid.UUID,
-        files: list[dict[str, Any]],
-    ) -> int:
-        """Sync workspace files (upsert files, delete missing)."""
-        workspace_uuid = _as_optional_uuid(workspace_id)
-        if workspace_uuid is None:
-            return 0
-
-        if not files:
-            await db.execute(delete(WorkspaceFile).where(WorkspaceFile.workspace_id == workspace_uuid))
-            await db.commit()
-            return 0
-
-        insert_values = [
-            {
-                "workspace_id": workspace_uuid,
-                "file_path": file_info["file_path"],
-                "content": file_info["content"],
-                "file_size": file_info["file_size"],
-            }
-            for file_info in files
-        ]
-        stmt = insert(WorkspaceFile).values(insert_values)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["workspace_id", "file_path"],
-            set_={
-                "content": stmt.excluded.content,
-                "file_size": stmt.excluded.file_size,
-            },
-        )
-        await db.execute(stmt)
-
-        file_paths = [file_info["file_path"] for file_info in files]
-        await db.execute(
-            delete(WorkspaceFile).where(
-                WorkspaceFile.workspace_id == workspace_uuid,
-                WorkspaceFile.file_path.notin_(file_paths),
-            )
-        )
-        await db.commit()
-        return len(files)
-
-    @staticmethod
     async def delete_workspace(
         db: AsyncSession,
         workspace_id: str | uuid.UUID,
         *,
         commit: bool = True,
     ) -> bool:
-        """Delete a workspace and its cascaded files."""
+        """Delete a workspace row."""
         workspace_uuid = _as_optional_uuid(workspace_id)
         if workspace_uuid is None:
             return False
@@ -322,3 +263,132 @@ class WorkspaceRepository:
         if commit:
             await db.commit()
         return result.rowcount > 0
+
+
+class AgentRepository:
+    """Persistence helpers for agent records."""
+
+    @staticmethod
+    async def create_agent(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        name: str,
+        description: str | None = None,
+        soul: str | None = None,
+        mcp_config: dict[str, Any] | None = None,
+        commit: bool = True,
+    ) -> Agent:
+        """Create an agent record."""
+        agent = Agent(
+            user_id=user_id,
+            name=name,
+            description=description,
+            soul=soul,
+            mcp_config=mcp_config,
+        )
+        db.add(agent)
+        await db.flush()
+        await db.refresh(agent)
+        if commit:
+            await db.commit()
+            await db.refresh(agent)
+        return agent
+
+    @staticmethod
+    async def get_agent_by_id(db: AsyncSession, agent_id: int) -> Agent | None:
+        """Load an agent by ID."""
+        result = await db.execute(select(Agent).where(Agent.id == agent_id, Agent.deleted_at.is_(None)))
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def list_agents(db: AsyncSession, user_id: int) -> list[Agent]:
+        """List all agents for a user."""
+        result = await db.execute(
+            select(Agent).where(Agent.user_id == user_id, Agent.deleted_at.is_(None)).order_by(Agent.created_at.desc())
+        )
+        return result.scalars().all()
+
+
+class SkillRepository:
+    """Persistence helpers for skill records."""
+
+    @staticmethod
+    async def create_skill(
+        db: AsyncSession,
+        *,
+        user_id: int | None,
+        name: str,
+        display_name: str | None,
+        description: str | None,
+        file_path: str,
+        commit: bool = True,
+    ) -> Skill:
+        """Create a skill record."""
+        skill = Skill(
+            user_id=user_id,
+            name=name,
+            display_name=display_name,
+            description=description,
+            file_path=file_path,
+        )
+        db.add(skill)
+        await db.flush()
+        await db.refresh(skill)
+        if commit:
+            await db.commit()
+            await db.refresh(skill)
+        return skill
+
+    @staticmethod
+    async def get_skill_by_id(db: AsyncSession, skill_id: int) -> Skill | None:
+        """Load a skill by ID."""
+        result = await db.execute(select(Skill).where(Skill.id == skill_id, Skill.deleted_at.is_(None)))
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def list_skills(db: AsyncSession, user_id: int | None = None) -> list[Skill]:
+        """List skills (system-level if user_id is None, user-level otherwise)."""
+        stmt = select(Skill).where(Skill.deleted_at.is_(None))
+        if user_id is not None:
+            stmt = stmt.where((Skill.user_id == user_id) | (Skill.user_id.is_(None)))
+        else:
+            stmt = stmt.where(Skill.user_id.is_(None))
+        result = await db.execute(stmt.order_by(Skill.created_at.desc()))
+        return result.scalars().all()
+
+
+class MemoryRepository:
+    """Persistence helpers for memory records."""
+
+    @staticmethod
+    async def get_memory_by_user_id(db: AsyncSession, user_id: int) -> Memory | None:
+        """Load memory for a user."""
+        result = await db.execute(select(Memory).where(Memory.user_id == user_id, Memory.deleted_at.is_(None)))
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def upsert_memory(
+        db: AsyncSession,
+        user_id: int,
+        memory_json: dict[str, Any],
+        commit: bool = True,
+    ) -> Memory:
+        """Create or update the active memory row for a user."""
+        stmt = (
+            insert(Memory)
+            .values(user_id=user_id, memory_json=memory_json)
+            .on_conflict_do_update(
+                index_elements=["user_id"],
+                index_where=Memory.deleted_at.is_(None),
+                set_={
+                    "memory_json": memory_json,
+                    "updated_at": func.now(),
+                },
+            )
+            .returning(Memory)
+        )
+        result = await db.execute(stmt)
+        if commit:
+            await db.commit()
+        return result.scalar_one()

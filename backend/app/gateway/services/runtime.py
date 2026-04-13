@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import re
-import uuid
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -17,8 +16,6 @@ from app.gateway.db.repository import ThreadRepository
 from app.gateway.deps import get_checkpointer, get_run_manager, get_store, get_stream_bridge
 from app.gateway.services.ownership import ThreadAccessRecord
 from app.gateway.services.thread_store import upsert_thread_record
-from app.gateway.services.workspace_sync import sync_canonical_to_thread, sync_thread_to_canonical
-from deerflow.config.paths import get_paths
 from deerflow.runtime import (
     END_SENTINEL,
     HEARTBEAT_SENTINEL,
@@ -46,18 +43,6 @@ _CONTEXT_CONFIGURABLE_KEYS = {
 }
 
 
-def _coerce_workspace_uuid(workspace_id: str | None) -> uuid.UUID | None:
-    """Parse a stored workspace identifier into a UUID."""
-    if not workspace_id:
-        return None
-
-    try:
-        return uuid.UUID(workspace_id)
-    except ValueError:
-        logger.warning("Skipping invalid workspace_id %s in thread metadata", workspace_id)
-        return None
-
-
 def _get_thread_workspace_id(thread_record: Any | None) -> str | None:
     """Extract a bound workspace identifier from a DB-backed thread object."""
     if thread_record is None:
@@ -78,14 +63,8 @@ async def _sync_bound_workspace_to_thread(
     thread_id: str,
     workspace_id: str | None,
 ) -> None:
-    """Project the canonical workspace into the thread workspace before a run."""
-    workspace_uuid = _coerce_workspace_uuid(workspace_id)
-    if workspace_uuid is None:
-        return
-
-    async with get_db_session() as db:
-        thread_workspace_path = get_paths().sandbox_work_dir(thread_id)
-        await sync_canonical_to_thread(db, workspace_uuid, thread_workspace_path)
+    """No-op: workspace sync removed, files stored in OSS."""
+    return None
 
 
 async def _sync_thread_workspace_to_bound_workspace(
@@ -93,14 +72,8 @@ async def _sync_thread_workspace_to_bound_workspace(
     thread_id: str,
     workspace_id: str | None,
 ) -> None:
-    """Persist the thread workspace back into the canonical workspace after a run."""
-    workspace_uuid = _coerce_workspace_uuid(workspace_id)
-    if workspace_uuid is None:
-        return
-
-    async with get_db_session() as db:
-        thread_workspace_path = get_paths().sandbox_work_dir(thread_id)
-        await sync_thread_to_canonical(db, workspace_uuid, thread_workspace_path)
+    """No-op: workspace sync removed, files stored in OSS."""
+    return None
 
 
 def format_sse(event: str, data: Any, *, event_id: str | None = None) -> str:

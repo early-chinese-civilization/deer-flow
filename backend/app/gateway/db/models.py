@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Index, LargeBinary, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -49,6 +49,9 @@ class User(Base):
 
     workspaces = relationship("Workspace", back_populates="user", cascade="all, delete-orphan")
     threads = relationship("Thread", back_populates="user", cascade="all, delete-orphan")
+    agents = relationship("Agent", back_populates="user", cascade="all, delete-orphan")
+    skills = relationship("Skill", back_populates="user", cascade="all, delete-orphan")
+    memories = relationship("Memory", back_populates="user", cascade="all, delete-orphan")
 
 
 class Workspace(Base):
@@ -70,6 +73,7 @@ class Workspace(Base):
         comment="User ID",
     )
     name = Column(String(255), nullable=True, comment="Workspace display name")
+    file_path = Column(Text, nullable=True, comment="Workspace OSS root prefix")
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -85,43 +89,7 @@ class Workspace(Base):
     )
 
     user = relationship("User", back_populates="workspaces")
-    files = relationship("WorkspaceFile", back_populates="workspace", cascade="all, delete-orphan")
     threads = relationship("Thread", back_populates="workspace")
-
-
-class WorkspaceFile(Base):
-    """File storage within canonical workspace."""
-
-    __tablename__ = "workspace_files"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="File ID")
-    workspace_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("workspaces.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-        comment="Workspace ID",
-    )
-    file_path = Column(Text, nullable=False, comment="Relative path within workspace")
-    content = Column(LargeBinary, nullable=False, comment="File content")
-    file_size = Column(BigInteger, nullable=False, comment="File size in bytes")
-    created_at = Column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(UTC),
-        comment="Created at",
-    )
-    updated_at = Column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
-        comment="Updated at",
-    )
-
-    workspace = relationship("Workspace", back_populates="files")
-
-    __table_args__ = (UniqueConstraint("workspace_id", "file_path", name="uq_workspace_files_workspace_path"),)
 
 
 class Thread(Base):
@@ -139,6 +107,12 @@ class Thread(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         comment="User ID",
+    )
+    agent_id = Column(
+        BigInteger,
+        ForeignKey("agents.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Agent ID (optional)",
     )
     workspace_id = Column(
         UUID(as_uuid=True),
@@ -175,4 +149,198 @@ class Thread(Base):
     )
 
     user = relationship("User", back_populates="threads")
+    agent = relationship("Agent", back_populates="threads")
     workspace = relationship("Workspace", back_populates="threads")
+
+
+class Agent(Base):
+    """User-defined Agent configuration."""
+
+    __tablename__ = "agents"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="Agent ID")
+    user_id = Column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        comment="User ID (NULL for system agents)",
+    )
+    name = Column(String(255), nullable=False, comment="Agent name")
+    description = Column(Text, nullable=True, comment="Agent description")
+    soul = Column(Text, nullable=True, comment="Agent personality definition")
+    mcp_config = Column(JSONB(astext_type=Text()), nullable=True, comment="Agent MCP configuration")
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        comment="Created at",
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        comment="Updated at",
+    )
+    deleted_at = Column(DateTime(timezone=True), nullable=True, comment="Soft delete timestamp")
+
+    user = relationship("User", back_populates="agents")
+    threads = relationship("Thread", back_populates="agent")
+    agent_skills = relationship("AgentSkill", back_populates="agent", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index(
+            "uq_agents_user_name_active",
+            "user_id",
+            "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND user_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_agents_system_name_active",
+            "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND user_id IS NULL"),
+        ),
+        Index("ix_agents_user_id", "user_id"),
+        Index("ix_agents_deleted_at", "deleted_at"),
+    )
+
+
+class Skill(Base):
+    """System and user-level skills."""
+
+    __tablename__ = "skills"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="Skill ID")
+    user_id = Column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        comment="User ID (NULL for system skills)",
+    )
+    name = Column(String(255), nullable=False, comment="Skill name")
+    display_name = Column(String(255), nullable=True, comment="Display name")
+    description = Column(Text, nullable=True, comment="Skill description")
+    file_path = Column(String(500), nullable=False, comment="OSS file path")
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        comment="Created at",
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        comment="Updated at",
+    )
+    deleted_at = Column(DateTime(timezone=True), nullable=True, comment="Soft delete timestamp")
+
+    user = relationship("User", back_populates="skills")
+    agent_skills = relationship("AgentSkill", back_populates="skill", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index(
+            "uq_skills_user_name_active",
+            "user_id",
+            "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND user_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_skills_system_name_active",
+            "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND user_id IS NULL"),
+        ),
+        Index("ix_skills_user_id", "user_id"),
+        Index("ix_skills_deleted_at", "deleted_at"),
+    )
+
+
+class AgentSkill(Base):
+    """Many-to-many relationship between agents and skills."""
+
+    __tablename__ = "agents_skills"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="Association ID")
+    agent_id = Column(
+        BigInteger,
+        ForeignKey("agents.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="Agent ID",
+    )
+    skill_id = Column(
+        BigInteger,
+        ForeignKey("skills.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="Skill ID",
+    )
+    display_order = Column(Integer, nullable=False, default=0, comment="Display order")
+    enabled = Column(Boolean, nullable=False, default=True, comment="Enabled flag")
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        comment="Created at",
+    )
+    deleted_at = Column(DateTime(timezone=True), nullable=True, comment="Soft delete timestamp")
+
+    agent = relationship("Agent", back_populates="agent_skills")
+    skill = relationship("Skill", back_populates="agent_skills")
+
+    __table_args__ = (
+        Index(
+            "uq_agents_skills_active",
+            "agent_id",
+            "skill_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index("ix_agents_skills_agent_id", "agent_id"),
+        Index("ix_agents_skills_skill_id", "skill_id"),
+        Index("ix_agents_skills_deleted_at", "deleted_at"),
+    )
+
+
+class Memory(Base):
+    """User memory storage."""
+
+    __tablename__ = "memories"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="Memory ID")
+    user_id = Column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="User ID",
+    )
+    memory_json = Column(JSONB(astext_type=Text()), nullable=False, default=dict, comment="Memory content JSON")
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        comment="Created at",
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        comment="Updated at",
+    )
+    deleted_at = Column(DateTime(timezone=True), nullable=True, comment="Soft delete timestamp")
+
+    user = relationship("User", back_populates="memories")
+
+    __table_args__ = (
+        Index(
+            "uq_memories_user_id_active",
+            "user_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index("ix_memories_deleted_at", "deleted_at"),
+    )
