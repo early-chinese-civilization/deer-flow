@@ -206,6 +206,7 @@ Agent 与 Skill 的多对多关联表，支持单个 Agent 对单个 Skill 的�
 | display_order | INT | 否 | 0 | 显示顺序（用于排序） |
 | enabled | BOOLEAN | 否 | true | 是否启用该 Skill 绑定 |
 | created_at | TIMESTAMPTZ | 否 | NOW() | 创建时间 |
+| deleted_at | TIMESTAMPTZ | 是 | - | 软删除时间 |
 
 **主键**: `id`
 
@@ -216,6 +217,7 @@ Agent 与 Skill 的多对多关联表，支持单个 Agent 对单个 Skill 的�
 **索引**:
 - `ix_agents_skills_agent_id`: (agent_id)
 - `ix_agents_skills_skill_id`: (skill_id)
+- `ix_agents_skills_deleted_at`: (deleted_at)
 
 **唯一约束**:
 - `uq_agents_skills_agent_skill`: (agent_id, skill_id)

@@ -83,6 +83,7 @@ erDiagram
         INT display_order "排序"
         BOOLEAN enabled "是否启用"
         TIMESTAMPTZ created_at
+        TIMESTAMPTZ deleted_at
     }
     
     memories {
