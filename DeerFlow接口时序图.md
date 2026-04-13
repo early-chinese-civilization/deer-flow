@@ -76,7 +76,7 @@ sequenceDiagram
 
 ---
 
-## 3. 上传文件到线程（客户端直传 OSS）
+## 3. 上传文件到工作区(客户端直传 OSS)
 
 ```mermaid
 sequenceDiagram
@@ -85,11 +85,11 @@ sequenceDiagram
     participant OSS as 对象存储
     participant DB as flow 数据库
     
-    Client->>Gateway: POST /api/threads/{thread_id}/uploads/initiate<br/>{filename, content_type, size}
+    Client->>Gateway: POST /api/workspaces/{workspace_id}/uploads/initiate<br/>{filename, content_type, size}
     Gateway->>Gateway: 验证用户权限
     
-    Gateway->>DB: 查询线程<br/>验证所有权 (user_id)，获取 workspace_id / file_path
-    DB-->>Gateway: 返回线程信息 (含 workspace_id, file_path)
+    Gateway->>DB: 查询 workspace<br/>验证所有权 (user_id)，获取 file_path
+    DB-->>Gateway: 返回 workspace 信息 (含 file_path)
     
     alt workspace.file_path 为空
         Gateway->>DB: 初始化 workspace.file_path<br/>workspaces/{workspace_id}/
@@ -102,7 +102,7 @@ sequenceDiagram
     OSS-->>Client: 上传成功
     
     loop 前端轮询
-        Client->>Gateway: GET /api/threads/{thread_id}/uploads/list
+        Client->>Gateway: GET /api/workspaces/{workspace_id}/uploads/list
         Gateway->>OSS: 按 workspace.file_path 枚举对象
         OSS-->>Gateway: 返回文件列表
         Gateway-->>Client: 返回文件列表
@@ -110,15 +110,69 @@ sequenceDiagram
 ```
 
 **关键点**:
-- 主上传入口：`POST /api/threads/{thread_id}/uploads/initiate`
-- 文件主存储在 OSS，Gateway 只负责鉴权和签发上传会话，不再代理文件字节流
+- 主上传入口: `POST /api/workspaces/{workspace_id}/uploads/initiate`
+- 文件列表查询: `GET /api/workspaces/{workspace_id}/uploads/list`
+- 文件主存储在 OSS,Gateway 只负责鉴权和签发上传会话,不再代理文件字节流
 - `workspaces.file_path` 存储 workspace 的 OSS 根前缀
 - 第一版取消 PDF/Office 自动转 Markdown
 - Docker 容器通过挂载后的对象存储目录继续提供 `/mnt/user-data/uploads/...` 访问语义
 
 ---
 
-## 4. 查询线程历史消息
+## 4. 查询工作区文件列表(OSS)
+
+```mermaid
+sequenceDiagram
+    participant Client as 客户端
+    participant Gateway as Gateway API
+    participant FlowDB as flow 数据库
+    participant OSS as 对象存储
+    
+    Client->>Gateway: GET /api/workspaces/{workspace_id}/uploads/list
+    Gateway->>Gateway: 验证用户权限
+    
+    Gateway->>FlowDB: 查询线程及关联的 workspace<br/>验证所有权 (user_id)
+    FlowDB-->>Gateway: 返回 workspace.file_path<br/>
+    
+    Gateway->>OSS: 列举对象<br/>prefix: workspaces/{workspace_id}/
+    OSS-->>Gateway: 返回文件列表<br/>[{key, size, last_modified, etag}]
+    
+    Gateway->>Gateway: 为每个文件生成签名 URL<br/>(有效期 1 小时)
+    
+    Gateway-->>Client: 返回文件列表<br/>[{filename, size, url, modified_at}]
+    
+    Note over Client: 客户端使用签名 URL 访问文件
+    
+    alt 签名 URL 过期 (1 小时后)
+        Client->>OSS: 使用过期的签名 URL 访问文件
+        OSS-->>Client: 403 Forbidden (签名已过期)
+        
+        Client->>Gateway: POST /api/workspaces/{workspace_id}/files/url<br/>{filename: "文档.pdf"}
+        Gateway->>Gateway: 验证用户权限
+        Gateway->>FlowDB: 验证文件所有权
+        FlowDB-->>Gateway: 返回 workspace.file_path
+        Gateway->>Gateway: 生成新的签名 URL
+        Gateway-->>Client: 返回新的签名 URL<br/>{url, expires_at}
+        
+        Client->>OSS: 使用新的签名 URL 访问文件
+        OSS-->>Client: 200 OK (返回文件内容)
+    end
+```
+
+**关键点**:
+- 列表接口: `GET /api/workspaces/{workspace_id}/files`
+- 单文件 URL 刷新接口: `POST /api/workspaces/{workspace_id}/files/url`,请求体: `{filename: "文件名.pdf"}`
+- 使用 POST 请求可避免 URL 中中文文件名的编码问题
+- `workspace.file_path` 存储 workspace 在 OSS 中的根目录前缀,如 `workspaces/{workspace_id}/`
+- 通过该前缀列举 OSS 中的所有文件
+- 返回每个文件的签名 URL,客户端可直接访问
+- 签名 URL 默认有效期 1 小时,过期后调用单文件接口刷新该文件的签名 URL
+- 客户端收到 403 错误时,只需刷新对应文件的 URL,无需重新获取整个列表
+- 文件元数据包含:文件名、大小、修改时间、访问 URL
+
+---
+
+## 5. 查询线程历史消息
 
 ```mermaid
 sequenceDiagram

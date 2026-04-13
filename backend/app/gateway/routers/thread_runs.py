@@ -159,7 +159,7 @@ async def stream_run(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
-            "Content-Location": f"/api/threads/{thread_id}/runs/{record.run_id}/stream?thread_id={thread_id}&run_id={record.run_id}",
+            "Content-Location": f"/api/threads/{thread_id}/runs/{record.run_id}/stream",
         },
     )
 
