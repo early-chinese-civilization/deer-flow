@@ -17,6 +17,7 @@ import { ThreadTitle } from "@/components/workspace/thread-title";
 import { TodoList } from "@/components/workspace/todo-list";
 import { TokenUsageIndicator } from "@/components/workspace/token-usage-indicator";
 import { Welcome } from "@/components/workspace/welcome";
+import { WorkspaceFilesPanel } from "@/components/workspace/workspace-files-panel";
 import { useI18n } from "@/core/i18n/hooks";
 import { useNotification } from "@/core/notification/hooks";
 import { useThreadSettings } from "@/core/settings";
@@ -72,88 +73,101 @@ export default function ChatPage() {
 
   return (
     <ThreadContext.Provider value={{ thread, isMock }}>
-      <ChatBox threadId={threadId}>
-        <div className="relative flex size-full min-h-0 justify-between">
-          <header
-            className={cn(
-              "absolute top-0 right-0 left-0 z-30 flex h-12 shrink-0 items-center px-4",
-              isNewThread
-                ? "bg-background/0 backdrop-blur-none"
-                : "bg-background/80 shadow-xs backdrop-blur",
-            )}
-          >
-            <div className="flex w-full items-center text-sm font-medium">
-              <ThreadTitle threadId={threadId} thread={thread} />
-            </div>
-            <div className="flex items-center gap-2">
-              <TokenUsageIndicator messages={thread.messages} />
-              <ExportTrigger threadId={threadId} />
-              <ArtifactTrigger />
-            </div>
-          </header>
-          <main className="flex min-h-0 max-w-full grow flex-col">
-            <div className="flex size-full justify-center">
-              <MessageList
-                className={cn("size-full", !isNewThread && "pt-10")}
-                threadId={threadId}
-                thread={thread}
-              />
-            </div>
-            <div className="absolute right-0 bottom-0 left-0 z-30 flex justify-center px-4">
-              <div
+      <div className="flex size-full min-h-0 overflow-hidden">
+        <div className="min-w-0 flex-1">
+          <ChatBox threadId={threadId}>
+            <div className="relative flex size-full min-h-0 justify-between">
+              <header
                 className={cn(
-                  "relative w-full",
-                  isNewThread && "-translate-y-[calc(50vh-96px)]",
+                  "absolute top-0 right-0 left-0 z-30 flex h-12 shrink-0 items-center px-4",
                   isNewThread
-                    ? "max-w-(--container-width-sm)"
-                    : "max-w-(--container-width-md)",
+                    ? "bg-background/0 backdrop-blur-none"
+                    : "bg-background/80 shadow-xs backdrop-blur",
                 )}
               >
-                <div className="absolute -top-4 right-0 left-0 z-0">
-                  <div className="absolute right-0 bottom-0 left-0">
-                    <TodoList
-                      className="bg-background/5"
-                      todos={thread.values.todos ?? []}
-                      hidden={
-                        !thread.values.todos || thread.values.todos.length === 0
+                <div className="flex w-full items-center text-sm font-medium">
+                  <ThreadTitle threadId={threadId} thread={thread} />
+                </div>
+                <div className="flex items-center gap-2">
+                  <TokenUsageIndicator messages={thread.messages} />
+                  <ExportTrigger threadId={threadId} />
+                  <ArtifactTrigger />
+                </div>
+              </header>
+              <main className="flex min-h-0 max-w-full grow flex-col">
+                <div className="flex size-full justify-center">
+                  <MessageList
+                    className={cn("size-full", !isNewThread && "pt-10")}
+                    threadId={threadId}
+                    thread={thread}
+                  />
+                </div>
+                <div className="absolute right-0 bottom-0 left-0 z-30 flex justify-center px-4">
+                  <div
+                    className={cn(
+                      "relative w-full",
+                      isNewThread && "-translate-y-[calc(50vh-96px)]",
+                      isNewThread
+                        ? "max-w-(--container-width-sm)"
+                        : "max-w-(--container-width-md)",
+                    )}
+                  >
+                    <div className="absolute -top-4 right-0 left-0 z-0">
+                      <div className="absolute right-0 bottom-0 left-0">
+                        <TodoList
+                          className="bg-background/5"
+                          todos={thread.values.todos ?? []}
+                          hidden={
+                            !thread.values.todos ||
+                            thread.values.todos.length === 0
+                          }
+                        />
+                      </div>
+                    </div>
+                    <InputBox
+                      className={cn("bg-background/5 w-full -translate-y-4")}
+                      isNewThread={isNewThread}
+                      threadId={threadId}
+                      autoFocus={isNewThread}
+                      status={
+                        thread.error
+                          ? "error"
+                          : thread.isLoading
+                            ? "streaming"
+                            : "ready"
                       }
+                      context={settings.context}
+                      extraHeader={
+                        isNewThread && <Welcome mode={settings.context.mode} />
+                      }
+                      disabled={
+                        env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ||
+                        isUploading
+                      }
+                      onContextChange={(context) =>
+                        setSettings("context", context)
+                      }
+                      onSubmit={handleSubmit}
+                      onStop={handleStop}
                     />
+                    {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" && (
+                      <div className="text-muted-foreground/67 w-full translate-y-12 text-center text-xs">
+                        {t.common.notAvailableInDemoMode}
+                      </div>
+                    )}
                   </div>
                 </div>
-                <InputBox
-                  className={cn("bg-background/5 w-full -translate-y-4")}
-                  isNewThread={isNewThread}
-                  threadId={threadId}
-                  autoFocus={isNewThread}
-                  status={
-                    thread.error
-                      ? "error"
-                      : thread.isLoading
-                        ? "streaming"
-                        : "ready"
-                  }
-                  context={settings.context}
-                  extraHeader={
-                    isNewThread && <Welcome mode={settings.context.mode} />
-                  }
-                  disabled={
-                    env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ||
-                    isUploading
-                  }
-                  onContextChange={(context) => setSettings("context", context)}
-                  onSubmit={handleSubmit}
-                  onStop={handleStop}
-                />
-                {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" && (
-                  <div className="text-muted-foreground/67 w-full translate-y-12 text-center text-xs">
-                    {t.common.notAvailableInDemoMode}
-                  </div>
-                )}
-              </div>
+              </main>
             </div>
-          </main>
+          </ChatBox>
         </div>
-      </ChatBox>
+        {!isNewThread && (
+          <WorkspaceFilesPanel
+            threadId={threadId}
+            className="w-[clamp(320px,22vw,420px)] shrink-0"
+          />
+        )}
+      </div>
     </ThreadContext.Provider>
   );
 }
