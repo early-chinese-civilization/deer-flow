@@ -16,20 +16,7 @@ def _normalize_presented_filepath(
     runtime: ToolRuntime[ContextT, ThreadState],
     filepath: str,
 ) -> str:
-    """Normalize a presented file path to the `/mnt/user-data/outputs/*` contract.
-
-    Accepts either:
-    - A virtual sandbox path such as `/mnt/user-data/outputs/report.md`
-    - A host-side thread outputs path such as
-      `/app/backend/.deer-flow/threads/<thread>/user-data/outputs/report.md`
-
-    Returns:
-        The normalized virtual path.
-
-    Raises:
-        ValueError: If runtime metadata is missing or the path is outside the
-            current thread's outputs directory.
-    """
+    """Normalize a presented file path to the `/mnt/user-data/outputs/*` contract."""
     if runtime.state is None:
         raise ValueError("Thread runtime state is not available")
 
@@ -91,7 +78,6 @@ def present_file_tool(
             update={"messages": [ToolMessage(f"Error: {exc}", tool_call_id=tool_call_id)]},
         )
 
-    # The merge_artifacts reducer will handle merging and deduplication
     return Command(
         update={
             "artifacts": normalized_paths,
