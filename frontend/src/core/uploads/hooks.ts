@@ -16,15 +16,19 @@ import {
 /**
  * Hook to upload files
  */
-export function useUploadFiles(threadId: string) {
+export function useUploadFiles(
+  workspaceId: string,
+  options?: {
+    threadId?: string;
+  },
+) {
   const queryClient = useQueryClient();
 
   return useMutation<UploadResponse, Error, File[]>({
-    mutationFn: (files: File[]) => uploadFiles(threadId, files),
+    mutationFn: (files: File[]) => uploadFiles(workspaceId, files, options),
     onSuccess: () => {
-      // Invalidate the uploaded files list
       void queryClient.invalidateQueries({
-        queryKey: ["uploads", "list", threadId],
+        queryKey: ["uploads", "list", workspaceId],
       });
     },
   });
@@ -33,26 +37,36 @@ export function useUploadFiles(threadId: string) {
 /**
  * Hook to list uploaded files
  */
-export function useUploadedFiles(threadId: string) {
+export function useUploadedFiles(
+  workspaceId: string,
+  options?: {
+    threadId?: string;
+  },
+) {
   return useQuery({
-    queryKey: ["uploads", "list", threadId],
-    queryFn: () => listUploadedFiles(threadId),
-    enabled: !!threadId,
+    queryKey: ["uploads", "list", workspaceId, options?.threadId ?? null],
+    queryFn: () => listUploadedFiles(workspaceId, options),
+    enabled: !!workspaceId,
   });
 }
 
 /**
  * Hook to delete an uploaded file
  */
-export function useDeleteUploadedFile(threadId: string) {
+export function useDeleteUploadedFile(
+  workspaceId: string,
+  options?: {
+    threadId?: string;
+  },
+) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (filename: string) => deleteUploadedFile(threadId, filename),
+    mutationFn: (filename: string) =>
+      deleteUploadedFile(workspaceId, filename, options),
     onSuccess: () => {
-      // Invalidate the uploaded files list
       void queryClient.invalidateQueries({
-        queryKey: ["uploads", "list", threadId],
+        queryKey: ["uploads", "list", workspaceId],
       });
     },
   });
@@ -62,8 +76,13 @@ export function useDeleteUploadedFile(threadId: string) {
  * Hook to handle file uploads in submit flow
  * Returns a function that uploads files and returns their info
  */
-export function useUploadFilesOnSubmit(threadId: string) {
-  const uploadMutation = useUploadFiles(threadId);
+export function useUploadFilesOnSubmit(
+  workspaceId: string,
+  options?: {
+    threadId?: string;
+  },
+) {
+  const uploadMutation = useUploadFiles(workspaceId, options);
 
   return useCallback(
     async (files: File[]): Promise<UploadedFileInfo[]> => {

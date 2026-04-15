@@ -22,6 +22,7 @@ from deerflow.config.title_config import load_title_config_from_dict
 from deerflow.config.token_usage_config import TokenUsageConfig
 from deerflow.config.tool_config import ToolConfig, ToolGroupConfig
 from deerflow.config.tool_search_config import ToolSearchConfig, load_tool_search_config_from_dict
+from deerflow.config.uploads_config import UploadsConfig
 
 load_dotenv()
 
@@ -37,6 +38,7 @@ class AppConfig(BaseModel):
     sandbox: SandboxConfig = Field(description="Sandbox configuration")
     tools: list[ToolConfig] = Field(default_factory=list, description="Available tools")
     tool_groups: list[ToolGroupConfig] = Field(default_factory=list, description="Available tool groups")
+    uploads: UploadsConfig = Field(default_factory=UploadsConfig, description="Uploads storage configuration")
     skills: SkillsConfig = Field(default_factory=SkillsConfig, description="Skills configuration")
     extensions: ExtensionsConfig = Field(default_factory=ExtensionsConfig, description="Extensions configuration (MCP servers and skills state)")
     tool_search: ToolSearchConfig = Field(default_factory=ToolSearchConfig, description="Tool search / deferred loading configuration")

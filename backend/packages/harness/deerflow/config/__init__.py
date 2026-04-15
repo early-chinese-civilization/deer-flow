@@ -3,6 +3,7 @@ from .extensions_config import ExtensionsConfig, get_extensions_config
 from .memory_config import MemoryConfig, get_memory_config
 from .paths import Paths, get_paths
 from .skills_config import SkillsConfig
+from .uploads_config import OSSUploadsConfig, UploadsConfig
 from .tracing_config import (
     get_enabled_tracing_providers,
     get_explicitly_enabled_tracing_providers,
@@ -16,6 +17,8 @@ __all__ = [
     "Paths",
     "get_paths",
     "SkillsConfig",
+    "UploadsConfig",
+    "OSSUploadsConfig",
     "ExtensionsConfig",
     "get_extensions_config",
     "MemoryConfig",

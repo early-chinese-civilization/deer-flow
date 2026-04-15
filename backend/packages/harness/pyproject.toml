@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "agent-client-protocol>=0.4.0",
     "agent-sandbox>=0.0.19",
+    "alibabacloud-oss-v2>=1.2.5",
     "dotenv>=0.9.9",
     "httpx>=0.28.0",
     "kubernetes>=30.0.0",

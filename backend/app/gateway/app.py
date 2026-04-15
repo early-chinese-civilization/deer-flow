@@ -148,7 +148,7 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
             },
             {
                 "name": "uploads",
-                "description": "Upload and manage user files for threads",
+                "description": "Upload and manage user files for workspaces",
             },
             {
                 "name": "threads",
@@ -202,7 +202,7 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
     # Artifacts API is mounted at /api/threads/{thread_id}/artifacts
     app.include_router(artifacts.router)
 
-    # Uploads API is mounted at /api/threads/{thread_id}/uploads
+    # Uploads API is mounted at /api/workspaces/{workspace_id}/uploads
     app.include_router(uploads.router)
 
     # Thread cleanup API is mounted at /api/threads/{thread_id}

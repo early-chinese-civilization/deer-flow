@@ -230,6 +230,9 @@ class WorkspaceRepository:
         )
         db.add(workspace)
         await db.flush()
+        if workspace.file_path is None:
+            workspace.file_path = f"workspaces/{workspace.id}"
+            await db.flush()
         await db.refresh(workspace)
         if commit:
             await db.commit()
@@ -263,6 +266,27 @@ class WorkspaceRepository:
         if commit:
             await db.commit()
         return result.rowcount > 0
+
+    @staticmethod
+    async def update_workspace_file_path(
+        db: AsyncSession,
+        *,
+        workspace_id: str | uuid.UUID,
+        file_path: str,
+        commit: bool = True,
+    ) -> Workspace | None:
+        """Update the canonical OSS root prefix for a workspace."""
+        workspace = await WorkspaceRepository.get_workspace_by_id(db, workspace_id)
+        if workspace is None:
+            return None
+
+        workspace.file_path = file_path
+        await db.flush()
+        await db.refresh(workspace)
+        if commit:
+            await db.commit()
+            await db.refresh(workspace)
+        return workspace
 
 
 class AgentRepository:

@@ -9,13 +9,17 @@ export interface UploadedFileInfo {
   size: number;
   path: string;
   virtual_path: string;
-  artifact_url: string;
-  extension?: string;
+  artifact_url: string | null;
+  object_key: string;
+  signed_url?: string | null;
+  extension?: string | null;
   modified?: number;
-  markdown_file?: string;
-  markdown_path?: string;
-  markdown_virtual_path?: string;
-  markdown_artifact_url?: string;
+  markdown_file?: string | null;
+  markdown_path?: string | null;
+  markdown_virtual_path?: string | null;
+  markdown_artifact_url?: string | null;
+  markdown_object_key?: string | null;
+  markdown_signed_url?: string | null;
 }
 
 export interface UploadResponse {
@@ -25,9 +29,15 @@ export interface UploadResponse {
 }
 
 export interface ListFilesResponse {
+  root_label: string;
+  root_path: string;
   files: UploadedFileInfo[];
   count: number;
 }
+
+type UploadRequestOptions = {
+  threadId?: string;
+};
 
 async function readErrorDetail(
   response: Response,
@@ -37,12 +47,29 @@ async function readErrorDetail(
   return error.detail ?? fallback;
 }
 
+function buildUploadsUrl(
+  workspaceId: string,
+  suffix = "",
+  options?: UploadRequestOptions,
+): string {
+  const baseUrl = `${getBackendBaseURL()}/api/workspaces/${encodeURIComponent(workspaceId)}/uploads${suffix}`;
+  if (!options?.threadId) {
+    return baseUrl;
+  }
+
+  const query = new URLSearchParams({
+    thread_id: options.threadId,
+  });
+  return `${baseUrl}?${query.toString()}`;
+}
+
 /**
- * Upload files to a thread
+ * Upload files to a workspace
  */
 export async function uploadFiles(
-  threadId: string,
+  workspaceId: string,
   files: File[],
+  options?: UploadRequestOptions,
 ): Promise<UploadResponse> {
   const formData = new FormData();
 
@@ -50,14 +77,11 @@ export async function uploadFiles(
     formData.append("files", file);
   });
 
-  const response = await fetch(
-    `${getBackendBaseURL()}/api/threads/${threadId}/uploads`,
-    {
-      method: "POST",
-      body: formData,
-      credentials: "include",
-    },
-  );
+  const response = await fetch(buildUploadsUrl(workspaceId, "", options), {
+    method: "POST",
+    body: formData,
+    credentials: "include",
+  });
 
   if (!response.ok) {
     throw new Error(await readErrorDetail(response, "Upload failed"));
@@ -67,17 +91,15 @@ export async function uploadFiles(
 }
 
 /**
- * List all uploaded files for a thread
+ * List all uploaded files for a workspace
  */
 export async function listUploadedFiles(
-  threadId: string,
+  workspaceId: string,
+  options?: UploadRequestOptions,
 ): Promise<ListFilesResponse> {
-  const response = await fetch(
-    `${getBackendBaseURL()}/api/threads/${threadId}/uploads/list`,
-    {
-      credentials: "include",
-    },
-  );
+  const response = await fetch(buildUploadsUrl(workspaceId, "/list", options), {
+    credentials: "include",
+  });
 
   if (!response.ok) {
     throw new Error(
@@ -92,11 +114,16 @@ export async function listUploadedFiles(
  * Delete an uploaded file
  */
 export async function deleteUploadedFile(
-  threadId: string,
+  workspaceId: string,
   filename: string,
+  options?: UploadRequestOptions,
 ): Promise<{ success: boolean; message: string }> {
   const response = await fetch(
-    `${getBackendBaseURL()}/api/threads/${threadId}/uploads/${filename}`,
+    buildUploadsUrl(
+      workspaceId,
+      `/${encodeURIComponent(filename)}`,
+      options,
+    ),
     {
       method: "DELETE",
       credentials: "include",

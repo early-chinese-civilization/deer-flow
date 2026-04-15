@@ -16,6 +16,7 @@ import { useUpdateSubtask } from "../tasks/context";
 import type { UploadedFileInfo } from "../uploads";
 import { uploadFiles } from "../uploads";
 
+import { ensureThread } from "./api";
 import type { AgentThread, AgentThreadState } from "./types";
 
 export type ToolEndEvent = {
@@ -262,8 +263,17 @@ export function useThreadStream({
       _handleOnStart(threadId);
 
       let uploadedFileInfo: UploadedFileInfo[] = [];
+      const shouldEnsureThread =
+        !threadIdRef.current || Boolean(message.files?.length);
+      let ensuredThread:
+        | Awaited<ReturnType<typeof ensureThread>>
+        | undefined = undefined;
 
       try {
+        if (shouldEnsureThread) {
+          ensuredThread = await ensureThread(threadId);
+        }
+
         // Upload files first if any
         if (message.files && message.files.length > 0) {
           setIsUploading(true);
@@ -308,7 +318,14 @@ export function useThreadStream({
             }
 
             if (files.length > 0) {
-              const uploadResponse = await uploadFiles(threadId, files);
+              const workspaceId = ensuredThread?.workspace_id;
+              if (!workspaceId) {
+                throw new Error("Thread workspace is not ready for file upload.");
+              }
+
+              const uploadResponse = await uploadFiles(workspaceId, files, {
+                threadId,
+              });
               uploadedFileInfo = uploadResponse.files;
 
               // Update optimistic human message with uploaded status + paths

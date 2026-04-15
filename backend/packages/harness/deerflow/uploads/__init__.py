@@ -12,6 +12,7 @@ from .manager import (
     validate_path_traversal,
     validate_thread_id,
 )
+from .storage import OSSObjectInfo, OSSStorageBackend, oss_root_path, workspace_object_key, workspace_root_prefix
 
 __all__ = [
     "get_uploads_dir",
@@ -26,4 +27,9 @@ __all__ = [
     "upload_virtual_path",
     "enrich_file_listing",
     "validate_thread_id",
+    "OSSObjectInfo",
+    "OSSStorageBackend",
+    "workspace_root_prefix",
+    "workspace_object_key",
+    "oss_root_path",
 ]

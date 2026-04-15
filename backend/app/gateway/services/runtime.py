@@ -16,6 +16,7 @@ from app.gateway.db.repository import ThreadRepository
 from app.gateway.deps import get_checkpointer, get_run_manager, get_store, get_stream_bridge
 from app.gateway.services.ownership import ThreadAccessRecord
 from app.gateway.services.thread_store import upsert_thread_record
+from app.gateway.services.workspace_uploads import sync_workspace_uploads_to_thread
 from deerflow.runtime import (
     END_SENTINEL,
     HEARTBEAT_SENTINEL,
@@ -63,7 +64,19 @@ async def _sync_bound_workspace_to_thread(
     thread_id: str,
     workspace_id: str | None,
 ) -> None:
-    """No-op: workspace sync removed, files stored in OSS."""
+    """Mirror canonical workspace uploads into the current thread uploads directory."""
+    if workspace_id is None:
+        return None
+
+    async with get_db_session() as db:
+        thread_record = await ThreadRepository.get_thread_by_id(db, thread_id)
+        if thread_record is None:
+            logger.warning("Skipping workspace sync for missing thread %s", thread_id)
+            return None
+        await sync_workspace_uploads_to_thread(
+            db=db,
+            thread=thread_record,
+        )
     return None
 
 
