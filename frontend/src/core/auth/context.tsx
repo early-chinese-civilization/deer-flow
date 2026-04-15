@@ -6,7 +6,14 @@
  * 提供全局的用户状态管理
  */
 
-import { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from 'react';
+
 import * as authApi from './api';
 import type { AuthContextType, User } from './types';
 
@@ -47,7 +54,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // 初始化时获取用户信息
   useEffect(() => {
-    refetch();
+    void refetch();
   }, [refetch]);
 
   return (
