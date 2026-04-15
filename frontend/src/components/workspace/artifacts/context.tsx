@@ -3,7 +3,9 @@ import {
   useCallback,
   useContext,
   useState,
+  type Dispatch,
   type ReactNode,
+  type SetStateAction,
 } from "react";
 
 import { useSidebar } from "@/components/ui/sidebar";
@@ -11,7 +13,7 @@ import { env } from "@/env";
 
 export interface ArtifactsContextType {
   artifacts: string[];
-  setArtifacts: (artifacts: string[]) => void;
+  setArtifacts: Dispatch<SetStateAction<string[]>>;
 
   selectedArtifact: string | null;
   autoSelect: boolean;

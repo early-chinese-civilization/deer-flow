@@ -23,6 +23,10 @@ import { useThread } from "../messages/context";
 const CLOSE_MODE = { chat: 100, artifacts: 0 };
 const OPEN_MODE = { chat: 60, artifacts: 40 };
 
+function mergeArtifactPaths(primary: string[], secondary: string[]) {
+  return Array.from(new Set([...primary, ...secondary]));
+}
+
 const ChatBox: React.FC<{ children: React.ReactNode; threadId: string }> = ({
   children,
   threadId,
@@ -44,13 +48,21 @@ const ChatBox: React.FC<{ children: React.ReactNode; threadId: string }> = ({
 
   const [autoSelectFirstArtifact, setAutoSelectFirstArtifact] = useState(true);
   useEffect(() => {
-    if (threadIdRef.current !== threadId) {
+    const hasThreadChanged = threadIdRef.current !== threadId;
+
+    if (hasThreadChanged) {
       threadIdRef.current = threadId;
       deselect();
     }
 
-    // Update artifacts from the current thread
-    setArtifacts(thread.values.artifacts);
+    const threadArtifacts = thread.values.artifacts ?? [];
+    if (hasThreadChanged) {
+      setArtifacts(threadArtifacts);
+    } else {
+      setArtifacts((currentArtifacts) =>
+        mergeArtifactPaths(threadArtifacts, currentArtifacts),
+      );
+    }
 
     // DO NOT automatically deselect the artifact when switching threads, because the artifacts auto discovering is not work now.
     // if (
@@ -112,6 +124,7 @@ const ChatBox: React.FC<{ children: React.ReactNode; threadId: string }> = ({
       </ResizablePanel>
       <ResizableHandle
         id={`${resizableIdBase}-separator`}
+        disabled={!artifactPanelOpen}
         className={cn(
           "opacity-33 hover:opacity-100",
           !artifactPanelOpen && "pointer-events-none opacity-0",

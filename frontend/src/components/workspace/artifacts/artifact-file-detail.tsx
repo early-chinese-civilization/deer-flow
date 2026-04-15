@@ -54,7 +54,7 @@ export function ArtifactFileDetail({
   threadId: string;
 }) {
   const { t } = useI18n();
-  const { artifacts, setOpen, select } = useArtifacts();
+  const { artifacts, deselect, select } = useArtifacts();
   const isWriteFile = useMemo(() => {
     return filepathFromProps.startsWith("write-file:");
   }, [filepathFromProps]);
@@ -70,11 +70,10 @@ export function ArtifactFileDetail({
   }, [filepath]);
   const { isCodeFile, language } = useMemo(() => {
     if (isWriteFile) {
-      let language = checkCodeFile(filepath).language;
-      language ??= "text";
-      return { isCodeFile: true, language };
+      let nextLanguage = checkCodeFile(filepath).language;
+      nextLanguage ??= "text";
+      return { isCodeFile: true, language: nextLanguage };
     }
-    // Treat .skill files as markdown (they contain SKILL.md)
     if (isSkillFile) {
       return { isCodeFile: true, language: "markdown" };
     }
@@ -97,9 +96,10 @@ export function ArtifactFileDetail({
   useEffect(() => {
     if (isSupportPreview) {
       setViewMode("preview");
-    } else {
-      setViewMode("code");
+      return;
     }
+
+    setViewMode("code");
   }, [isSupportPreview]);
 
   const handleInstallSkill = useCallback(async () => {
@@ -113,16 +113,18 @@ export function ArtifactFileDetail({
       });
       if (result.success) {
         toast.success(result.message);
-      } else {
-        toast.error(result.message ?? "Failed to install skill");
+        return;
       }
+
+      toast.error(result.message ?? "Failed to install skill");
     } catch (error) {
       console.error("Failed to install skill:", error);
       toast.error("Failed to install skill");
     } finally {
       setIsInstalling(false);
     }
-  }, [threadId, filepath, isInstalling]);
+  }, [filepath, isInstalling, threadId]);
+
   return (
     <Artifact className={cn(className)}>
       <ArtifactHeader className="px-2">
@@ -137,9 +139,9 @@ export function ArtifactFileDetail({
                 </SelectTrigger>
                 <SelectContent className="select-none">
                   <SelectGroup>
-                    {(artifacts ?? []).map((filepath) => (
-                      <SelectItem key={filepath} value={filepath}>
-                        {getFileName(filepath)}
+                    {(artifacts ?? []).map((artifactPath) => (
+                      <SelectItem key={artifactPath} value={artifactPath}>
+                        {getFileName(artifactPath)}
                       </SelectItem>
                     ))}
                   </SelectGroup>
@@ -233,7 +235,7 @@ export function ArtifactFileDetail({
             <ArtifactAction
               icon={XIcon}
               label={t.common.close}
-              onClick={() => setOpen(false)}
+              onClick={deselect}
               tooltip={t.common.close}
             />
           </ArtifactActions>
