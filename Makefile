@@ -131,6 +131,9 @@ endif
 # Stop all services
 stop:
 	@echo "Stopping all services..."
+ifeq ($(OS),Windows_NT)
+	@powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stop-windows.ps1
+else
 	@-pkill -f "langgraph dev" 2>/dev/null || true
 	@-pkill -f "uvicorn app.gateway.app:app" 2>/dev/null || true
 	@-pkill -f "next dev" 2>/dev/null || true
@@ -143,6 +146,7 @@ stop:
 	@echo "Cleaning up sandbox containers..."
 	@-./scripts/cleanup-containers.sh deer-flow-sandbox 2>/dev/null || true
 	@echo "✓ All services stopped"
+endif
 
 # Clean up
 clean: stop
