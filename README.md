@@ -637,6 +637,7 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for deve
 
 Regression coverage includes Docker sandbox mode detection and provisioner kubeconfig-path handling tests in `backend/tests/`.
 Gateway artifact serving now forces active web content types (`text/html`, `application/xhtml+xml`, `image/svg+xml`) to download as attachments instead of inline rendering, reducing XSS risk for generated artifacts.
+Gateway auth now follows the shared ECC Keycloak contract (`ecc-auth`) with JWKS-first request verification and an explicit `kc_logout_marker`, so logging out does not silently restore the session through refresh fallback. The old handwritten Gateway Keycloak helper stack has been removed from the runtime path, and thread-scoped artifact downloads, follow-up suggestions, and stateless run reuse all require authenticated ownership checks.
 
 ## License
 
