@@ -1,0 +1,160 @@
+from __future__ import annotations
+
+from http.cookies import SimpleCookie
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+import jwt
+import pytest
+from ecc_auth.config import KeycloakConfig
+from ecc_auth.identity import AuthIdentity
+from ecc_auth.routes import _decode_auth_state
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from app.gateway import deps as gateway_deps
+from app.gateway.auth import routes as auth_routes
+
+
+class _SessionContext:
+    def __init__(self, session):
+        self._session = session
+
+    async def __aenter__(self):
+        return self._session
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+def _make_config() -> KeycloakConfig:
+    return KeycloakConfig(
+        url="https://keycloak.example.com",
+        realm="ecc",
+        client_id="client-id",
+        client_secret="",
+        tls_insecure=False,
+    )
+
+
+def _make_client() -> TestClient:
+    app = FastAPI()
+    app.include_router(auth_routes.create_gateway_auth_router(_make_config()))
+    return TestClient(app)
+
+
+def _cookie_value(response, name: str) -> str:
+    cookie = SimpleCookie()
+    get_cookies = getattr(response.headers, "get_list", None) or response.headers.getlist
+    for header in get_cookies("set-cookie"):
+        cookie.load(header)
+    return cookie[name].value
+
+
+def test_login_uses_origin_and_return_to_contract() -> None:
+    client = _make_client()
+    authorization_mock = AsyncMock(
+        return_value={
+            "url": "https://keycloak.example.com/authorize",
+            "state": "opaque-state",
+            "code_verifier": "pkce-verifier",
+        }
+    )
+
+    with patch("ecc_auth.routes.build_authorization_url", authorization_mock):
+        response = client.get(
+            "/api/auth/login",
+            params={"return_to": "/workspace/thread-1"},
+            headers={"origin": "http://frontend.local"},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 302
+    state = authorization_mock.await_args.kwargs["state"]
+    assert _decode_auth_state(state) == {
+        "nonce": response.cookies["csrf_nonce"],
+        "return_to": "/workspace/thread-1",
+        "origin": "http://frontend.local",
+    }
+    assert response.cookies["pkce_verifier"] == "pkce-verifier"
+
+
+def test_me_hydrates_deerflow_payload_via_shared_refresh_flow() -> None:
+    client = _make_client()
+    verify_mock = AsyncMock(
+        side_effect=[
+            jwt.ExpiredSignatureError("expired"),
+            {
+                "sub": "kc-sub",
+                "name": "Alice",
+                "preferred_username": "alice",
+                "email": "alice@example.com",
+                "email_verified": True,
+            },
+        ]
+    )
+    refresh_mock = AsyncMock(
+        return_value={
+            "access_token": "new-access-token",
+            "refresh_token": "new-refresh-token",
+            "id_token": "id-token",
+            "expires_in": 300,
+            "refresh_expires_in": 1800,
+        }
+    )
+    payload_mock = AsyncMock(
+        return_value={
+            "id": 123,
+            "externalAuthId": "kc-sub",
+            "username": "alice",
+            "displayName": "Alice",
+            "email": "alice@example.com",
+            "emailVerified": True,
+        }
+    )
+
+    with (
+        patch("ecc_auth.routes.verify_access_token", verify_mock),
+        patch("ecc_auth.routes.refresh_token_request", refresh_mock),
+        patch("app.gateway.auth.routes.get_db_session", return_value=_SessionContext(object())),
+        patch("app.gateway.auth.routes.build_current_user_payload", payload_mock),
+    ):
+        client.cookies.set("kc_access_token", "expired-access-token")
+        client.cookies.set("kc_refresh_token", "refresh-token")
+        response = client.get("/api/auth/me")
+
+    assert response.status_code == 200
+    assert response.json()["user"]["externalAuthId"] == "kc-sub"
+    refresh_mock.assert_awaited_once()
+    payload_mock.assert_awaited_once()
+
+
+def test_logout_sets_explicit_logout_marker() -> None:
+    client = _make_client()
+    client.cookies.set("kc_id_token", "id-token")
+
+    response = client.post("/api/auth/logout")
+
+    assert response.status_code == 200
+    assert _cookie_value(response, "kc_logout_marker") == "1"
+    assert response.json()["logoutUrl"].startswith(
+        "https://keycloak.example.com/realms/ecc/protocol/openid-connect/logout"
+    )
+
+
+@pytest.mark.anyio
+async def test_gateway_dependency_projects_auth_identity_to_local_user() -> None:
+    identity = AuthIdentity(
+        external_auth_id="kc-sub",
+        email="alice@example.com",
+        display_name="Alice",
+        username="alice",
+        email_verified=True,
+    )
+    user = SimpleNamespace(id=7, external_auth_id="kc-sub")
+
+    with patch("app.gateway.deps.sync_local_user_from_identity", AsyncMock(return_value=user)) as sync_mock:
+        result = await gateway_deps.get_current_user(db=object(), identity=identity)
+
+    assert result is user
+    sync_mock.assert_awaited_once()

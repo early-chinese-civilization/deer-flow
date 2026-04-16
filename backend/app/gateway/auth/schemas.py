@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from app.gateway.db.models import User
 
@@ -32,36 +32,3 @@ class AuthUserPayload(BaseModel):
             familyName=user.family_name,
             emailVerified=user.email_verified,
         )
-
-
-class CurrentUserResponse(BaseModel):
-    """`/api/auth/me` 成功响应。"""
-
-    user: AuthUserPayload
-
-
-class LogoutResponse(BaseModel):
-    """`/api/auth/logout` 成功响应。"""
-
-    logoutUrl: str = Field(description="Keycloak 统一登出地址")
-
-
-class RefreshResponse(BaseModel):
-    """`/api/auth/refresh` 成功响应。"""
-
-    ok: bool = Field(default=True, description="是否刷新成功")
-
-
-class AuthErrorResponse(BaseModel):
-    """认证失败响应。"""
-
-    detail: str = Field(description="错误说明")
-
-
-class AuthStatePayload(BaseModel):
-    """登录回跳时使用的最小状态载荷。"""
-
-    model_config = ConfigDict(extra="ignore")
-
-    nonce: str = Field(description="用于 callback 阶段校验的 CSRF nonce")
-    returnTo: str = Field(default="/workspace", description="登录成功后的回跳路径")

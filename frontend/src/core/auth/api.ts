@@ -98,7 +98,7 @@ export async function refreshToken(): Promise<boolean> {
 export function login(returnTo?: string) {
   const params = new URLSearchParams();
   if (returnTo) {
-    params.set('returnTo', returnTo);
+    params.set('return_to', returnTo);
   }
 
   const url = `/api/auth/login${params.toString() ? '?' + params.toString() : ''}`;
