@@ -124,8 +124,9 @@ FastAPI application providing REST endpoints for frontend integration:
 | `POST /api/memory/reload` | Force memory reload |
 | `GET /api/memory/config` | Memory configuration |
 | `GET /api/memory/status` | Combined config + data |
-| `POST /api/threads/{id}/uploads` | Upload files (auto-converts PDF/PPT/Excel/Word to Markdown, rejects directory paths) |
-| `GET /api/threads/{id}/uploads/list` | List uploaded files |
+| `POST /api/workspaces/{workspace_id}/uploads` | Upload workspace files (auto-converts PDF/PPT/Excel/Word to Markdown, mirrors into the bound thread when `thread_id` is provided) |
+| `GET /api/workspaces/{workspace_id}/uploads/list` | List workspace files |
+| `DELETE /api/workspaces/{workspace_id}/uploads` | Delete a workspace file by JSON body (`filename`, optional `object_key`) |
 | `DELETE /api/threads/{id}` | Delete DeerFlow-managed local thread data after LangGraph thread deletion; unexpected failures are logged server-side and return a generic 500 detail |
 | `GET /api/threads/{id}/artifacts/{path}` | Serve generated artifacts, but only after authenticated thread ownership checks |
 | `POST /api/threads/{id}/suggestions` | Generate follow-up suggestions for an owned thread; request body content does not bypass `thread_id` authorization |
