@@ -338,6 +338,7 @@ async def stream_existing_run(
     """Join an existing run's SSE stream (GET), or cancel-then-stream (POST)."""
     await _require_owned_thread(
         thread_id=thread_id,
+        request=request,
         current_user=current_user,
         db=db,
     )

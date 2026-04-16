@@ -1,7 +1,15 @@
 import asyncio
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 from app.gateway.routers import suggestions
+
+
+async def _db_dependency():
+    yield SimpleNamespace()
 
 
 def test_strip_markdown_code_fence_removes_wrapping():
@@ -46,7 +54,16 @@ def test_generate_suggestions_parses_and_limits(monkeypatch):
     fake_model.invoke.return_value = MagicMock(content='```json\n["Q1", "Q2", "Q3", "Q4"]\n```')
     monkeypatch.setattr(suggestions, "create_chat_model", lambda **kwargs: fake_model)
 
-    result = asyncio.run(suggestions.generate_suggestions("t1", req))
+    with patch("app.gateway.routers.suggestions.require_thread_access", AsyncMock(return_value=object())):
+        result = asyncio.run(
+            suggestions.generate_suggestions(
+                "t1",
+                req,
+                http_request=SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(store=SimpleNamespace()))),
+                current_user=SimpleNamespace(id=7),
+                db=object(),
+            )
+        )
 
     assert result.suggestions == ["Q1", "Q2", "Q3"]
 
@@ -64,7 +81,16 @@ def test_generate_suggestions_parses_list_block_content(monkeypatch):
     fake_model.invoke.return_value = MagicMock(content=[{"type": "text", "text": '```json\n["Q1", "Q2"]\n```'}])
     monkeypatch.setattr(suggestions, "create_chat_model", lambda **kwargs: fake_model)
 
-    result = asyncio.run(suggestions.generate_suggestions("t1", req))
+    with patch("app.gateway.routers.suggestions.require_thread_access", AsyncMock(return_value=object())):
+        result = asyncio.run(
+            suggestions.generate_suggestions(
+                "t1",
+                req,
+                http_request=SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(store=SimpleNamespace()))),
+                current_user=SimpleNamespace(id=7),
+                db=object(),
+            )
+        )
 
     assert result.suggestions == ["Q1", "Q2"]
 
@@ -82,7 +108,16 @@ def test_generate_suggestions_parses_output_text_block_content(monkeypatch):
     fake_model.invoke.return_value = MagicMock(content=[{"type": "output_text", "text": '```json\n["Q1", "Q2"]\n```'}])
     monkeypatch.setattr(suggestions, "create_chat_model", lambda **kwargs: fake_model)
 
-    result = asyncio.run(suggestions.generate_suggestions("t1", req))
+    with patch("app.gateway.routers.suggestions.require_thread_access", AsyncMock(return_value=object())):
+        result = asyncio.run(
+            suggestions.generate_suggestions(
+                "t1",
+                req,
+                http_request=SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(store=SimpleNamespace()))),
+                current_user=SimpleNamespace(id=7),
+                db=object(),
+            )
+        )
 
     assert result.suggestions == ["Q1", "Q2"]
 
@@ -97,6 +132,37 @@ def test_generate_suggestions_returns_empty_on_model_error(monkeypatch):
     fake_model.invoke.side_effect = RuntimeError("boom")
     monkeypatch.setattr(suggestions, "create_chat_model", lambda **kwargs: fake_model)
 
-    result = asyncio.run(suggestions.generate_suggestions("t1", req))
+    with patch("app.gateway.routers.suggestions.require_thread_access", AsyncMock(return_value=object())):
+        result = asyncio.run(
+            suggestions.generate_suggestions(
+                "t1",
+                req,
+                http_request=SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(store=SimpleNamespace()))),
+                current_user=SimpleNamespace(id=7),
+                db=object(),
+            )
+        )
 
     assert result.suggestions == []
+
+
+def test_generate_suggestions_requires_owned_thread() -> None:
+    app = FastAPI()
+    app.include_router(suggestions.router)
+    app.state.store = SimpleNamespace()
+    app.dependency_overrides[suggestions.get_current_user] = lambda: SimpleNamespace(id=7)
+    app.dependency_overrides[suggestions.get_db] = _db_dependency
+
+    with (
+        patch(
+            "app.gateway.routers.suggestions.require_thread_access",
+            AsyncMock(side_effect=HTTPException(status_code=403, detail="forbidden")),
+        ),
+        TestClient(app) as client,
+    ):
+        response = client.post(
+            "/api/threads/t1/suggestions",
+            json={"messages": [{"role": "user", "content": "Hi"}]},
+        )
+
+    assert response.status_code == 403

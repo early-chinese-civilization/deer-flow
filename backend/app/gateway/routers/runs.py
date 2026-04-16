@@ -11,12 +11,23 @@ import asyncio
 import logging
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.gateway.services as gateway_services
-from app.gateway.deps import get_checkpointer, get_run_manager, get_stream_bridge
+from app.gateway.db.models import User
+from app.gateway.deps import (
+    get_checkpointer,
+    get_current_user,
+    get_db,
+    get_run_manager,
+    get_store,
+    get_stream_bridge,
+)
+from app.gateway.routers import threads as threads_router
 from app.gateway.routers.thread_runs import RunCreateRequest
+from app.gateway.services.ownership import require_thread_access
 from app.gateway.services.runtime_state import (
     is_runtime_state_unavailable,
     to_runtime_state_http_exception,
@@ -35,18 +46,71 @@ def _resolve_thread_id(body: RunCreateRequest) -> str:
     return str(uuid.uuid4())
 
 
+async def _resolve_owned_thread_id(
+    *,
+    body: RunCreateRequest,
+    request: Request,
+    current_user: User,
+    db: AsyncSession,
+) -> tuple[str, object]:
+    """Return an owned thread binding, creating one when the stateless call has none."""
+    thread_id = _resolve_thread_id(body)
+    requested_thread_id = (body.config or {}).get("configurable", {}).get("thread_id")
+
+    if requested_thread_id:
+        access_record = await require_thread_access(
+            db=db,
+            store=get_store(request),
+            thread_id=thread_id,
+            current_user=current_user,
+        )
+        return thread_id, access_record
+
+    await threads_router.create_thread(
+        threads_router.ThreadCreateRequest(
+            thread_id=thread_id,
+            metadata=body.metadata or {},
+        ),
+        request=request,
+        current_user=current_user,
+        db=db,
+    )
+    access_record = await require_thread_access(
+        db=db,
+        store=get_store(request),
+        thread_id=thread_id,
+        current_user=current_user,
+    )
+    return thread_id, access_record
+
+
 @router.post("/stream")
-async def stateless_stream(body: RunCreateRequest, request: Request) -> StreamingResponse:
+async def stateless_stream(
+    body: RunCreateRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
     """Create a run and stream events via SSE.
 
     If ``config.configurable.thread_id`` is provided, the run is created
     on the given thread so that conversation history is preserved.
     Otherwise a new temporary thread is created.
     """
-    thread_id = _resolve_thread_id(body)
+    thread_id, access_record = await _resolve_owned_thread_id(
+        body=body,
+        request=request,
+        current_user=current_user,
+        db=db,
+    )
     bridge = get_stream_bridge(request)
     run_mgr = get_run_manager(request)
-    record = await gateway_services.start_run(body, thread_id, request)
+    record = await gateway_services.start_run(
+        body,
+        thread_id,
+        request,
+        thread_record=access_record,
+    )
 
     return StreamingResponse(
         gateway_services.sse_consumer(bridge, record, request, run_mgr),
@@ -60,15 +124,30 @@ async def stateless_stream(body: RunCreateRequest, request: Request) -> Streamin
 
 
 @router.post("/wait", response_model=dict)
-async def stateless_wait(body: RunCreateRequest, request: Request) -> dict:
+async def stateless_wait(
+    body: RunCreateRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     """Create a run and block until completion.
 
     If ``config.configurable.thread_id`` is provided, the run is created
     on the given thread so that conversation history is preserved.
     Otherwise a new temporary thread is created.
     """
-    thread_id = _resolve_thread_id(body)
-    record = await gateway_services.start_run(body, thread_id, request)
+    thread_id, access_record = await _resolve_owned_thread_id(
+        body=body,
+        request=request,
+        current_user=current_user,
+        db=db,
+    )
+    record = await gateway_services.start_run(
+        body,
+        thread_id,
+        request,
+        thread_record=access_record,
+    )
 
     if record.task is not None:
         try:
