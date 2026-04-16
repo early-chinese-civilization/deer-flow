@@ -133,9 +133,15 @@ def build_workspace_root_path(storage: OSSStorageBackend, root_prefix: str) -> s
     return oss_root_path(storage.bucket, root_prefix)
 
 
-def build_workspace_object_key(root_prefix: str, filename: str) -> str:
-    """Build the canonical object key for a workspace file."""
-    return workspace_object_key(root_prefix, filename)
+def build_workspace_object_key(root_prefix: str, filename: str, subdir: str | None = None) -> str:
+    """Build the canonical object key for a workspace file.
+
+    Args:
+        root_prefix: Workspace root prefix
+        filename: File name
+        subdir: Optional subdirectory (e.g., "uploads" or "outputs")
+    """
+    return workspace_object_key(root_prefix, filename, subdir=subdir)
 
 
 async def list_workspace_objects(root_prefix: str) -> tuple[OSSStorageBackend, list[OSSObjectInfo]]:
@@ -151,14 +157,58 @@ async def upload_workspace_object(
     filename: str,
     content: bytes,
     content_type: str | None = None,
+    subdir: str | None = None,
 ) -> tuple[OSSStorageBackend, str, str, object | None]:
-    """Upload a file to canonical OSS storage and return key plus signed URL."""
+    """Upload a file to canonical OSS storage and return key plus signed URL.
+
+    Args:
+        root_prefix: Workspace root prefix
+        filename: File name
+        content: File content
+        content_type: MIME type
+        subdir: Optional subdirectory (e.g., "uploads" or "outputs")
+    """
     storage = OSSStorageBackend.from_app_config()
-    object_key = build_workspace_object_key(root_prefix, filename)
+    object_key = build_workspace_object_key(root_prefix, filename, subdir=subdir)
     await asyncio.to_thread(
         storage.put_object,
         key=object_key,
         content=content,
+        content_type=content_type,
+    )
+    signed_url, expiration = await asyncio.to_thread(
+        storage.presign_get_object,
+        key=object_key,
+    )
+    return storage, object_key, signed_url, expiration
+
+
+async def upload_workspace_object_stream(
+    *,
+    root_prefix: str,
+    filename: str,
+    stream,
+    content_length: int | None = None,
+    content_type: str | None = None,
+    subdir: str | None = None,
+) -> tuple[OSSStorageBackend, str, str, object | None]:
+    """Upload a file stream to canonical OSS storage and return key plus signed URL.
+
+    Args:
+        root_prefix: Workspace root prefix
+        filename: File name
+        stream: File stream
+        content_length: Content length
+        content_type: MIME type
+        subdir: Optional subdirectory (e.g., "uploads" or "outputs")
+    """
+    storage = OSSStorageBackend.from_app_config()
+    object_key = build_workspace_object_key(root_prefix, filename, subdir=subdir)
+    await asyncio.to_thread(
+        storage.put_object_stream,
+        key=object_key,
+        stream=stream,
+        content_length=content_length,
         content_type=content_type,
     )
     signed_url, expiration = await asyncio.to_thread(
