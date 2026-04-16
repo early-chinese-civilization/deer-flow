@@ -14,7 +14,7 @@ export function middleware(request: NextRequest) {
   // 保护 /workspace 路由
   if (request.nextUrl.pathname.startsWith('/workspace')) {
     if (logoutMarkerCookie) {
-      return NextResponse.redirect(new URL('/', request.url));
+      return NextResponse.redirect(new URL('/signed-out', request.url));
     }
 
     if (!accessTokenCookie && !refreshTokenCookie) {
