@@ -204,6 +204,29 @@ export interface Translations {
   uploads: {
     uploading: string;
     uploadingFiles: string;
+    deleteSuccess: string;
+    deleteFailed: string;
+  };
+
+  // Artifacts
+  artifacts: {
+    previewUnavailable: string;
+    previewUnavailableDescription: (fileType: string) => string;
+    downloadFile: string;
+  };
+
+  // Workspace Files
+  workspaceFiles: {
+    title: string;
+    refresh: string;
+    searchPlaceholder: string;
+    loadFailed: string;
+    noWorkspace: string;
+    noWorkspaceDescription: string;
+    noFiles: string;
+    noFilesDescription: string;
+    noMatches: string;
+    noMatchesDescription: string;
   };
 
   // Subtasks

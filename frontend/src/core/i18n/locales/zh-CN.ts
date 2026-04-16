@@ -255,6 +255,28 @@ export const zhCN: Translations = {
   uploads: {
     uploading: "上传中...",
     uploadingFiles: "文件上传中，请稍候...",
+    deleteSuccess: "文件已删除",
+    deleteFailed: "删除文件失败",
+  },
+
+  artifacts: {
+    previewUnavailable: "预览不可用",
+    previewUnavailableDescription: (fileType: string) =>
+      `暂不支持 ${fileType} 文件的内联预览。请下载文件到本地查看。`,
+    downloadFile: "下载文件",
+  },
+
+  workspaceFiles: {
+    title: "工作区文件列表",
+    refresh: "刷新文件列表",
+    searchPlaceholder: "搜索文件",
+    loadFailed: "加载文件失败",
+    noWorkspace: "当前没有工作区",
+    noWorkspaceDescription: "该会话还没有绑定 workspace_id，暂时无法读取 OSS 文件列表。",
+    noFiles: "工作区中还没有文件",
+    noFilesDescription: "上传文件后会在这里显示。",
+    noMatches: "没有匹配的文件",
+    noMatchesDescription: "试试调整搜索关键词。",
   },
 
   subtasks: {
