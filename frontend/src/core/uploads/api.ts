@@ -22,6 +22,28 @@ export interface UploadedFileInfo {
   markdown_signed_url?: string | null;
 }
 
+export interface FileTreeNode {
+  type: "file" | "directory";
+  name: string;
+  path: string;
+  size?: number;
+  modified?: number;
+  children?: FileTreeNode[];
+  // File-specific fields
+  filename?: string;
+  virtual_path?: string;
+  artifact_url?: string | null;
+  object_key?: string;
+  signed_url?: string | null;
+  extension?: string | null;
+  markdown_file?: string | null;
+  markdown_path?: string | null;
+  markdown_virtual_path?: string | null;
+  markdown_artifact_url?: string | null;
+  markdown_object_key?: string | null;
+  markdown_signed_url?: string | null;
+}
+
 export interface UploadResponse {
   success: boolean;
   files: UploadedFileInfo[];
@@ -32,7 +54,13 @@ export interface ListFilesResponse {
   root_label: string;
   root_path: string;
   files: UploadedFileInfo[];
+  tree: FileTreeNode[];
   count: number;
+}
+
+export interface DeleteUploadedFileInput {
+  filename: string;
+  object_key: string;
 }
 
 type UploadRequestOptions = {
@@ -115,20 +143,17 @@ export async function listUploadedFiles(
  */
 export async function deleteUploadedFile(
   workspaceId: string,
-  filename: string,
+  file: DeleteUploadedFileInput,
   options?: UploadRequestOptions,
 ): Promise<{ success: boolean; message: string }> {
-  const response = await fetch(
-    buildUploadsUrl(
-      workspaceId,
-      `/${encodeURIComponent(filename)}`,
-      options,
-    ),
-    {
-      method: "DELETE",
-      credentials: "include",
+  const response = await fetch(buildUploadsUrl(workspaceId, "", options), {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify(file),
+    credentials: "include",
+  });
 
   if (!response.ok) {
     throw new Error(await readErrorDetail(response, "Failed to delete file"));

@@ -8,10 +8,12 @@ import { useCallback } from "react";
 import {
   deleteUploadedFile,
   listUploadedFiles,
+  type ListFilesResponse,
   uploadFiles,
   type UploadedFileInfo,
   type UploadResponse,
 } from "./api";
+import { removeDeletedUploadedFilesFromList } from "./cache";
 
 /**
  * Hook to upload files
@@ -62,12 +64,23 @@ export function useDeleteUploadedFile(
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (filename: string) =>
-      deleteUploadedFile(workspaceId, filename, options),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: ["uploads", "list", workspaceId],
-      });
+    mutationFn: (file: UploadedFileInfo) =>
+      deleteUploadedFile(
+        workspaceId,
+        {
+          filename: file.filename,
+          object_key: file.object_key,
+        },
+        options,
+      ),
+    onSuccess: (_result, deletedFile) => {
+      queryClient.setQueriesData<ListFilesResponse | undefined>(
+        {
+          queryKey: ["uploads", "list", workspaceId],
+        },
+        (current) =>
+          removeDeletedUploadedFilesFromList(current, deletedFile),
+      );
     },
   });
 }

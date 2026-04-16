@@ -1,4 +1,5 @@
 import {
+  AlertCircleIcon,
   Code2Icon,
   CopyIcon,
   DownloadIcon,
@@ -20,6 +21,15 @@ import {
   ArtifactHeader,
   ArtifactTitle,
 } from "@/components/ai-elements/artifact";
+import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import { Select, SelectItem } from "@/components/ui/select";
 import {
   SelectContent,
@@ -29,12 +39,17 @@ import {
 } from "@/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { CodeEditor } from "@/components/workspace/code-editor";
+import { getArtifactDisplayMode } from "@/core/artifacts/display";
 import { useArtifactContent } from "@/core/artifacts/hooks";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
 import { installSkill } from "@/core/skills/api";
 import { streamdownPlugins } from "@/core/streamdown";
-import { checkCodeFile, getFileName } from "@/core/utils/files";
+import {
+  checkCodeFile,
+  getFileExtensionDisplayName,
+  getFileName,
+} from "@/core/utils/files";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
 
@@ -79,9 +94,18 @@ export function ArtifactFileDetail({
     }
     return checkCodeFile(filepath);
   }, [filepath, isWriteFile, isSkillFile]);
+  const displayMode = useMemo(() => {
+    if (isCodeFile) {
+      return language === "html" || language === "markdown"
+        ? "rich-preview"
+        : "code";
+    }
+
+    return getArtifactDisplayMode(filepath);
+  }, [filepath, isCodeFile, language]);
   const isSupportPreview = useMemo(() => {
-    return language === "html" || language === "markdown";
-  }, [language]);
+    return displayMode === "rich-preview";
+  }, [displayMode]);
   const { content, url } = useArtifactContent({
     threadId,
     filepath: filepathFromProps,
@@ -259,14 +283,57 @@ export function ArtifactFileDetail({
             readonly
           />
         )}
-        {!isCodeFile && (
+        {displayMode === "iframe-preview" && (
           <iframe
             className="size-full"
             src={urlOfArtifact({ filepath, threadId, isMock })}
           />
         )}
+        {displayMode === "unsupported-preview" && (
+          <ArtifactUnsupportedPreview
+            downloadUrl={urlOfArtifact({
+              filepath,
+              threadId,
+              isMock,
+              download: true,
+            })}
+            fileType={getFileExtensionDisplayName(filepath)}
+          />
+        )}
       </ArtifactContent>
     </Artifact>
+  );
+}
+
+function ArtifactUnsupportedPreview({
+  downloadUrl,
+  fileType,
+}: {
+  downloadUrl: string;
+  fileType: string;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <Empty className="border-0 rounded-none">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <AlertCircleIcon />
+        </EmptyMedia>
+        <EmptyTitle>{t.artifacts.previewUnavailable}</EmptyTitle>
+        <EmptyDescription>
+          {t.artifacts.previewUnavailableDescription(fileType)}
+        </EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <Button asChild variant="outline">
+          <a href={downloadUrl} target="_blank" rel="noopener noreferrer">
+            <DownloadIcon />
+            {t.artifacts.downloadFile}
+          </a>
+        </Button>
+      </EmptyContent>
+    </Empty>
   );
 }
 
