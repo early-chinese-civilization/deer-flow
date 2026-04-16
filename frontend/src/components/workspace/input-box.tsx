@@ -141,6 +141,7 @@ export function InputBox({
 }) {
   const { t } = useI18n();
   const searchParams = useSearchParams();
+  const [mounted, setMounted] = useState(false);
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
   const { models } = useModels();
   const { thread, isMock } = useThread();
@@ -157,6 +158,10 @@ export function InputBox({
   const [pendingSuggestion, setPendingSuggestion] = useState<string | null>(
     null,
   );
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (models.length === 0) {
@@ -379,6 +384,20 @@ export function InputBox({
 
     return () => controller.abort();
   }, [context.model_name, disabled, isMock, status, thread.messages, threadId]);
+
+  if (!mounted) {
+    return (
+      <div className="relative">
+        <div
+          aria-hidden="true"
+          className={cn(
+            "bg-background/85 min-h-32 rounded-2xl backdrop-blur-sm",
+            className,
+          )}
+        />
+      </div>
+    );
+  }
 
   return (
     <div ref={promptRootRef} className="relative">

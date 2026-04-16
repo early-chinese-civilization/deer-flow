@@ -1,9 +1,13 @@
 import json
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.db.models import User
+from app.gateway.deps import get_current_user, get_db, get_store
+from app.gateway.services.ownership import require_thread_access
 from deerflow.models import create_chat_model
 
 logger = logging.getLogger(__name__)
@@ -97,7 +101,20 @@ def _format_conversation(messages: list[SuggestionMessage]) -> str:
     summary="Generate Follow-up Questions",
     description="Generate short follow-up questions a user might ask next, based on recent conversation context.",
 )
-async def generate_suggestions(thread_id: str, request: SuggestionsRequest) -> SuggestionsResponse:
+async def generate_suggestions(
+    thread_id: str,
+    request: SuggestionsRequest,
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SuggestionsResponse:
+    await require_thread_access(
+        db=db,
+        store=get_store(http_request),
+        thread_id=thread_id,
+        current_user=current_user,
+    )
+
     if not request.messages:
         return SuggestionsResponse(suggestions=[])
 

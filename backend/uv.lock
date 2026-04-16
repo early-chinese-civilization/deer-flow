@@ -301,6 +301,18 @@ wheels = [
 ]
 
 [[package]]
+name = "authlib"
+version = "1.6.10"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/aa/e2/2cd626412bfc3c78b17ca5e5ea8d489f8cae31d40b061f4da0a89068d8a3/authlib-1.6.10.tar.gz", hash = "sha256:856a4f54d6ef3361ca6bb6d14a27e8b88f8097cca795fb428ffe13720e2ecde6", size = 165333, upload-time = "2026-04-13T13:30:34.718Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7d/f6/9093f1ed17b6e2f4ac50d214543d4ec5268902a70e2158a752a06423b5ef/authlib-1.6.10-py2.py3-none-any.whl", hash = "sha256:aa639b43292554539924a3b4aaa9e81cd67ab64d3e28b22428c61f1200240287", size = 244351, upload-time = "2026-04-13T13:30:33.34Z" },
+]
+
+[[package]]
 name = "azure-ai-documentintelligence"
 version = "1.0.2"
 source = { registry = "https://pypi.org/simple" }
@@ -732,6 +744,7 @@ dependencies = [
     { name = "alembic" },
     { name = "cryptography" },
     { name = "deerflow-harness" },
+    { name = "ecc-auth" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "itsdangerous" },
@@ -760,6 +773,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.13.0" },
     { name = "cryptography", specifier = ">=42.0.0" },
     { name = "deerflow-harness", editable = "packages/harness" },
+    { name = "ecc-auth", specifier = ">=0.1.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "itsdangerous", specifier = ">=2.1.0" },
@@ -928,6 +942,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/9d/a4/e44218c2b394e31a6dd0d6b095c4e1f32d0be54c2a4b250032d717647bab/durationpy-0.10.tar.gz", hash = "sha256:1fa6893409a6e739c9c72334fc65cca1f355dbdd93405d30f726deb5bde42fba", size = 3335, upload-time = "2025-05-17T13:52:37.26Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b0/0d/9feae160378a3553fa9a339b0e9c1a048e147a4127210e286ef18b730f03/durationpy-0.10-py3-none-any.whl", hash = "sha256:3b41e1b601234296b4fb368338fdcd3e13e0b4fb5b67345948f4f2bf9868b286", size = 3922, upload-time = "2025-05-17T13:52:36.463Z" },
+]
+
+[[package]]
+name = "ecc-auth"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "authlib" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "pyjwt", extra = ["crypto"] },
+    { name = "starlette" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d2/f0/0747b8244e1a2da35404adc2b06e968a83d9a60727a27767812f41a6358b/ecc_auth-0.1.0.tar.gz", hash = "sha256:1262413b23b47c16657df8b369c4ebd412f4b0c9bf2e263e5593add2c1cd1eb1", size = 11345, upload-time = "2026-04-14T17:50:34.272Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/56/86/75619306cb687593d1c1c42ef8a6d7092bf4b1a83f5d3801d890a6fb60ab/ecc_auth-0.1.0-py3-none-any.whl", hash = "sha256:e5e77050452af61e7e80a0f74eea9b3885eaebabf193295699173c7bfa97bde7", size = 12941, upload-time = "2026-04-14T17:50:32.068Z" },
 ]
 
 [[package]]

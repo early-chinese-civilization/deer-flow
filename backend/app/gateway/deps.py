@@ -6,11 +6,17 @@ from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
+from ecc_auth.dependencies import (
+    get_current_user as get_current_auth_identity,
+)
+from ecc_auth.dependencies import (
+    get_current_user_optional as get_current_auth_identity_optional,
+)
+from ecc_auth.identity import AuthIdentity
+from fastapi import Depends, FastAPI, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.auth.keycloak import KeycloakError
-from app.gateway.auth.service import sync_user_from_access_token
+from app.gateway.auth.service import sync_local_user_from_identity
 from app.gateway.db.models import User
 from deerflow.runtime import RunManager, StreamBridge
 
@@ -66,41 +72,27 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
-def _map_keycloak_error(exc: KeycloakError) -> HTTPException:
-    """Convert upstream auth failures into API-facing HTTP errors."""
-    if exc.status >= 500:
-        return HTTPException(status_code=503, detail="Authentication service unavailable")
-    return HTTPException(status_code=401, detail="Invalid or expired token")
-
-
 async def get_current_user(
-    kc_access_token: str | None = Cookie(default=None),
     db: AsyncSession = Depends(get_db),
+    identity: AuthIdentity = Depends(get_current_auth_identity),
 ) -> User:
-    """Resolve the current user from the access-token cookie.
+    """Resolve the current DeerFlow user via shared identity verification.
 
-    This dependency intentionally does not refresh tokens or rewrite cookies.
-    Refresh flows stay in explicit auth endpoints such as ``/api/auth/me`` and
-    ``/api/auth/refresh`` so regular business endpoints remain side-effect free.
+    This keeps the SDK-owned auth semantics (JWKS-first, no refresh side
+    effects in business routes) while preserving DeerFlow's local `User`
+    projection for ownership checks and existing business queries.
     """
-    if not kc_access_token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    try:
-        return await sync_user_from_access_token(db=db, access_token=kc_access_token)
-    except KeycloakError as exc:
-        raise _map_keycloak_error(exc) from exc
+    return await sync_local_user_from_identity(db=db, identity=identity)
 
 
 async def get_current_user_optional(
-    kc_access_token: str | None = Cookie(default=None),
     db: AsyncSession = Depends(get_db),
+    identity: AuthIdentity | None = Depends(get_current_auth_identity_optional),
 ) -> User | None:
     """Resolve the current user, returning ``None`` when unauthenticated."""
-    try:
-        return await get_current_user(kc_access_token, db)
-    except HTTPException:
+    if identity is None:
         return None
+    return await sync_local_user_from_identity(db=db, identity=identity)
 
 
 async def get_db_optional() -> AsyncGenerator[AsyncSession | None, None]:
@@ -128,14 +120,10 @@ async def get_db_optional() -> AsyncGenerator[AsyncSession | None, None]:
 
 
 async def get_current_user_optional_no_db(
-    kc_access_token: str | None = Cookie(default=None),
     db: AsyncSession | None = Depends(get_db_optional),
+    identity: AuthIdentity | None = Depends(get_current_auth_identity_optional),
 ) -> User | None:
     """Resolve the current user when both auth and DB are optional."""
-    if db is None or not kc_access_token:
+    if db is None or identity is None:
         return None
-
-    try:
-        return await get_current_user(kc_access_token, db)
-    except HTTPException:
-        return None
+    return await sync_local_user_from_identity(db=db, identity=identity)
