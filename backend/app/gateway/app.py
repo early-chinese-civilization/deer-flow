@@ -94,6 +94,8 @@ def create_app() -> FastAPI:
     Returns:
         Configured FastAPI application instance.
     """
+    # Load .env-backed config before building routers that depend on KEYCLOAK_*.
+    get_app_config()
 
     app = FastAPI(
         title="DeerFlow API Gateway",
@@ -185,7 +187,7 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
 
     # Include routers
     # Auth API is mounted at /api/auth (认证路由，必须最先注册)
-    app.include_router(auth_routes.router)
+    app.include_router(auth_routes.create_gateway_auth_router())
 
     # Models API is mounted at /api/models
     app.include_router(models.router)

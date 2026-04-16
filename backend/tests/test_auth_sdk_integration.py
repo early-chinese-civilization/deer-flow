@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from http.cookies import SimpleCookie
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -9,7 +10,7 @@ import pytest
 from ecc_auth.config import KeycloakConfig
 from ecc_auth.identity import AuthIdentity
 from ecc_auth.routes import _decode_auth_state
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from app.gateway import deps as gateway_deps
@@ -140,6 +141,27 @@ def test_logout_sets_explicit_logout_marker() -> None:
     assert response.json()["logoutUrl"].startswith(
         "https://keycloak.example.com/realms/ecc/protocol/openid-connect/logout"
     )
+
+
+def test_create_app_builds_auth_router_after_loading_config() -> None:
+    call_order: list[str] = []
+    gateway_app_module = importlib.import_module("app.gateway.app")
+
+    def _load_config():
+        call_order.append("config")
+        return SimpleNamespace()
+
+    def _create_auth_router():
+        call_order.append("router")
+        return APIRouter()
+
+    with (
+        patch("app.gateway.app.get_app_config", side_effect=_load_config),
+        patch("app.gateway.app.auth_routes.create_gateway_auth_router", side_effect=_create_auth_router),
+    ):
+        gateway_app_module.create_app()
+
+    assert call_order[:2] == ["config", "router"]
 
 
 @pytest.mark.anyio

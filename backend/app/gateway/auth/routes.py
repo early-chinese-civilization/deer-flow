@@ -61,6 +61,3 @@ def create_gateway_auth_router(config: KeycloakConfig | None = None) -> APIRoute
         )
     )
     return router
-
-
-router = create_gateway_auth_router()

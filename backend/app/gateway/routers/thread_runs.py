@@ -48,7 +48,7 @@ class RunCreateRequest(BaseModel):
     stream_subgraphs: bool = Field(default=False, description="Include subgraph events")
     stream_resumable: bool | None = Field(default=None, description="SSE resumable mode")
     on_disconnect: Literal["cancel", "continue"] = Field(default="cancel", description="Behaviour on SSE disconnect")
-    on_completion: Literal["delete", "keep"] = Field(default="keep", description="Delete temp thread on completion")
+    on_completion: Literal["delete", "keep"] = Field(default="delete", description="Delete temp thread on completion")
     multitask_strategy: Literal["reject", "rollback", "interrupt", "enqueue"] = Field(default="reject", description="Concurrency strategy")
     after_seconds: float | None = Field(default=None, description="Delayed execution")
     if_not_exists: Literal["reject", "create"] = Field(default="create", description="Thread creation policy")
