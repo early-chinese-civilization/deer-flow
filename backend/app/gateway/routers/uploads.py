@@ -7,14 +7,16 @@ import logging
 import mimetypes
 import tempfile
 from pathlib import Path, PurePosixPath
+from urllib.parse import quote
 
 from alibabacloud_oss_v2.exceptions import ServiceError
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.db.models import Thread, User, Workspace
-from app.gateway.db.repository import ThreadRepository, WorkspaceRepository
+from app.gateway.db.models import User, Workspace
+from app.gateway.db.repository import WorkspaceRepository
 from app.gateway.deps import get_current_user, get_db
 from app.gateway.services.workspace_uploads import (
     build_workspace_file_response,
@@ -22,16 +24,16 @@ from app.gateway.services.workspace_uploads import (
     delete_workspace_object,
     ensure_workspace_prefix,
     list_workspace_objects,
-    mirror_uploaded_file_to_thread,
     upload_workspace_object,
     upload_workspace_object_stream,
 )
-from deerflow.uploads import delete_file_safe, get_uploads_dir, normalize_filename
+from deerflow.uploads import OSSStorageBackend, normalize_filename
 from deerflow.utils.file_conversion import CONVERTIBLE_EXTENSIONS, convert_file_to_markdown
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/workspaces/{workspace_id}/uploads", tags=["uploads"])
+_WORKSPACE_PROXY_CHUNK_SIZE = 1024 * 1024
 
 
 class WorkspaceFileResponse(BaseModel):
@@ -41,6 +43,7 @@ class WorkspaceFileResponse(BaseModel):
     size: int
     path: str
     virtual_path: str
+    relative_path: str
     artifact_url: str | None = None
     object_key: str
     signed_url: str | None = None
@@ -126,47 +129,6 @@ async def _require_workspace_access(
     return workspace
 
 
-async def _require_thread_context(
-    *,
-    db: AsyncSession,
-    thread_id: str,
-    workspace_id: str,
-    current_user: User | None,
-) -> Thread:
-    """Validate that a thread belongs to the current user and bound workspace."""
-    user = _require_authenticated_user(current_user)
-    thread = await ThreadRepository.get_thread_by_id(db, thread_id)
-    if thread is None:
-        raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
-    if thread.user_id != user.id:
-        raise HTTPException(status_code=403, detail=f"Thread belongs to user {thread.user_id}")
-    if thread.workspace_id is None:
-        raise HTTPException(status_code=409, detail=f"Thread {thread_id} is not bound to a workspace")
-    if str(thread.workspace_id) != workspace_id:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Thread {thread_id} is not bound to workspace {workspace_id}",
-        )
-    return thread
-
-
-async def _load_thread_context(
-    *,
-    db: AsyncSession,
-    workspace_id: str,
-    thread_id: str | None,
-    current_user: User | None,
-) -> Thread | None:
-    """Load the optional thread runtime context for upload mirroring."""
-    if not thread_id:
-        return None
-
-    return await _require_thread_context(
-        db=db,
-        thread_id=thread_id,
-        workspace_id=workspace_id,
-        current_user=current_user,
-    )
 
 
 def _build_workspace_root_label(workspace: Workspace) -> str:
@@ -174,6 +136,52 @@ def _build_workspace_root_label(workspace: Workspace) -> str:
     if workspace.name and workspace.name.strip():
         return workspace.name.strip()
     return "workspace"
+
+
+def _object_key_belongs_to_workspace(*, object_key: str, root_prefix: str) -> bool:
+    """Check that an object key stays within the current workspace prefix."""
+    normalized_object_key = object_key.strip("/")
+    normalized_root_prefix = root_prefix.strip("/")
+    if normalized_object_key == normalized_root_prefix:
+        return True
+    return normalized_object_key.startswith(f"{normalized_root_prefix}/")
+
+
+def _build_content_disposition(disposition_type: str, filename: str) -> str:
+    """Build an RFC 5987 encoded Content-Disposition header value."""
+    return f"{disposition_type}; filename*=UTF-8''{quote(filename)}"
+
+
+def _is_missing_workspace_object_error(exc: ServiceError) -> bool:
+    """Check whether an OSS error maps to a missing workspace object."""
+    return exc.status_code == 404 or exc.code == "NoSuchKey"
+
+
+def _iter_oss_stream_chunks(stream, *, chunk_size: int = _WORKSPACE_PROXY_CHUNK_SIZE):
+    """Yield OSS object data in bounded chunks and close the stream when done."""
+    try:
+        iter_bytes = getattr(stream, "iter_bytes", None)
+        if callable(iter_bytes):
+            try:
+                yield from iter_bytes(block_size=chunk_size)
+            except TypeError:
+                yield from iter_bytes()
+            return
+
+        read = getattr(stream, "read", None)
+        if not callable(read):
+            raise TypeError("OSS object stream is not readable")
+
+        try:
+            while chunk := read(chunk_size):
+                yield chunk
+        except TypeError:
+            while chunk := read():
+                yield chunk
+    finally:
+        close = getattr(stream, "close", None)
+        if callable(close):
+            close()
 
 
 def _relative_object_path(root_prefix: str, object_key: str) -> PurePosixPath:
@@ -317,7 +325,7 @@ async def _process_single_file(
     *,
     file: UploadFile,
     root_prefix: str,
-    thread: Thread | None,
+    workspace_id: str,
     temp_dir: Path,
 ) -> WorkspaceFileResponse | None:
     """Process a single file upload (stream to OSS for non-convertible files)."""
@@ -348,13 +356,6 @@ async def _process_single_file(
                 subdir="uploads",
             )
 
-            if thread is not None:
-                await mirror_uploaded_file_to_thread(
-                    thread_id=thread.thread_id,
-                    filename=safe_filename,
-                    content=content,
-                )
-
             # Write to temp directory for document conversion
             convert_source_path = temp_dir / safe_filename
             convert_source_path.write_bytes(content)
@@ -367,16 +368,12 @@ async def _process_single_file(
                     markdown_path=markdown_path,
                     subdir="uploads",
                 )
-                if thread is not None:
-                    await mirror_uploaded_file_to_thread(
-                        thread_id=thread.thread_id,
-                        filename=markdown_path.name,
-                        content=markdown_path.read_bytes(),
-                    )
+                relative_path = _relative_object_path(root_prefix, object_key).as_posix()
                 return WorkspaceFileResponse.model_validate(
                     build_workspace_file_response(
-                        thread_id=thread.thread_id if thread is not None else None,
+                        workspace_id=workspace_id,
                         filename=safe_filename,
+                        relative_path=relative_path,
                         size=file_size,
                         object_key=object_key,
                         signed_url=signed_url,
@@ -399,20 +396,13 @@ async def _process_single_file(
                 content_type=file.content_type or mimetypes.guess_type(safe_filename)[0],
                 subdir="uploads",
             )
-            if thread is not None:
-                content = await _read_upload_content(file)
-                if file_size == 0:
-                    file_size = len(content)
-                await mirror_uploaded_file_to_thread(
-                    thread_id=thread.thread_id,
-                    filename=safe_filename,
-                    content=content,
-                )
 
+        relative_path = _relative_object_path(root_prefix, object_key).as_posix()
         return WorkspaceFileResponse.model_validate(
             build_workspace_file_response(
-                thread_id=thread.thread_id if thread is not None else None,
+                workspace_id=workspace_id,
                 filename=safe_filename,
+                relative_path=relative_path,
                 size=file_size,
                 object_key=object_key,
                 signed_url=signed_url,
@@ -429,7 +419,6 @@ async def _process_single_file(
 async def upload_files(
     workspace_id: str,
     files: list[UploadFile] = File(...),
-    thread_id: str | None = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> UploadResponse:
@@ -440,12 +429,6 @@ async def upload_files(
     workspace = await _require_workspace_access(
         db=db,
         workspace_id=workspace_id,
-        current_user=current_user,
-    )
-    thread = await _load_thread_context(
-        db=db,
-        workspace_id=workspace_id,
-        thread_id=thread_id,
         current_user=current_user,
     )
 
@@ -459,7 +442,7 @@ async def upload_files(
             _process_single_file(
                 file=file,
                 root_prefix=root_prefix,
-                thread=thread,
+                workspace_id=workspace_id,
                 temp_dir=temp_dir,
             )
             for file in files
@@ -491,7 +474,6 @@ async def upload_files(
 @router.get("/list", response_model=ListFilesResponse)
 async def list_uploaded_files(
     workspace_id: str,
-    thread_id: str | None = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ListFilesResponse:
@@ -499,12 +481,6 @@ async def list_uploaded_files(
     workspace = await _require_workspace_access(
         db=db,
         workspace_id=workspace_id,
-        current_user=current_user,
-    )
-    thread = await _load_thread_context(
-        db=db,
-        workspace_id=workspace_id,
-        thread_id=thread_id,
         current_user=current_user,
     )
 
@@ -556,8 +532,9 @@ async def list_uploaded_files(
         files.append(
             WorkspaceFileResponse.model_validate(
                 build_workspace_file_response(
-                    thread_id=thread.thread_id if thread is not None else None,
+                    workspace_id=workspace_id,
                     filename=filename,
+                    relative_path=relative_path,
                     size=item.size,
                     object_key=item.key,
                     signed_url=signed_url,
@@ -578,11 +555,83 @@ async def list_uploaded_files(
     )
 
 
+@router.get("/content")
+async def get_workspace_file_content(
+    workspace_id: str,
+    object_key: str = Query(..., description="OSS object key"),
+    download: bool = Query(default=False, description="Force download as attachment"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Serve workspace file content via stable backend proxy.
+
+    This endpoint provides a stable URL for workspace files that doesn't expire
+    like signed URLs. It validates workspace ownership and serves the file content
+    directly from OSS.
+
+    For security, HTML/XHTML/SVG files are always forced as downloads to prevent XSS.
+    """
+    workspace = await _require_workspace_access(
+        db=db,
+        workspace_id=workspace_id,
+        current_user=current_user,
+    )
+
+    root_prefix = await ensure_workspace_prefix(db, workspace)
+    normalized_object_key = object_key.strip("/")
+
+    # Validate that the object_key belongs to this workspace
+    if not _object_key_belongs_to_workspace(
+        object_key=normalized_object_key,
+        root_prefix=root_prefix,
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Object key does not belong to this workspace",
+        )
+
+    storage = OSSStorageBackend.from_app_config()
+    try:
+        object_stream = await asyncio.to_thread(
+            storage.open_object,
+            key=normalized_object_key,
+        )
+    except ServiceError as exc:
+        if _is_missing_workspace_object_error(exc):
+            raise HTTPException(status_code=404, detail="Workspace file not found") from exc
+        logger.exception("Failed to fetch object %s from OSS", normalized_object_key)
+        raise HTTPException(status_code=502, detail="Failed to fetch workspace file") from exc
+    except Exception as exc:
+        logger.exception("Failed to fetch object %s from OSS", normalized_object_key)
+        raise HTTPException(status_code=500, detail="Failed to fetch workspace file") from exc
+
+    filename = Path(normalized_object_key).name
+    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+    active_content_types = {
+        "text/html",
+        "application/xhtml+xml",
+        "image/svg+xml",
+    }
+    force_download = download or content_type in active_content_types
+
+    headers = {}
+    if force_download:
+        headers["Content-Disposition"] = _build_content_disposition("attachment", filename)
+    else:
+        headers["Content-Disposition"] = _build_content_disposition("inline", filename)
+
+    return StreamingResponse(
+        _iter_oss_stream_chunks(object_stream),
+        media_type=content_type,
+        headers=headers,
+    )
+
+
 @router.delete("")
 async def delete_uploaded_file(
     workspace_id: str,
     payload: DeleteUploadedFileRequest,
-    thread_id: str | None = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -590,12 +639,6 @@ async def delete_uploaded_file(
     workspace = await _require_workspace_access(
         db=db,
         workspace_id=workspace_id,
-        current_user=current_user,
-    )
-    thread = await _load_thread_context(
-        db=db,
-        workspace_id=workspace_id,
-        thread_id=thread_id,
         current_user=current_user,
     )
 
@@ -637,20 +680,6 @@ async def delete_uploaded_file(
                 if exc.status_code != 404 and exc.code != "NoSuchKey":
                     raise
                 logger.debug("Workspace markdown companion already missing: %s", companion_key)
-
-        if thread is not None:
-            try:
-                delete_file_safe(
-                    get_uploads_dir(thread.thread_id),
-                    safe_filename,
-                    convertible_extensions=CONVERTIBLE_EXTENSIONS,
-                )
-            except FileNotFoundError:
-                logger.debug(
-                    "Thread mirror already missing for %s in thread %s",
-                    safe_filename,
-                    thread.thread_id,
-                )
     except HTTPException:
         raise
     except Exception as exc:

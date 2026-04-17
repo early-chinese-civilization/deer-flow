@@ -151,6 +151,16 @@ class OSSStorageBackend:
         )
         return result.body.read()
 
+    def open_object(self, *, key: str):
+        """Open an OSS object as a readable stream."""
+        result = self._client.get_object(
+            GetObjectRequest(
+                bucket=self.bucket,
+                key=key,
+            )
+        )
+        return result.body
+
     def delete_object(self, *, key: str) -> None:
         """Delete an object from OSS."""
         self._client.delete_object(
