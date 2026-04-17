@@ -2,11 +2,9 @@ import {
   AlertCircleIcon,
   Code2Icon,
   CopyIcon,
-  DownloadIcon,
   EyeIcon,
   LoaderIcon,
   PackageIcon,
-  SquareArrowOutUpRightIcon,
   XIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -21,7 +19,6 @@ import {
   ArtifactHeader,
   ArtifactTitle,
 } from "@/components/ai-elements/artifact";
-import { Button } from "@/components/ui/button";
 import {
   Empty,
   EmptyContent,
@@ -30,13 +27,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Select, SelectItem } from "@/components/ui/select";
-import {
-  SelectContent,
-  SelectGroup,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { CodeEditor } from "@/components/workspace/code-editor";
 import { getArtifactDisplayMode } from "@/core/artifacts/display";
@@ -69,7 +59,7 @@ export function ArtifactFileDetail({
   threadId: string;
 }) {
   const { t } = useI18n();
-  const { artifacts, deselect, select } = useArtifacts();
+  const { deselect, getArtifactSource } = useArtifacts();
   const isWriteFile = useMemo(() => {
     return filepathFromProps.startsWith("write-file:");
   }, [filepathFromProps]);
@@ -106,17 +96,27 @@ export function ArtifactFileDetail({
   const isSupportPreview = useMemo(() => {
     return displayMode === "rich-preview";
   }, [displayMode]);
+  const artifactSource = useMemo(() => {
+    if (isWriteFile) {
+      return null;
+    }
+    return getArtifactSource(threadId, filepath);
+  }, [filepath, getArtifactSource, isWriteFile, threadId]);
+  const { isMock } = useThread();
+  const artifactViewUrl =
+    artifactSource?.viewUrl ??
+    urlOfArtifact({ filepath, threadId, isMock });
   const { content, url } = useArtifactContent({
     threadId,
     filepath: filepathFromProps,
     enabled: isCodeFile && !isWriteFile,
+    urlOverride: artifactSource?.viewUrl,
   });
 
   const displayContent = content ?? "";
 
   const [viewMode, setViewMode] = useState<"code" | "preview">("code");
   const [isInstalling, setIsInstalling] = useState(false);
-  const { isMock } = useThread();
   useEffect(() => {
     if (isSupportPreview) {
       setViewMode("preview");
@@ -154,24 +154,7 @@ export function ArtifactFileDetail({
       <ArtifactHeader className="px-2">
         <div className="flex items-center gap-2">
           <ArtifactTitle>
-            {isWriteFile ? (
-              <div className="px-2">{getFileName(filepath)}</div>
-            ) : (
-              <Select value={filepath} onValueChange={select}>
-                <SelectTrigger className="border-none bg-transparent! shadow-none select-none focus:outline-0 active:outline-0">
-                  <SelectValue placeholder="Select a file" />
-                </SelectTrigger>
-                <SelectContent className="select-none">
-                  <SelectGroup>
-                    {(artifacts ?? []).map((artifactPath) => (
-                      <SelectItem key={artifactPath} value={artifactPath}>
-                        {getFileName(artifactPath)}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            )}
+            <div className="px-2">{getFileName(filepath)}</div>
           </ArtifactTitle>
         </div>
         <div className="flex min-w-0 grow items-center justify-center">
@@ -213,19 +196,6 @@ export function ArtifactFileDetail({
                 />
               </Tooltip>
             )}
-            {!isWriteFile && (
-              <a
-                href={urlOfArtifact({ filepath, threadId })}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <ArtifactAction
-                  icon={SquareArrowOutUpRightIcon}
-                  label={t.common.openInNewWindow}
-                  tooltip={t.common.openInNewWindow}
-                />
-              </a>
-            )}
             {isCodeFile && (
               <ArtifactAction
                 icon={CopyIcon}
@@ -242,19 +212,6 @@ export function ArtifactFileDetail({
                 }}
                 tooltip={t.clipboard.copyToClipboard}
               />
-            )}
-            {!isWriteFile && (
-              <a
-                href={urlOfArtifact({ filepath, threadId, download: true })}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <ArtifactAction
-                  icon={DownloadIcon}
-                  label={t.common.download}
-                  tooltip={t.common.download}
-                />
-              </a>
             )}
             <ArtifactAction
               icon={XIcon}
@@ -286,17 +243,11 @@ export function ArtifactFileDetail({
         {displayMode === "iframe-preview" && (
           <iframe
             className="size-full"
-            src={urlOfArtifact({ filepath, threadId, isMock })}
+            src={artifactViewUrl}
           />
         )}
         {displayMode === "unsupported-preview" && (
           <ArtifactUnsupportedPreview
-            downloadUrl={urlOfArtifact({
-              filepath,
-              threadId,
-              isMock,
-              download: true,
-            })}
             fileType={getFileExtensionDisplayName(filepath)}
           />
         )}
@@ -306,10 +257,8 @@ export function ArtifactFileDetail({
 }
 
 function ArtifactUnsupportedPreview({
-  downloadUrl,
   fileType,
 }: {
-  downloadUrl: string;
   fileType: string;
 }) {
   const { t } = useI18n();
@@ -325,14 +274,7 @@ function ArtifactUnsupportedPreview({
           {t.artifacts.previewUnavailableDescription(fileType)}
         </EmptyDescription>
       </EmptyHeader>
-      <EmptyContent>
-        <Button asChild variant="outline">
-          <a href={downloadUrl} target="_blank" rel="noopener noreferrer">
-            <DownloadIcon />
-            {t.artifacts.downloadFile}
-          </a>
-        </Button>
-      </EmptyContent>
+      <EmptyContent />
     </Empty>
   );
 }

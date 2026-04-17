@@ -7,10 +7,8 @@ import {
   ChevronRightIcon,
   DownloadIcon,
   FolderIcon,
-  LoaderIcon,
   RefreshCwIcon,
   SearchIcon,
-  Trash2Icon,
 } from "lucide-react";
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { toast } from "sonner";
@@ -27,12 +25,11 @@ import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
 import { getThread } from "@/core/threads/api";
 import {
+  downloadUploadedFile,
   listUploadedFiles,
   type FileTreeNode,
   type UploadedFileInfo,
-  useDeleteUploadedFile,
 } from "@/core/uploads";
-import { removeDeletedVirtualPath } from "@/core/uploads/cache";
 import { getFileIcon } from "@/core/utils/files";
 import { cn } from "@/lib/utils";
 
@@ -105,20 +102,16 @@ function WorkspaceFilesEmpty({
 function WorkspaceDirectoryNode({
   node,
   selectedFile,
-  deletingObjectKey,
   downloadLabel,
-  deleteLabel,
   onFileSelect,
-  onFileDelete,
+  onFileDownload,
   threadId,
 }: {
   node: FileTreeNode;
   selectedFile: string | null;
-  deletingObjectKey: string | undefined;
   downloadLabel: string;
-  deleteLabel: string;
   onFileSelect: (file: UploadedFileInfo) => void;
-  onFileDelete: (file: UploadedFileInfo) => void;
+  onFileDownload: (file: UploadedFileInfo, downloadHref: string) => void;
   threadId: string;
 }) {
   const [isExpanded, setIsExpanded] = useState(true);
@@ -146,11 +139,9 @@ function WorkspaceDirectoryNode({
                 key={child.path}
                 node={child}
                 selectedFile={selectedFile}
-                deletingObjectKey={deletingObjectKey}
                 downloadLabel={downloadLabel}
-                deleteLabel={deleteLabel}
                 onFileSelect={onFileSelect}
-                onFileDelete={onFileDelete}
+                onFileDownload={onFileDownload}
                 threadId={threadId}
               />
             ) : (
@@ -161,6 +152,7 @@ function WorkspaceDirectoryNode({
                   size: child.size!,
                   path: child.path,
                   virtual_path: child.virtual_path!,
+                  relative_path: child.path,
                   artifact_url: child.artifact_url!,
                   object_key: child.object_key!,
                   signed_url: child.signed_url,
@@ -173,7 +165,6 @@ function WorkspaceDirectoryNode({
                   markdown_object_key: child.markdown_object_key,
                   markdown_signed_url: child.markdown_signed_url,
                 }}
-                deleting={deletingObjectKey === child.object_key}
                 downloadHref={
                   child.artifact_url
                     ? `${child.artifact_url}${child.artifact_url.includes("?") ? "&" : "?"}download=true`
@@ -184,10 +175,9 @@ function WorkspaceDirectoryNode({
                       })
                 }
                 downloadLabel={downloadLabel}
-                deleteLabel={deleteLabel}
                 selected={selectedFile === child.object_key}
+                onDownload={onFileDownload}
                 onSelect={onFileSelect}
-                onDelete={onFileDelete}
               />
             ),
           )}
@@ -199,21 +189,17 @@ function WorkspaceDirectoryNode({
 
 function WorkspaceFileRow({
   file,
-  deleting,
   downloadHref,
   downloadLabel,
-  deleteLabel,
   selected,
-  onDelete,
+  onDownload,
   onSelect,
 }: {
   file: UploadedFileInfo;
-  deleting: boolean;
   downloadHref: string;
   downloadLabel: string;
-  deleteLabel: string;
   selected: boolean;
-  onDelete: (file: UploadedFileInfo) => void;
+  onDownload: (file: UploadedFileInfo, downloadHref: string) => void;
   onSelect: (file: UploadedFileInfo) => void;
 }) {
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -249,37 +235,20 @@ function WorkspaceFileRow({
         </span>
       </span>
       <div className="flex shrink-0 items-center gap-1">
-        <Button asChild size="icon-sm" variant="ghost">
-          <a
-            href={downloadHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            title={downloadLabel}
-            aria-label={downloadLabel}
-            onClick={(event) => {
-              event.stopPropagation();
-            }}
-          >
-            <DownloadIcon className="size-4" />
-          </a>
-        </Button>
         <Button
+          type="button"
           size="icon-sm"
           variant="ghost"
-          className="text-destructive hover:text-destructive"
-          title={deleteLabel}
-          aria-label={deleteLabel}
-          disabled={deleting}
+          title={downloadLabel}
+          aria-label={downloadLabel}
           onClick={(event) => {
             event.stopPropagation();
-            onDelete(file);
+            onDownload(file, downloadHref);
           }}
         >
-          {deleting ? (
-            <LoaderIcon className="size-4 animate-spin" />
-          ) : (
-            <Trash2Icon className="size-4" />
-          )}
+          <span aria-hidden="true">
+            <DownloadIcon className="size-4" />
+          </span>
         </Button>
       </div>
     </div>
@@ -301,6 +270,7 @@ export function WorkspaceFilesPanel({
     open: artifactsOpen,
     select: selectArtifact,
     selectedArtifact,
+    setArtifactSourcesForThread,
     setArtifacts,
     setOpen: setArtifactsOpen,
   } = useArtifacts();
@@ -312,15 +282,29 @@ export function WorkspaceFilesPanel({
   });
 
   const workspaceId = threadQuery.data?.workspace_id;
-  const deleteUploadedFile = useDeleteUploadedFile(workspaceId ?? "", {
-    threadId,
-  });
 
   const filesQuery = useQuery({
-    queryKey: ["uploads", "list", workspaceId, threadId],
-    queryFn: () => listUploadedFiles(workspaceId!, { threadId }),
+    queryKey: ["uploads", "list", workspaceId],
+    queryFn: () => listUploadedFiles(workspaceId!),
     enabled: Boolean(workspaceId),
   });
+
+  const workspaceArtifactSources = useMemo(() => {
+    const files = filesQuery.data?.files ?? [];
+    return files
+      .filter((file) => file.artifact_url)
+      .map((file) => {
+        const viewUrl = file.artifact_url!;
+        return {
+          filepath: file.virtual_path,
+          viewUrl,
+        };
+      });
+  }, [filesQuery.data?.files]);
+
+  useEffect(() => {
+    setArtifactSourcesForThread(threadId, workspaceArtifactSources);
+  }, [setArtifactSourcesForThread, threadId, workspaceArtifactSources]);
 
   useEffect(() => {
     const files = filesQuery.data?.files ?? [];
@@ -408,8 +392,6 @@ export function WorkspaceFilesPanel({
         ? filesQuery.error.message
         : null;
 
-  const deletingObjectKey = deleteUploadedFile.variables?.object_key;
-
   const handleRefresh = () => {
     setQuery("");
     setSelectedFile(null);
@@ -438,33 +420,10 @@ export function WorkspaceFilesPanel({
     setArtifactsOpen(true);
   };
 
-  const handleFileDelete = async (file: UploadedFileInfo) => {
-    if (!workspaceId) {
-      return;
-    }
-
-    try {
-      await deleteUploadedFile.mutateAsync(file);
-
-      if (selectedFile === file.object_key) {
-        setSelectedFile(null);
-      }
-
-      setArtifacts((currentArtifacts) =>
-        removeDeletedVirtualPath(currentArtifacts, file),
-      );
-
-      if (
-        selectedArtifact &&
-        removeDeletedVirtualPath([selectedArtifact], file).length === 0
-      ) {
-        deselect();
-      }
-
-      toast.success(t.uploads.deleteSuccess);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t.uploads.deleteFailed);
-    }
+  const handleFileDownload = (file: UploadedFileInfo, downloadHref: string) => {
+    void downloadUploadedFile(downloadHref, file.filename).catch((error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to download file");
+    });
   };
 
   return (
@@ -527,11 +486,9 @@ export function WorkspaceFilesPanel({
                     key={node.path}
                     node={node}
                     selectedFile={selectedFile}
-                    deletingObjectKey={deletingObjectKey}
                     downloadLabel={t.common.download}
-                    deleteLabel={t.common.delete}
                     onFileSelect={handleFileSelect}
-                    onFileDelete={handleFileDelete}
+                    onFileDownload={handleFileDownload}
                     threadId={threadId}
                   />
                 ) : (
@@ -542,6 +499,7 @@ export function WorkspaceFilesPanel({
                       size: node.size!,
                       path: node.path,
                       virtual_path: node.virtual_path!,
+                      relative_path: node.path,
                       artifact_url: node.artifact_url!,
                       object_key: node.object_key!,
                       signed_url: node.signed_url,
@@ -554,7 +512,6 @@ export function WorkspaceFilesPanel({
                       markdown_object_key: node.markdown_object_key,
                       markdown_signed_url: node.markdown_signed_url,
                     }}
-                    deleting={deletingObjectKey === node.object_key}
                     downloadHref={
                       node.artifact_url
                         ? `${node.artifact_url}${node.artifact_url.includes("?") ? "&" : "?"}download=true`
@@ -565,10 +522,9 @@ export function WorkspaceFilesPanel({
                           })
                     }
                     downloadLabel={t.common.download}
-                    deleteLabel={t.common.delete}
                     selected={selectedFile === node.object_key}
+                    onDownload={handleFileDownload}
                     onSelect={handleFileSelect}
-                    onDelete={handleFileDelete}
                   />
                 ),
               )}
