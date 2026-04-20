@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.gateway.db.models import Agent, Memory, Skill, Thread, User, Workspace
+from app.gateway.db.models import Agent, AgentSkill, Memory, Skill, Thread, User, Workspace
 
 
 def _as_optional_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
@@ -293,6 +295,14 @@ class AgentRepository:
     """Persistence helpers for agent records."""
 
     @staticmethod
+    def _active_agent_stmt():
+        return select(Agent).where(Agent.deleted_at.is_(None))
+
+    @staticmethod
+    def _with_agent_skills(stmt):
+        return stmt.options(selectinload(Agent.agent_skills).selectinload(AgentSkill.skill))
+
+    @staticmethod
     async def create_agent(
         db: AsyncSession,
         *,
@@ -322,26 +332,132 @@ class AgentRepository:
     @staticmethod
     async def get_agent_by_id(db: AsyncSession, agent_id: int) -> Agent | None:
         """Load an agent by ID."""
-        result = await db.execute(select(Agent).where(Agent.id == agent_id, Agent.deleted_at.is_(None)))
+        stmt = AgentRepository._with_agent_skills(
+            AgentRepository._active_agent_stmt().where(Agent.id == agent_id)
+        )
+        result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
     @staticmethod
     async def list_agents(db: AsyncSession, user_id: int) -> list[Agent]:
         """List all agents for a user."""
-        result = await db.execute(
-            select(Agent).where(Agent.user_id == user_id, Agent.deleted_at.is_(None)).order_by(Agent.created_at.desc())
+        stmt = AgentRepository._with_agent_skills(
+            AgentRepository._active_agent_stmt()
+            .where(Agent.user_id == user_id)
+            .order_by(Agent.created_at.desc())
         )
+        result = await db.execute(stmt)
         return result.scalars().all()
+
+    @staticmethod
+    async def get_agent_by_name(db: AsyncSession, *, user_id: int, name: str) -> Agent | None:
+        """Load an active user-owned agent by name."""
+        stmt = AgentRepository._with_agent_skills(
+            AgentRepository._active_agent_stmt().where(Agent.user_id == user_id, Agent.name == name)
+        )
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def update_agent(
+        db: AsyncSession,
+        *,
+        agent: Agent,
+        description: str | None = None,
+        soul: str | None = None,
+        commit: bool = True,
+    ) -> Agent:
+        """Update mutable agent fields."""
+        if description is not None:
+            agent.description = description
+        if soul is not None:
+            agent.soul = soul
+
+        agent.updated_at = datetime.now(UTC)
+        await db.flush()
+        await db.refresh(agent)
+        if commit:
+            await db.commit()
+            await db.refresh(agent)
+        return agent
+
+    @staticmethod
+    async def soft_delete_agent(
+        db: AsyncSession,
+        *,
+        agent: Agent,
+        commit: bool = True,
+    ) -> None:
+        """Soft-delete an agent and its active skill associations."""
+        reloaded_agent = await AgentRepository.get_agent_by_id(db, agent.id)
+        if reloaded_agent is None:
+            return
+
+        now = datetime.now(UTC)
+        reloaded_agent.deleted_at = now
+        reloaded_agent.updated_at = now
+        for association in reloaded_agent.agent_skills:
+            if association.deleted_at is None:
+                association.deleted_at = now
+        await db.flush()
+        if commit:
+            await db.commit()
+
+    @staticmethod
+    async def replace_agent_skills(
+        db: AsyncSession,
+        *,
+        agent: Agent,
+        skill_ids: list[int],
+        commit: bool = True,
+    ) -> Agent:
+        """Replace the agent's active skill associations with the provided skills."""
+        reloaded_agent = await AgentRepository.get_agent_by_id(db, agent.id)
+        if reloaded_agent is None:
+            raise ValueError(f"Agent {agent.id} disappeared before skill replacement")
+
+        now = datetime.now(UTC)
+        for association in reloaded_agent.agent_skills:
+            if association.deleted_at is None:
+                association.deleted_at = now
+
+        for display_order, skill_id in enumerate(skill_ids):
+            association = AgentSkill(
+                agent_id=reloaded_agent.id,
+                skill_id=skill_id,
+                display_order=display_order,
+                enabled=True,
+            )
+            db.add(association)
+
+        reloaded_agent.updated_at = now
+        await db.flush()
+        if commit:
+            await db.commit()
+
+        refreshed = await AgentRepository.get_agent_by_id(db, reloaded_agent.id)
+        if refreshed is None:
+            raise ValueError(f"Agent {reloaded_agent.id} disappeared during skill replacement")
+        return refreshed
 
 
 class SkillRepository:
     """Persistence helpers for skill records."""
 
     @staticmethod
+    def _active_skill_stmt():
+        return select(Skill).where(Skill.deleted_at.is_(None))
+
+    @staticmethod
+    def _with_owner_user(stmt):
+        return stmt.options(selectinload(Skill.owner_user))
+
+    @staticmethod
     async def create_skill(
         db: AsyncSession,
         *,
         user_id: int | None,
+        owner_user_id: int | None = None,
         name: str,
         display_name: str | None,
         description: str | None,
@@ -351,6 +467,7 @@ class SkillRepository:
         """Create a skill record."""
         skill = Skill(
             user_id=user_id,
+            owner_user_id=owner_user_id,
             name=name,
             display_name=display_name,
             description=description,
@@ -367,19 +484,211 @@ class SkillRepository:
     @staticmethod
     async def get_skill_by_id(db: AsyncSession, skill_id: int) -> Skill | None:
         """Load a skill by ID."""
-        result = await db.execute(select(Skill).where(Skill.id == skill_id, Skill.deleted_at.is_(None)))
+        stmt = SkillRepository._with_owner_user(
+            select(Skill).where(Skill.id == skill_id, Skill.deleted_at.is_(None))
+        )
+        result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
     @staticmethod
     async def list_skills(db: AsyncSession, user_id: int | None = None) -> list[Skill]:
-        """List skills (system-level if user_id is None, user-level otherwise)."""
-        stmt = select(Skill).where(Skill.deleted_at.is_(None))
+        """List skills (public only if user_id is None, else public plus current user's custom skills)."""
+        stmt = SkillRepository._with_owner_user(SkillRepository._active_skill_stmt())
         if user_id is not None:
             stmt = stmt.where((Skill.user_id == user_id) | (Skill.user_id.is_(None)))
         else:
             stmt = stmt.where(Skill.user_id.is_(None))
         result = await db.execute(stmt.order_by(Skill.created_at.desc()))
         return result.scalars().all()
+
+    @staticmethod
+    async def list_visible_skills(db: AsyncSession, *, user_id: int) -> list[Skill]:
+        """List public skills plus the current user's skills."""
+        stmt = SkillRepository._with_owner_user(
+            SkillRepository._active_skill_stmt()
+            .where((Skill.user_id == user_id) | (Skill.user_id.is_(None)))
+            .order_by(
+                Skill.user_id.is_(None).desc(),
+                Skill.name.asc(),
+                Skill.owner_user_id.asc().nullsfirst(),
+                Skill.created_at.desc(),
+            )
+        )
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    @staticmethod
+    async def list_public_skills(db: AsyncSession) -> list[Skill]:
+        """List all active public skills, including seeded and user-published entries."""
+        stmt = SkillRepository._with_owner_user(
+            SkillRepository._active_skill_stmt()
+            .where(Skill.user_id.is_(None))
+            .order_by(Skill.name.asc(), Skill.owner_user_id.asc().nullsfirst(), Skill.created_at.desc())
+        )
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    @staticmethod
+    async def list_custom_skills(db: AsyncSession, *, user_id: int) -> list[Skill]:
+        """List all active custom skills owned by the current user."""
+        stmt = SkillRepository._with_owner_user(
+            SkillRepository._active_skill_stmt()
+            .where(Skill.user_id == user_id)
+            .order_by(Skill.name.asc(), Skill.created_at.desc())
+        )
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    @staticmethod
+    async def get_user_skill_by_name(db: AsyncSession, *, user_id: int, name: str) -> Skill | None:
+        """Load the current user's active skill by name."""
+        stmt = SkillRepository._with_owner_user(
+            SkillRepository._active_skill_stmt().where(Skill.user_id == user_id, Skill.name == name)
+        )
+        result = await db.execute(
+            stmt
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_public_skill_by_name_and_owner(
+        db: AsyncSession,
+        *,
+        name: str,
+        owner_user_id: int | None,
+    ) -> Skill | None:
+        """Load an active public skill by name and publisher."""
+        stmt = SkillRepository._with_owner_user(
+            SkillRepository._active_skill_stmt().where(
+                Skill.user_id.is_(None),
+                Skill.name == name,
+                Skill.owner_user_id.is_(owner_user_id) if owner_user_id is None else Skill.owner_user_id == owner_user_id,
+            )
+        )
+        result = await db.execute(
+            stmt
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_system_public_skill_by_name(db: AsyncSession, *, name: str) -> Skill | None:
+        """Load an active seeded public skill by name."""
+        return await SkillRepository.get_public_skill_by_name_and_owner(db, name=name, owner_user_id=None)
+
+    @staticmethod
+    async def get_public_skill_by_name(db: AsyncSession, *, name: str) -> Skill | None:
+        """Load any active public skill by name, preferring seeded public entries."""
+        system_skill = await SkillRepository.get_system_public_skill_by_name(db, name=name)
+        if system_skill is not None:
+            return system_skill
+
+        result = await db.execute(
+            SkillRepository._with_owner_user(
+                SkillRepository._active_skill_stmt()
+            .where(
+                Skill.user_id.is_(None),
+                Skill.name == name,
+                Skill.owner_user_id.is_not(None),
+            )
+            .order_by(Skill.created_at.desc())
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_visible_skill_by_name(db: AsyncSession, *, user_id: int, name: str) -> Skill | None:
+        """Load a visible skill, preferring the current user's copy over the public one."""
+        user_skill = await SkillRepository.get_user_skill_by_name(db, user_id=user_id, name=name)
+        if user_skill is not None:
+            return user_skill
+        return await SkillRepository.get_public_skill_by_name(db, name=name)
+
+    @staticmethod
+    async def list_bound_agent_names_for_skill(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        skill_id: int,
+    ) -> list[str]:
+        """List active user-owned agent names currently bound to a skill."""
+        result = await db.execute(
+            select(Agent.name)
+            .join(AgentSkill, AgentSkill.agent_id == Agent.id)
+            .where(
+                Agent.user_id == user_id,
+                Agent.deleted_at.is_(None),
+                AgentSkill.skill_id == skill_id,
+                AgentSkill.deleted_at.is_(None),
+            )
+            .order_by(Agent.name.asc())
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def rebind_agent_skills(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        old_skill_id: int,
+        new_skill_id: int,
+    ) -> None:
+        """Rebind active user-owned agent skill associations to a new skill row."""
+        user_agent_ids = (
+            select(Agent.id)
+            .where(
+                Agent.user_id == user_id,
+                Agent.deleted_at.is_(None),
+            )
+            .scalar_subquery()
+        )
+        await db.execute(
+            update(AgentSkill)
+            .where(
+                AgentSkill.skill_id == old_skill_id,
+                AgentSkill.deleted_at.is_(None),
+                AgentSkill.agent_id.in_(user_agent_ids),
+            )
+            .values(skill_id=new_skill_id)
+        )
+
+    @staticmethod
+    async def soft_delete_skill(
+        db: AsyncSession,
+        *,
+        skill: Skill,
+        commit: bool = True,
+    ) -> None:
+        """Soft-delete a specific skill row."""
+        now = datetime.now(UTC)
+        skill.deleted_at = now
+        skill.updated_at = now
+        await db.flush()
+        if commit:
+            await db.commit()
+
+    @staticmethod
+    async def touch_user_skill(db: AsyncSession, *, user_id: int, name: str, commit: bool = True) -> Skill | None:
+        """Refresh updated_at for the current user's skill without changing business fields."""
+        skill = await SkillRepository.get_user_skill_by_name(db, user_id=user_id, name=name)
+        if skill is None:
+            return None
+
+        skill.updated_at = datetime.now(UTC)
+        await db.flush()
+        await db.refresh(skill)
+        if commit:
+            await db.commit()
+            await db.refresh(skill)
+        return skill
+
+    @staticmethod
+    async def soft_delete_user_skill(db: AsyncSession, *, user_id: int, name: str, commit: bool = True) -> bool:
+        """Soft-delete the current user's skill by name."""
+        skill = await SkillRepository.get_user_skill_by_name(db, user_id=user_id, name=name)
+        if skill is None:
+            return False
+        await SkillRepository.soft_delete_skill(db, skill=skill, commit=commit)
+        return True
 
 
 class MemoryRepository:

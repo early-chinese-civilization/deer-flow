@@ -9,7 +9,7 @@ import {
   SparklesIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -23,13 +23,12 @@ import {
 } from "@/components/ui/item";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
-import { useCreateAgent } from "@/core/agents";
-import { AgentNameCheckError, checkAgentName } from "@/core/agents/api";
+import { useAgent, useUpdateAgent } from "@/core/agents";
 import { useI18n } from "@/core/i18n/hooks";
 import { useSkills } from "@/core/skills/hooks";
 import { cn } from "@/lib/utils";
 
-type CreateSection = "name" | "description" | "soul" | "skills";
+type EditSection = "name" | "description" | "soul" | "skills";
 
 type FormState = {
   name: string;
@@ -38,24 +37,56 @@ type FormState = {
   skills: string[];
 };
 
-const NAME_RE = /^[A-Za-z0-9-]+$/;
+interface EditAgentPageProps {
+  params: Promise<{
+    agent_name: string;
+  }>;
+}
 
-export default function NewAgentPage() {
+export default function EditAgentPage({ params }: EditAgentPageProps) {
   const { t } = useI18n();
   const router = useRouter();
+  const updateAgent = useUpdateAgent();
   const { skills, isLoading: skillsLoading } = useSkills();
-  const createAgent = useCreateAgent();
 
-  const [activeSection, setActiveSection] = useState<CreateSection>("name");
+  const [agentName, setAgentName] = useState<string | null>(null);
+  useEffect(() => {
+    let mounted = true;
+    void params.then(({ agent_name }) => {
+      if (mounted) {
+        setAgentName(agent_name);
+      }
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [params]);
+
+  const { agent, isLoading: agentLoading, error: agentError } = useAgent(agentName);
+
+  const [activeSection, setActiveSection] = useState<EditSection>("name");
   const [form, setForm] = useState<FormState>({
     name: "",
     description: "",
     soul: "",
     skills: [],
   });
-  const [nameError, setNameError] = useState("");
   const [submitError, setSubmitError] = useState("");
-  const [isCheckingName, setIsCheckingName] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  useEffect(() => {
+    if (!agent || isInitialized) {
+      return;
+    }
+
+    setForm({
+      name: agent.name,
+      description: agent.description ?? "",
+      soul: agent.soul ?? "",
+      skills: agent.skills ?? [],
+    });
+    setIsInitialized(true);
+  }, [agent, isInitialized]);
 
   const sections = useMemo(
     () => [
@@ -120,70 +151,33 @@ export default function NewAgentPage() {
     });
   }
 
-  async function validateName() {
-    const trimmed = form.name.trim();
-    if (!trimmed) {
-      setNameError(t.agents.createNameRequiredError);
-      return null;
-    }
-    if (!NAME_RE.test(trimmed)) {
-      setNameError(t.agents.nameStepInvalidError);
-      return null;
-    }
-
-    setNameError("");
-    setIsCheckingName(true);
-    try {
-      const result = await checkAgentName(trimmed);
-      if (!result.available) {
-        setNameError(t.agents.nameStepAlreadyExistsError);
-        return null;
-      }
-      updateField("name", result.name);
-      return result.name;
-    } catch (error) {
-      if (error instanceof AgentNameCheckError) {
-        if (error.reason === "backend_unreachable") {
-          setNameError(t.agents.nameStepNetworkError);
-        } else {
-          setNameError(error.message || t.agents.nameStepCheckError);
-        }
-      } else {
-        setNameError(t.agents.nameStepCheckError);
-      }
-      return null;
-    } finally {
-      setIsCheckingName(false);
-    }
-  }
-
   async function handleSubmit() {
-    setSubmitError("");
-    const normalizedName = await validateName();
-    if (!normalizedName) {
-      setActiveSection("name");
+    if (!agentName) {
       return;
     }
 
+    setSubmitError("");
     try {
-      await createAgent.mutateAsync({
-        name: normalizedName,
-        description: form.description.trim(),
-        soul: form.soul.trim(),
-        skills: form.skills.length > 0 ? form.skills : null,
+      await updateAgent.mutateAsync({
+        name: agentName,
+        request: {
+          description: form.description.trim(),
+          soul: form.soul.trim(),
+          skills: form.skills,
+        },
       });
-      toast.success(t.agents.createSuccess);
+      toast.success(t.agents.updateSuccess);
       router.push("/workspace/agents");
     } catch (error) {
       const message =
-        error instanceof Error && error.message ? error.message : t.agents.createError;
+        error instanceof Error && error.message ? error.message : t.agents.updateError;
       setSubmitError(message);
       toast.error(message);
     }
   }
 
   const submitDisabled =
-    createAgent.isPending || isCheckingName || !form.name.trim();
+    updateAgent.isPending || agentLoading || !!agentError || !agentName || !isInitialized;
 
   const currentPanel = (() => {
     if (activeSection === "name") {
@@ -191,22 +185,15 @@ export default function NewAgentPage() {
         <div className="space-y-4">
           <div className="space-y-2">
             <h2 className="text-2xl font-semibold">{t.agents.createNameTitle}</h2>
-            <p className="text-muted-foreground text-sm">{t.agents.createNameHint}</p>
+            <p className="text-muted-foreground text-sm">{t.agents.editNameHint}</p>
           </div>
           <div className="space-y-3">
             <Input
               autoFocus
-              placeholder={t.agents.nameStepPlaceholder}
               value={form.name}
-              onChange={(event) => {
-                updateField("name", event.target.value);
-                setNameError("");
-                setSubmitError("");
-              }}
-              onBlur={() => void validateName()}
-              className={cn(nameError && "border-destructive")}
+              readOnly
+              disabled
             />
-            {nameError && <p className="text-destructive text-sm">{nameError}</p>}
           </div>
         </div>
       );
@@ -304,6 +291,17 @@ export default function NewAgentPage() {
     );
   })();
 
+  let content = currentPanel;
+  if (agentLoading) {
+    content = <div className="text-muted-foreground text-sm">{t.common.loading}</div>;
+  } else if (agentError) {
+    content = (
+      <div className="text-destructive text-sm">
+        {agentError instanceof Error ? agentError.message : t.agents.updateError}
+      </div>
+    );
+  }
+
   return (
     <div className="flex size-full flex-col">
       <header className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3">
@@ -316,14 +314,14 @@ export default function NewAgentPage() {
             <ArrowLeftIcon className="h-4 w-4" />
           </Button>
           <div>
-            <h1 className="text-sm font-semibold">{t.agents.createPageTitle}</h1>
+            <h1 className="text-sm font-semibold">{t.agents.editPageTitle}</h1>
             <p className="text-muted-foreground text-sm">
-              {t.agents.createPageDescription}
+              {t.agents.editPageDescription}
             </p>
           </div>
         </div>
         <Button onClick={() => void handleSubmit()} disabled={submitDisabled}>
-          {createAgent.isPending ? t.agents.createButtonPending : t.agents.createButton}
+          {updateAgent.isPending ? t.agents.updateButtonPending : t.agents.updateButton}
         </Button>
       </header>
 
@@ -360,7 +358,7 @@ export default function NewAgentPage() {
                 <BotIcon className="text-primary h-7 w-7" />
               </div>
 
-              {currentPanel}
+              {content}
 
               {submitError && (
                 <p className="text-destructive text-sm">{submitError}</p>
@@ -370,14 +368,14 @@ export default function NewAgentPage() {
                 <Button
                   variant="outline"
                   onClick={() => router.push("/workspace/agents")}
-                  disabled={createAgent.isPending}
+                  disabled={updateAgent.isPending}
                 >
                   {t.common.cancel}
                 </Button>
                 <Button onClick={() => void handleSubmit()} disabled={submitDisabled}>
-                  {createAgent.isPending
-                    ? t.agents.createButtonPending
-                    : t.agents.createButton}
+                  {updateAgent.isPending
+                    ? t.agents.updateButtonPending
+                    : t.agents.updateButton}
                 </Button>
               </div>
             </div>
