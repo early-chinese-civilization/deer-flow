@@ -87,6 +87,7 @@ def upgrade() -> None:
         "skills",
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False, comment="Skill ID"),
         sa.Column("user_id", sa.BigInteger(), nullable=True, comment="User ID (NULL for system skills)"),
+        sa.Column("owner_user_id", sa.BigInteger(), nullable=True, comment="Publisher user ID for public skills"),
         sa.Column("name", sa.String(length=255), nullable=False, comment="Skill name"),
         sa.Column("display_name", sa.String(length=255), nullable=True, comment="Display name"),
         sa.Column("description", sa.Text(), nullable=True, comment="Skill description"),
@@ -95,6 +96,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, comment="Updated at"),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True, comment="Soft delete timestamp"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["owner_user_id"], ["users.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
@@ -105,13 +107,14 @@ def upgrade() -> None:
         postgresql_where=sa.text("deleted_at IS NULL AND user_id IS NOT NULL"),
     )
     op.create_index(
-        "uq_skills_system_name_active",
+        "uq_skills_public_owner_name_active",
         "skills",
-        ["name"],
+        ["owner_user_id", "name"],
         unique=True,
-        postgresql_where=sa.text("deleted_at IS NULL AND user_id IS NULL"),
+        postgresql_where=sa.text("deleted_at IS NULL AND user_id IS NULL AND owner_user_id IS NOT NULL"),
     )
     op.create_index("ix_skills_user_id", "skills", ["user_id"], unique=False)
+    op.create_index("ix_skills_owner_user_id", "skills", ["owner_user_id"], unique=False)
     op.create_index("ix_skills_deleted_at", "skills", ["deleted_at"], unique=False)
 
     op.create_table(
@@ -205,8 +208,9 @@ def downgrade() -> None:
     op.drop_table("threads")
 
     op.drop_index("ix_skills_deleted_at", table_name="skills")
+    op.drop_index("ix_skills_owner_user_id", table_name="skills")
     op.drop_index("ix_skills_user_id", table_name="skills")
-    op.drop_index("uq_skills_system_name_active", table_name="skills")
+    op.drop_index("uq_skills_public_owner_name_active", table_name="skills")
     op.drop_index("uq_skills_user_name_active", table_name="skills")
     op.drop_table("skills")
 

@@ -116,6 +116,7 @@ export interface Translations {
     chats: string;
     demoChats: string;
     agents: string;
+    skills: string;
   };
 
   // Agents
@@ -144,6 +145,33 @@ export interface Translations {
     agentCreated: string;
     startChatting: string;
     backToGallery: string;
+    createPageDescription: string;
+    createSectionName: string;
+    createSectionDescription: string;
+    createSectionSoul: string;
+    createSectionSkills: string;
+    createNameTitle: string;
+    createNameHint: string;
+    createDescriptionTitle: string;
+    createDescriptionHint: string;
+    createSoulTitle: string;
+    createSoulHint: string;
+    createSkillsTitle: string;
+    createSkillsHint: string;
+    createSkillsEmpty: string;
+    createSkillsLoading: string;
+    createButton: string;
+    createButtonPending: string;
+    createSuccess: string;
+    createError: string;
+    createNameRequiredError: string;
+    editPageTitle: string;
+    editPageDescription: string;
+    editNameHint: string;
+    updateButton: string;
+    updateButtonPending: string;
+    updateSuccess: string;
+    updateError: string;
   };
 
   // Breadcrumb
@@ -365,6 +393,19 @@ export interface Translations {
       emptyTitle: string;
       emptyDescription: string;
       emptyButton: string;
+      uploadSkill: string;
+      uploadPending: string;
+      uploadSuccess: string;
+      uploadError: string;
+      publishSkill: string;
+      downloadSkill: string;
+      downloadSuccess: (skillName: string) => string;
+      publishSuccess: (skillName: string) => string;
+      publishedBy: (ownerDisplayName: string) => string;
+      deleteBlocked: (agentName: string) => string;
+      conflictConfirm: (skillName: string) => string;
+      noCustomSkills: string;
+      noPublicSkills: string;
     };
     notification: {
       title: string;

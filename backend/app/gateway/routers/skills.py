@@ -1,18 +1,33 @@
-import json
+import asyncio
 import logging
+import tempfile
+import zipfile
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+import yaml
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.db.models import Skill, User
+from app.gateway.db.repository import SkillRepository
+from app.gateway.deps import get_current_user, get_db
 from app.gateway.path_utils import resolve_thread_virtual_path
-from deerflow.config.extensions_config import ExtensionsConfig, SkillStateConfig, get_extensions_config, reload_extensions_config
-from deerflow.skills import Skill, load_skills
 from deerflow.skills.installer import SkillAlreadyExistsError, install_skill_from_archive
+from deerflow.uploads.storage import OSSStorageBackend
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["skills"])
+
+ALLOWED_SKILL_FRONTMATTER_KEYS = {
+    "name",
+    "description",
+    "license",
+    "allowed-tools",
+    "metadata",
+    "compatibility",
+}
 
 
 class SkillResponse(BaseModel):
@@ -23,6 +38,8 @@ class SkillResponse(BaseModel):
     license: str | None = Field(None, description="License information")
     category: str = Field(..., description="Category of the skill (public or custom)")
     enabled: bool = Field(default=True, description="Whether this skill is enabled")
+    owner_user_id: int | None = Field(default=None, description="Publisher user ID for public skills")
+    owner_display_name: str | None = Field(default=None, description="Publisher display name for public skills")
 
 
 class SkillsListResponse(BaseModel):
@@ -52,101 +69,754 @@ class SkillInstallResponse(BaseModel):
     message: str = Field(..., description="Installation result message")
 
 
+class SkillUploadCheckResponse(BaseModel):
+    """Response model for skill upload conflict checks."""
+
+    filename: str = Field(..., description="Original zip filename")
+    skill_name: str = Field(..., description="Parsed skill folder name")
+    exists: bool = Field(..., description="Whether the current user already has an active skill with this name")
+    message: str = Field(..., description="Check result message")
+
+
+class SkillUploadResult(BaseModel):
+    """Per-file upload result."""
+
+    filename: str = Field(..., description="Original zip filename")
+    skill_name: str | None = Field(default=None, description="Parsed skill folder name")
+    success: bool = Field(..., description="Whether the upload succeeded")
+    message: str = Field(..., description="Upload result message")
+
+
+class SkillUploadResponse(BaseModel):
+    """Response model for bulk skill uploads."""
+
+    results: list[SkillUploadResult]
+
+
+class SkillDownloadCheckRequest(BaseModel):
+    """Request body for checking whether a public skill download will conflict."""
+
+    owner_user_id: int | None = Field(default=None, description="Publisher user ID for the selected public skill")
+
+
+class SkillDownloadCheckResponse(BaseModel):
+    """Response model for skill download conflict checks."""
+
+    skill_name: str = Field(..., description="Target custom skill name")
+    exists: bool = Field(..., description="Whether the current user already has a custom skill with that name")
+    message: str = Field(..., description="Check result message")
+
+
+class SkillDownloadRequest(BaseModel):
+    """Request body for downloading a public skill."""
+
+    owner_user_id: int | None = Field(default=None, description="Publisher user ID for the selected public skill")
+    overwrite: bool = Field(default=False, description="Whether to overwrite an existing same-name custom skill")
+
+
 def _skill_to_response(skill: Skill) -> SkillResponse:
-    """Convert a Skill object to a SkillResponse."""
+    """Convert a database skill row to the API response model."""
+    owner_display_name = None
+    if skill.user_id is None and skill.owner_user_id is not None and skill.owner_user is not None:
+        display_name = (skill.owner_user.display_name or "").strip()
+        owner_display_name = display_name or skill.owner_user.username
+
     return SkillResponse(
         name=skill.name,
-        description=skill.description,
-        license=skill.license,
-        category=skill.category,
-        enabled=skill.enabled,
+        description=skill.description or "",
+        license=None,
+        category="public" if skill.user_id is None else "custom",
+        enabled=True,
+        owner_user_id=skill.owner_user_id,
+        owner_display_name=owner_display_name,
     )
+
+
+def _extract_frontmatter(skill_md_path: Path) -> dict:
+    """Parse YAML front matter from SKILL.md."""
+    content = skill_md_path.read_text(encoding="utf-8")
+    if not content.startswith("---"):
+        raise ValueError("No YAML frontmatter found")
+
+    lines = content.splitlines()
+    if not lines or lines[0].strip() != "---":
+        raise ValueError("No YAML frontmatter found")
+
+    end_index = None
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            end_index = index
+            break
+
+    if end_index is None:
+        raise ValueError("Invalid frontmatter format")
+
+    frontmatter_text = "\n".join(lines[1:end_index])
+    try:
+        frontmatter = yaml.safe_load(frontmatter_text)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Invalid YAML in frontmatter: {exc}") from exc
+
+    if not isinstance(frontmatter, dict):
+        raise ValueError("Frontmatter must be a YAML dictionary")
+
+    unexpected_keys = set(frontmatter.keys()) - ALLOWED_SKILL_FRONTMATTER_KEYS
+    if unexpected_keys:
+        raise ValueError(
+            f"Unexpected key(s) in SKILL.md frontmatter: {', '.join(sorted(unexpected_keys))}. "
+            f"Allowed properties are: {', '.join(sorted(ALLOWED_SKILL_FRONTMATTER_KEYS))}"
+        )
+
+    return frontmatter
+
+
+def _validate_skill_directory(skill_dir: Path) -> tuple[str, str]:
+    """Validate a skill directory using the same rules as quick_validate.py."""
+    skill_md_path = skill_dir / "SKILL.md"
+    if not skill_md_path.exists():
+        raise ValueError("SKILL.md not found")
+
+    frontmatter = _extract_frontmatter(skill_md_path)
+
+    if "name" not in frontmatter:
+        raise ValueError("Missing 'name' in frontmatter")
+    if "description" not in frontmatter:
+        raise ValueError("Missing 'description' in frontmatter")
+
+    name = frontmatter.get("name", "")
+    if not isinstance(name, str):
+        raise ValueError(f"Name must be a string, got {type(name).__name__}")
+    name = name.strip()
+    if not name:
+        raise ValueError("Missing 'name' in frontmatter")
+    if not __import__("re").match(r"^[a-z0-9-]+$", name):
+        raise ValueError(f"Name '{name}' should be kebab-case (lowercase letters, digits, and hyphens only)")
+    if name.startswith("-") or name.endswith("-") or "--" in name:
+        raise ValueError(f"Name '{name}' cannot start/end with hyphen or contain consecutive hyphens")
+    if len(name) > 64:
+        raise ValueError(f"Name is too long ({len(name)} characters). Maximum is 64 characters.")
+
+    description = frontmatter.get("description", "")
+    if not isinstance(description, str):
+        raise ValueError(f"Description must be a string, got {type(description).__name__}")
+    description = description.strip()
+    if "<" in description or ">" in description:
+        raise ValueError("Description cannot contain angle brackets (< or >)")
+    if len(description) > 1024:
+        raise ValueError(f"Description is too long ({len(description)} characters). Maximum is 1024 characters.")
+
+    compatibility = frontmatter.get("compatibility", "")
+    if compatibility:
+        if not isinstance(compatibility, str):
+            raise ValueError(f"Compatibility must be a string, got {type(compatibility).__name__}")
+        if len(compatibility) > 500:
+            raise ValueError(
+                f"Compatibility is too long ({len(compatibility)} characters). Maximum is 500 characters."
+            )
+
+    return name, description
+
+
+def _safe_extract_archive(archive_path: Path, destination_dir: Path) -> None:
+    """Safely extract a zip archive into a destination directory."""
+    with zipfile.ZipFile(archive_path, "r") as zip_ref:
+        for member in zip_ref.infolist():
+            member_path = Path(member.filename)
+            if member_path.is_absolute() or ".." in member_path.parts:
+                raise ValueError("Archive contains unsafe paths")
+            zip_ref.extract(member, destination_dir)
+
+
+def _resolve_skill_root_dir(extracted_root: Path) -> Path:
+    """Resolve the single skill root directory from an extracted zip archive."""
+    top_level_dirs: set[str] = set()
+    root_level_files: list[str] = []
+
+    for entry in extracted_root.rglob("*"):
+        if entry.is_dir():
+            continue
+
+        relative_path = entry.relative_to(extracted_root)
+        if not relative_path.parts:
+            continue
+        if relative_path.parts[0] == "__MACOSX":
+            continue
+
+        if len(relative_path.parts) == 1:
+            root_level_files.append(relative_path.as_posix())
+            continue
+
+        top_level_dirs.add(relative_path.parts[0])
+
+    if root_level_files:
+        raise ValueError("Zip root must contain exactly one skill folder")
+    if len(top_level_dirs) != 1:
+        raise ValueError("Zip must contain exactly one skill folder")
+
+    skill_dir = extracted_root / next(iter(top_level_dirs))
+    if not skill_dir.is_dir():
+        raise ValueError("Skill folder not found after extraction")
+    return skill_dir
+
+
+def _upload_skill_directory_to_oss(
+    *,
+    storage: OSSStorageBackend,
+    skill_dir: Path,
+    root_prefix: str,
+    existing_keys: set[str] | None = None,
+) -> None:
+    """Upload all files from a skill directory to OSS and remove stale objects if needed."""
+    uploaded_keys: set[str] = set()
+    for file_path in skill_dir.rglob("*"):
+        if not file_path.is_file():
+            continue
+        relative_path = file_path.relative_to(skill_dir).as_posix()
+        object_key = f"{root_prefix.rstrip('/')}/{relative_path}"
+        storage.put_object(
+            key=object_key,
+            content=file_path.read_bytes(),
+        )
+        uploaded_keys.add(object_key)
+
+    if existing_keys is not None:
+        for object_key in existing_keys - uploaded_keys:
+            storage.delete_object(key=object_key)
+
+
+def _copy_oss_prefix(
+    *,
+    storage: OSSStorageBackend,
+    source_prefix: str,
+    target_prefix: str,
+    existing_keys: set[str] | None = None,
+) -> None:
+    """Copy all objects from one OSS prefix to another and prune stale objects."""
+    source_objects = storage.list_objects(prefix=source_prefix)
+    if not source_objects:
+        raise ValueError(f"No skill files found under '{source_prefix}'")
+
+    copied_keys: set[str] = set()
+    source_root = source_prefix.rstrip("/") + "/"
+    target_root = target_prefix.rstrip("/") + "/"
+    for object_info in source_objects:
+        relative_path = object_info.key.removeprefix(source_root)
+        target_key = f"{target_root}{relative_path}"
+        storage.put_object(
+            key=target_key,
+            content=storage.get_object_bytes(key=object_info.key),
+        )
+        copied_keys.add(target_key)
+
+    if existing_keys is not None:
+        for object_key in existing_keys - copied_keys:
+            storage.delete_object(key=object_key)
+
+
+async def _parse_uploaded_skill_archive(upload_file: UploadFile) -> tuple[str, str, Path, tempfile.TemporaryDirectory[str]]:
+    """Persist, extract, and validate an uploaded skill archive."""
+    if not upload_file.filename:
+        raise ValueError("Uploaded file must have a filename")
+
+    temp_dir = tempfile.TemporaryDirectory(prefix="skill-upload-")
+    archive_path = Path(temp_dir.name) / upload_file.filename
+    archive_path.write_bytes(await upload_file.read())
+
+    if not zipfile.is_zipfile(archive_path):
+        temp_dir.cleanup()
+        raise ValueError("Uploaded file must be a valid zip archive")
+
+    extracted_dir = Path(temp_dir.name) / "extracted"
+    extracted_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        _safe_extract_archive(archive_path, extracted_dir)
+        skill_dir = _resolve_skill_root_dir(extracted_dir)
+        _, description = _validate_skill_directory(skill_dir)
+        return upload_file.filename, skill_dir.name, skill_dir, temp_dir
+    except Exception:
+        temp_dir.cleanup()
+        raise
+
+
+async def _delete_oss_prefix(root_prefix: str) -> None:
+    """Delete all OSS objects under a prefix."""
+    storage = OSSStorageBackend.from_app_config()
+    objects = await asyncio.to_thread(storage.list_objects, prefix=root_prefix)
+    for object_info in objects:
+        await asyncio.to_thread(storage.delete_object, key=object_info.key)
+
+
+async def _list_oss_keys(storage: OSSStorageBackend, root_prefix: str) -> set[str]:
+    """List all object keys under an OSS prefix."""
+    objects = await asyncio.to_thread(storage.list_objects, prefix=root_prefix)
+    return {object_info.key for object_info in objects}
+
+
+async def _sync_skill_source_to_oss(
+    *,
+    storage: OSSStorageBackend,
+    source_skill: Skill,
+    target_prefix: str,
+    existing_keys: set[str] | None = None,
+) -> None:
+    """Sync a skill source into a target OSS prefix from either local seed files or existing OSS files."""
+    if source_skill.user_id is None and source_skill.owner_user_id is None:
+        skill_dir = Path(source_skill.file_path)
+        if not skill_dir.exists() or not skill_dir.is_dir():
+            raise ValueError(f"Seed skill directory '{source_skill.file_path}' does not exist")
+        await asyncio.to_thread(
+            _upload_skill_directory_to_oss,
+            storage=storage,
+            skill_dir=skill_dir,
+            root_prefix=target_prefix,
+            existing_keys=existing_keys,
+        )
+        return
+
+    await asyncio.to_thread(
+        _copy_oss_prefix,
+        storage=storage,
+        source_prefix=source_skill.file_path,
+        target_prefix=target_prefix,
+        existing_keys=existing_keys,
+    )
+
+
+async def _get_download_source_skill(
+    db: AsyncSession,
+    *,
+    skill_name: str,
+    owner_user_id: int | None,
+) -> Skill | None:
+    """Resolve the specific public skill selected for download."""
+    if owner_user_id is None:
+        return await SkillRepository.get_system_public_skill_by_name(db, name=skill_name)
+    return await SkillRepository.get_public_skill_by_name_and_owner(
+        db,
+        name=skill_name,
+        owner_user_id=owner_user_id,
+    )
+
+
+@router.post(
+    "/skills/check-upload",
+    response_model=SkillUploadCheckResponse,
+    summary="Check Skill Upload",
+    description="Parse a skill zip archive and determine whether the current user already has a skill with that folder name.",
+)
+async def check_skill_upload(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SkillUploadCheckResponse:
+    temp_dir: tempfile.TemporaryDirectory[str] | None = None
+    try:
+        filename, skill_name, _, temp_dir = await _parse_uploaded_skill_archive(file)
+        existing_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
+        return SkillUploadCheckResponse(
+            filename=filename,
+            skill_name=skill_name,
+            exists=existing_skill is not None,
+            message="Skill name already exists" if existing_skill is not None else "Skill name is available",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("Failed to check skill upload: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to check skill upload: {exc}")
+    finally:
+        if temp_dir is not None:
+            temp_dir.cleanup()
+
+
+@router.post(
+    "/skills/uploads",
+    response_model=SkillUploadResponse,
+    summary="Upload Skills",
+    description="Upload one or more custom skill zip archives for the current user.",
+)
+async def upload_skills(
+    files: list[UploadFile] = File(...),
+    overwrite_names: list[str] | None = Form(default=None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SkillUploadResponse:
+    overwrite_set = set(overwrite_names or [])
+    results: list[SkillUploadResult] = []
+
+    for upload_file in files:
+        temp_dir: tempfile.TemporaryDirectory[str] | None = None
+        try:
+            filename, skill_name, skill_dir, temp_dir = await _parse_uploaded_skill_archive(upload_file)
+            description = _extract_frontmatter(skill_dir / "SKILL.md").get("description", "")
+            if not isinstance(description, str):
+                description = ""
+            description = description.strip()
+
+            existing_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
+            existing_keys: set[str] | None = None
+            if existing_skill is not None and skill_name not in overwrite_set:
+                results.append(
+                    SkillUploadResult(
+                        filename=filename,
+                        skill_name=skill_name,
+                        success=False,
+                        message=f"Skill '{skill_name}' already exists",
+                    )
+                )
+                continue
+
+            root_prefix = f"skills/{current_user.id}/{skill_name}"
+            storage = OSSStorageBackend.from_app_config()
+            if existing_skill is not None:
+                existing_keys = await _list_oss_keys(storage, root_prefix)
+
+            await asyncio.to_thread(
+                _upload_skill_directory_to_oss,
+                storage=storage,
+                skill_dir=skill_dir,
+                root_prefix=root_prefix,
+                existing_keys=existing_keys,
+            )
+
+            if existing_skill is not None:
+                await SkillRepository.soft_delete_skill(db, skill=existing_skill, commit=False)
+
+            created_skill = await SkillRepository.create_skill(
+                db,
+                user_id=current_user.id,
+                owner_user_id=None,
+                name=skill_name,
+                display_name=skill_name,
+                description=description,
+                file_path=root_prefix,
+                commit=False,
+            )
+
+            if existing_skill is not None:
+                await SkillRepository.rebind_agent_skills(
+                    db,
+                    user_id=current_user.id,
+                    old_skill_id=existing_skill.id,
+                    new_skill_id=created_skill.id,
+                )
+
+            await db.commit()
+            results.append(
+                SkillUploadResult(
+                    filename=filename,
+                    skill_name=skill_name,
+                    success=True,
+                    message="Skill uploaded successfully",
+                )
+            )
+        except ValueError as exc:
+            await db.rollback()
+            results.append(
+                SkillUploadResult(
+                    filename=upload_file.filename or "unknown.zip",
+                    success=False,
+                    message=str(exc),
+                )
+            )
+        except Exception as exc:
+            await db.rollback()
+            logger.error("Failed to upload skill archive %s: %s", upload_file.filename, exc, exc_info=True)
+            results.append(
+                SkillUploadResult(
+                    filename=upload_file.filename or "unknown.zip",
+                    success=False,
+                    message=f"Failed to upload skill: {exc}",
+                )
+            )
+        finally:
+            if temp_dir is not None:
+                temp_dir.cleanup()
+
+    return SkillUploadResponse(results=results)
+
+
+@router.post(
+    "/skills/{skill_name}/check-download",
+    response_model=SkillDownloadCheckResponse,
+    summary="Check Skill Download",
+    description="Check whether downloading a public skill would overwrite one of the current user's custom skills.",
+)
+async def check_skill_download(
+    skill_name: str,
+    request: SkillDownloadCheckRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SkillDownloadCheckResponse:
+    try:
+        source_skill = await _get_download_source_skill(
+            db,
+            skill_name=skill_name,
+            owner_user_id=request.owner_user_id,
+        )
+        if source_skill is None:
+            raise HTTPException(status_code=404, detail=f"Public skill '{skill_name}' not found")
+
+        existing_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
+        return SkillDownloadCheckResponse(
+            skill_name=skill_name,
+            exists=existing_skill is not None,
+            message="Skill name already exists" if existing_skill is not None else "Skill can be downloaded",
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to check skill download %s: %s", skill_name, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to check skill download: {exc}")
+
+
+@router.post(
+    "/skills/{skill_name}/download",
+    response_model=SkillResponse,
+    summary="Download Public Skill",
+    description="Copy a public skill into the current user's custom skills, optionally overwriting an existing custom copy.",
+)
+async def download_skill(
+    skill_name: str,
+    request: SkillDownloadRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SkillResponse:
+    try:
+        source_skill = await _get_download_source_skill(
+            db,
+            skill_name=skill_name,
+            owner_user_id=request.owner_user_id,
+        )
+        if source_skill is None:
+            raise HTTPException(status_code=404, detail=f"Public skill '{skill_name}' not found")
+
+        existing_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
+        if existing_skill is not None and not request.overwrite:
+            raise HTTPException(status_code=409, detail=f"Skill '{skill_name}' already exists")
+
+        root_prefix = f"skills/{current_user.id}/{skill_name}"
+        storage = OSSStorageBackend.from_app_config()
+        existing_keys = await _list_oss_keys(storage, root_prefix) if existing_skill is not None else None
+
+        await _sync_skill_source_to_oss(
+            storage=storage,
+            source_skill=source_skill,
+            target_prefix=root_prefix,
+            existing_keys=existing_keys,
+        )
+
+        if existing_skill is not None:
+            await SkillRepository.soft_delete_skill(db, skill=existing_skill, commit=False)
+
+        created_skill = await SkillRepository.create_skill(
+            db,
+            user_id=current_user.id,
+            owner_user_id=None,
+            name=skill_name,
+            display_name=skill_name,
+            description=source_skill.description,
+            file_path=root_prefix,
+            commit=False,
+        )
+
+        if existing_skill is not None:
+            await SkillRepository.rebind_agent_skills(
+                db,
+                user_id=current_user.id,
+                old_skill_id=existing_skill.id,
+                new_skill_id=created_skill.id,
+            )
+
+        await db.commit()
+        refreshed_skill = await SkillRepository.get_skill_by_id(db, created_skill.id)
+        if refreshed_skill is None:
+            raise HTTPException(status_code=500, detail=f"Failed to load downloaded skill '{skill_name}'")
+        return _skill_to_response(refreshed_skill)
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as exc:
+        await db.rollback()
+        logger.error("Failed to download skill %s: %s", skill_name, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to download skill: {exc}")
+
+
+@router.post(
+    "/skills/{skill_name}/publish",
+    response_model=SkillResponse,
+    summary="Publish Custom Skill",
+    description="Copy the current user's custom skill into the public catalog, overwriting the user's previous public publish if present.",
+)
+async def publish_skill(
+    skill_name: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SkillResponse:
+    try:
+        custom_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
+        if custom_skill is None:
+            raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+
+        existing_public_skill = await SkillRepository.get_public_skill_by_name_and_owner(
+            db,
+            name=skill_name,
+            owner_user_id=current_user.id,
+        )
+
+        root_prefix = f"skills/public/{skill_name}/{current_user.id}"
+        storage = OSSStorageBackend.from_app_config()
+        existing_keys = await _list_oss_keys(storage, root_prefix) if existing_public_skill is not None else None
+
+        await _sync_skill_source_to_oss(
+            storage=storage,
+            source_skill=custom_skill,
+            target_prefix=root_prefix,
+            existing_keys=existing_keys,
+        )
+
+        if existing_public_skill is not None:
+            await SkillRepository.soft_delete_skill(db, skill=existing_public_skill, commit=False)
+
+        published_skill = await SkillRepository.create_skill(
+            db,
+            user_id=None,
+            owner_user_id=current_user.id,
+            name=skill_name,
+            display_name=skill_name,
+            description=custom_skill.description,
+            file_path=root_prefix,
+            commit=False,
+        )
+        await db.commit()
+        refreshed_skill = await SkillRepository.get_skill_by_id(db, published_skill.id)
+        if refreshed_skill is None:
+            raise HTTPException(status_code=500, detail=f"Failed to load published skill '{skill_name}'")
+        return _skill_to_response(refreshed_skill)
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as exc:
+        await db.rollback()
+        logger.error("Failed to publish skill %s: %s", skill_name, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to publish skill: {exc}")
 
 
 @router.get(
     "/skills",
     response_model=SkillsListResponse,
     summary="List All Skills",
-    description="Retrieve a list of all available skills from both public and custom directories.",
+    description="Retrieve the current user's skills and public skills from the database.",
 )
-async def list_skills() -> SkillsListResponse:
+async def list_skills(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SkillsListResponse:
     try:
-        skills = load_skills(enabled_only=False)
+        skills = await SkillRepository.list_visible_skills(db, user_id=current_user.id)
         return SkillsListResponse(skills=[_skill_to_response(skill) for skill in skills])
-    except Exception as e:
-        logger.error(f"Failed to load skills: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to load skills: {str(e)}")
+    except Exception as exc:
+        logger.error("Failed to load skills: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to load skills: {exc}")
 
 
 @router.get(
     "/skills/{skill_name}",
     response_model=SkillResponse,
     summary="Get Skill Details",
-    description="Retrieve detailed information about a specific skill by its name.",
+    description="Retrieve details for a visible skill, preferring the current user's copy.",
 )
-async def get_skill(skill_name: str) -> SkillResponse:
+async def get_skill(
+    skill_name: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SkillResponse:
     try:
-        skills = load_skills(enabled_only=False)
-        skill = next((s for s in skills if s.name == skill_name), None)
-
+        skill = await SkillRepository.get_visible_skill_by_name(db, user_id=current_user.id, name=skill_name)
         if skill is None:
             raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
 
         return _skill_to_response(skill)
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Failed to get skill {skill_name}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to get skill: {str(e)}")
+    except Exception as exc:
+        logger.error("Failed to get skill %s: %s", skill_name, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get skill: {exc}")
 
 
 @router.put(
     "/skills/{skill_name}",
     response_model=SkillResponse,
     summary="Update Skill",
-    description="Update a skill's enabled status by modifying the extensions_config.json file.",
+    description="Update the current user's skill record. Public skills are read-only.",
 )
-async def update_skill(skill_name: str, request: SkillUpdateRequest) -> SkillResponse:
+async def update_skill(
+    skill_name: str,
+    request: SkillUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SkillResponse:
+    del request
     try:
-        skills = load_skills(enabled_only=False)
-        skill = next((s for s in skills if s.name == skill_name), None)
+        user_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
+        if user_skill is not None:
+            updated_skill = await SkillRepository.touch_user_skill(db, user_id=current_user.id, name=skill_name)
+            if updated_skill is None:
+                raise HTTPException(status_code=500, detail=f"Failed to refresh skill '{skill_name}'")
+            return _skill_to_response(updated_skill)
 
-        if skill is None:
-            raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+        public_skill = await SkillRepository.get_public_skill_by_name(db, name=skill_name)
+        if public_skill is not None:
+            raise HTTPException(status_code=403, detail=f"Skill '{skill_name}' is public and cannot be modified")
 
-        config_path = ExtensionsConfig.resolve_config_path()
-        if config_path is None:
-            config_path = Path.cwd().parent / "extensions_config.json"
-            logger.info(f"No existing extensions config found. Creating new config at: {config_path}")
-
-        extensions_config = get_extensions_config()
-        extensions_config.skills[skill_name] = SkillStateConfig(enabled=request.enabled)
-
-        config_data = {
-            "mcpServers": {name: server.model_dump() for name, server in extensions_config.mcp_servers.items()},
-            "skills": {name: {"enabled": skill_config.enabled} for name, skill_config in extensions_config.skills.items()},
-        }
-
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(config_data, f, indent=2)
-
-        logger.info(f"Skills configuration updated and saved to: {config_path}")
-        reload_extensions_config()
-
-        skills = load_skills(enabled_only=False)
-        updated_skill = next((s for s in skills if s.name == skill_name), None)
-
-        if updated_skill is None:
-            raise HTTPException(status_code=500, detail=f"Failed to reload skill '{skill_name}' after update")
-
-        logger.info(f"Skill '{skill_name}' enabled status updated to {request.enabled}")
-        return _skill_to_response(updated_skill)
-
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Failed to update skill {skill_name}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to update skill: {str(e)}")
+    except Exception as exc:
+        logger.error("Failed to update skill %s: %s", skill_name, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to update skill: {exc}")
+
+
+@router.delete(
+    "/skills/{skill_name}",
+    status_code=204,
+    summary="Delete Skill",
+    description="Soft-delete the current user's skill record. Public skills cannot be deleted.",
+)
+async def delete_skill(
+    skill_name: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    try:
+        user_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
+        if user_skill is not None:
+            bound_agent_names = await SkillRepository.list_bound_agent_names_for_skill(
+                db,
+                user_id=current_user.id,
+                skill_id=user_skill.id,
+            )
+            if bound_agent_names:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Skill '{skill_name}' is bound to agent '{bound_agent_names[0]}' and cannot be deleted",
+                )
+
+            await _delete_oss_prefix(user_skill.file_path)
+            await SkillRepository.soft_delete_skill(db, skill=user_skill, commit=True)
+            return
+
+        public_skill = await SkillRepository.get_public_skill_by_name(db, name=skill_name)
+        if public_skill is not None:
+            raise HTTPException(status_code=403, detail=f"Skill '{skill_name}' is public and cannot be deleted")
+
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to delete skill %s: %s", skill_name, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to delete skill: {exc}")
 
 
 @router.post(
@@ -160,14 +830,14 @@ async def install_skill(request: SkillInstallRequest) -> SkillInstallResponse:
         skill_file_path = resolve_thread_virtual_path(request.thread_id, request.path)
         result = install_skill_from_archive(skill_file_path)
         return SkillInstallResponse(**result)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except SkillAlreadyExistsError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except SkillAlreadyExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Failed to install skill: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to install skill: {str(e)}")
+    except Exception as exc:
+        logger.error("Failed to install skill: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to install skill: {exc}")

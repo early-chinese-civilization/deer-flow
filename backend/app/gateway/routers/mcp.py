@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, Field
 
 from deerflow.config.extensions_config import ExtensionsConfig, get_extensions_config, reload_extensions_config
@@ -11,6 +11,9 @@ from deerflow.config.extensions_config import ExtensionsConfig, get_extensions_c
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["mcp"])
 
+from app.gateway.db.models import User
+from app.gateway.db.repository import ThreadRepository, WorkspaceRepository
+from app.gateway.deps import get_checkpointer, get_current_user, get_db, get_store
 
 class McpOAuthConfigResponse(BaseModel):
     """OAuth configuration for an MCP server."""
@@ -68,6 +71,8 @@ class McpConfigUpdateRequest(BaseModel):
     response_model=McpConfigResponse,
     summary="Get MCP Configuration",
     description="Retrieve the current Model Context Protocol (MCP) server configurations.",
+    # current_user: User = Depends(get_current_user),
+    # db: AsyncSession = Depends(get_db),
 )
 async def get_mcp_configuration() -> McpConfigResponse:
     """Get the current MCP configuration.

@@ -50,7 +50,7 @@ class User(Base):
     workspaces = relationship("Workspace", back_populates="user", cascade="all, delete-orphan")
     threads = relationship("Thread", back_populates="user", cascade="all, delete-orphan")
     agents = relationship("Agent", back_populates="user", cascade="all, delete-orphan")
-    skills = relationship("Skill", back_populates="user", cascade="all, delete-orphan")
+    skills = relationship("Skill", back_populates="user", cascade="all, delete-orphan", foreign_keys="Skill.user_id")
     memories = relationship("Memory", back_populates="user", cascade="all, delete-orphan")
 
 
@@ -217,7 +217,13 @@ class Skill(Base):
         BigInteger,
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=True,
-        comment="User ID (NULL for system skills)",
+        comment="User ID (NULL for public skills)",
+    )
+    owner_user_id = Column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Publisher user ID for public skills",
     )
     name = Column(String(255), nullable=False, comment="Skill name")
     display_name = Column(String(255), nullable=True, comment="Display name")
@@ -238,7 +244,8 @@ class Skill(Base):
     )
     deleted_at = Column(DateTime(timezone=True), nullable=True, comment="Soft delete timestamp")
 
-    user = relationship("User", back_populates="skills")
+    user = relationship("User", back_populates="skills", foreign_keys=[user_id])
+    owner_user = relationship("User", foreign_keys=[owner_user_id])
     agent_skills = relationship("AgentSkill", back_populates="skill", cascade="all, delete-orphan")
 
     __table_args__ = (
@@ -250,12 +257,14 @@ class Skill(Base):
             postgresql_where=text("deleted_at IS NULL AND user_id IS NOT NULL"),
         ),
         Index(
-            "uq_skills_system_name_active",
+            "uq_skills_public_owner_name_active",
+            "owner_user_id",
             "name",
             unique=True,
-            postgresql_where=text("deleted_at IS NULL AND user_id IS NULL"),
+            postgresql_where=text("deleted_at IS NULL AND user_id IS NULL AND owner_user_id IS NOT NULL"),
         ),
         Index("ix_skills_user_id", "user_id"),
+        Index("ix_skills_owner_user_id", "owner_user_id"),
         Index("ix_skills_deleted_at", "deleted_at"),
     )
 

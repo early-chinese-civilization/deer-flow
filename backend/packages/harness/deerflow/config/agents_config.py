@@ -90,7 +90,9 @@ def load_agent_soul(agent_name: str | None) -> str | None:
     soul_path = agent_dir / SOUL_FILENAME
     if not soul_path.exists():
         return None
+    print("soul_path:", soul_path)
     content = soul_path.read_text(encoding="utf-8").strip()
+    print("content:", content)
     return content or None
 
 

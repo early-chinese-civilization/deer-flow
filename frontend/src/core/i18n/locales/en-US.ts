@@ -172,6 +172,7 @@ export const enUS: Translations = {
     recentChats: "Recent chats",
     demoChats: "Demo chats",
     agents: "Agents",
+    skills: "Skills",
   },
 
   // Agents
@@ -208,6 +209,38 @@ export const enUS: Translations = {
     agentCreated: "Agent created!",
     startChatting: "Start chatting",
     backToGallery: "Back to Gallery",
+    createPageDescription:
+      "Configure the core information for your new agent before saving it.",
+    createSectionName: "Name",
+    createSectionDescription: "Description",
+    createSectionSoul: "SOUL",
+    createSectionSkills: "Skills",
+    createNameTitle: "Choose an agent name",
+    createNameHint:
+      "Letters, digits, and hyphens only. The final name is stored in lowercase.",
+    createDescriptionTitle: "Add a short description",
+    createDescriptionHint:
+      "This appears in the agent gallery and helps users understand what the agent does.",
+    createSoulTitle: "Write the SOUL prompt",
+    createSoulHint:
+      "Use this area to define the agent's personality, boundaries, and working style.",
+    createSkillsTitle: "Bind visible skills",
+    createSkillsHint:
+      "Select the skills this agent should use. Leave everything unchecked to create an agent without explicit skill bindings.",
+    createSkillsEmpty: "No visible skills are available for this user yet.",
+    createSkillsLoading: "Loading available skills...",
+    createButton: "Create agent",
+    createButtonPending: "Creating...",
+    createSuccess: "Agent created successfully.",
+    createError: "Failed to create agent.",
+    createNameRequiredError: "Agent name is required.",
+    editPageTitle: "Edit agent",
+    editPageDescription: "Update the core information and skill bindings for an existing agent.",
+    editNameHint: "The agent name cannot be changed after creation.",
+    updateButton: "Save changes",
+    updateButtonPending: "Saving...",
+    updateSuccess: "Agent updated successfully.",
+    updateError: "Failed to update agent.",
   },
 
   // Breadcrumb
@@ -440,6 +473,21 @@ export const enUS: Translations = {
       emptyDescription:
         "Put your agent skill folders under the `/skills/custom` folder under the root folder of DeerFlow.",
       emptyButton: "Create Your First Skill",
+      uploadSkill: "Upload skills",
+      uploadPending: "Uploading...",
+      uploadSuccess: "Skills uploaded successfully.",
+      uploadError: "Failed to upload skills.",
+      publishSkill: "Publish",
+      downloadSkill: "Download",
+      downloadSuccess: (skillName: string) => `Skill "${skillName}" downloaded successfully.`,
+      publishSuccess: (skillName: string) => `Skill "${skillName}" published successfully.`,
+      publishedBy: (ownerDisplayName: string) => `Published by ${ownerDisplayName}`,
+      deleteBlocked: (agentName: string) =>
+        `This skill is bound to agent "${agentName}" and cannot be deleted.`,
+      conflictConfirm: (skillName: string) =>
+        `Skill "${skillName}" already exists. Do you want to overwrite it?`,
+      noCustomSkills: "No custom skills yet.",
+      noPublicSkills: "No public skills available.",
     },
     notification: {
       title: "Notification",

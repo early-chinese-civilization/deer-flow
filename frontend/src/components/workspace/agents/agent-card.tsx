@@ -1,6 +1,6 @@
 "use client";
 
-import { BotIcon, MessageSquareIcon, Trash2Icon } from "lucide-react";
+import { BotIcon, MessageSquareIcon, PencilIcon, Trash2Icon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -41,6 +41,10 @@ export function AgentCard({ agent }: AgentCardProps) {
     router.push(`/workspace/agents/${agent.name}/chats/new`);
   }
 
+  function handleEdit() {
+    router.push(`/workspace/agents/${agent.name}/edit`);
+  }
+
   async function handleDelete() {
     try {
       await deleteAgent.mutateAsync(agent.name);
@@ -64,11 +68,6 @@ export function AgentCard({ agent }: AgentCardProps) {
                 <CardTitle className="truncate text-base">
                   {agent.name}
                 </CardTitle>
-                {agent.model && (
-                  <Badge variant="secondary" className="mt-0.5 text-xs">
-                    {agent.model}
-                  </Badge>
-                )}
               </div>
             </div>
           </div>
@@ -79,12 +78,12 @@ export function AgentCard({ agent }: AgentCardProps) {
           )}
         </CardHeader>
 
-        {agent.tool_groups && agent.tool_groups.length > 0 && (
+        {agent.skills && agent.skills.length > 0 && (
           <CardContent className="pt-0 pb-3">
             <div className="flex flex-wrap gap-1">
-              {agent.tool_groups.map((group) => (
-                <Badge key={group} variant="outline" className="text-xs">
-                  {group}
+              {agent.skills.map((skill) => (
+                <Badge key={skill} variant="outline" className="text-xs">
+                  {skill}
                 </Badge>
               ))}
             </div>
@@ -97,6 +96,15 @@ export function AgentCard({ agent }: AgentCardProps) {
             {t.agents.chat}
           </Button>
           <div className="flex gap-1">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8 shrink-0"
+              onClick={handleEdit}
+              title={t.common.edit}
+            >
+              <PencilIcon className="h-3.5 w-3.5" />
+            </Button>
             <Button
               size="icon"
               variant="ghost"
