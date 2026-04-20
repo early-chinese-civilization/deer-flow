@@ -35,8 +35,19 @@ def workspace_root_prefix(workspace_id: str) -> str:
     return f"workspaces/{workspace_id}"
 
 
-def workspace_object_key(root_prefix: str, filename: str) -> str:
-    """Build a canonical object key under a workspace prefix."""
+def workspace_object_key(root_prefix: str, filename: str, subdir: str | None = None) -> str:
+    """Build a canonical object key under a workspace prefix.
+
+    Args:
+        root_prefix: Workspace root prefix (e.g., "workspaces/workspace_id")
+        filename: File name
+        subdir: Optional subdirectory (e.g., "uploads" or "outputs")
+
+    Returns:
+        Full object key (e.g., "workspaces/workspace_id/uploads/file.txt")
+    """
+    if subdir:
+        return f"{root_prefix.rstrip('/')}/{subdir.strip('/')}/{filename}"
     return f"{root_prefix.rstrip('/')}/{filename}"
 
 
@@ -118,6 +129,18 @@ class OSSStorageBackend:
             )
         )
 
+    def put_object_stream(self, *, key: str, stream, content_length: int | None = None, content_type: str | None = None) -> None:
+        """Upload an object to OSS from a stream (file-like object)."""
+        self._client.put_object(
+            PutObjectRequest(
+                bucket=self.bucket,
+                key=key,
+                body=stream,
+                content_length=content_length,
+                content_type=content_type or mimetypes.guess_type(key)[0],
+            )
+        )
+
     def get_object_bytes(self, *, key: str) -> bytes:
         """Download an OSS object into memory."""
         result = self._client.get_object(
@@ -127,6 +150,16 @@ class OSSStorageBackend:
             )
         )
         return result.body.read()
+
+    def open_object(self, *, key: str):
+        """Open an OSS object as a readable stream."""
+        result = self._client.get_object(
+            GetObjectRequest(
+                bucket=self.bucket,
+                key=key,
+            )
+        )
+        return result.body
 
     def delete_object(self, *, key: str) -> None:
         """Delete an object from OSS."""

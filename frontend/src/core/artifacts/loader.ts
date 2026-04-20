@@ -8,16 +8,22 @@ export async function loadArtifactContent({
   filepath,
   threadId,
   isMock,
+  urlOverride,
 }: {
   filepath: string;
   threadId: string;
   isMock?: boolean;
+  urlOverride?: string;
 }) {
-  let enhancedFilepath = filepath;
-  if (filepath.endsWith(".skill")) {
-    enhancedFilepath = filepath + "/SKILL.md";
+  let url = urlOverride;
+  if (!url) {
+    let enhancedFilepath = filepath;
+    if (filepath.endsWith(".skill")) {
+      enhancedFilepath = filepath + "/SKILL.md";
+    }
+    url = urlOfArtifact({ filepath: enhancedFilepath, threadId, isMock });
   }
-  const url = urlOfArtifact({ filepath: enhancedFilepath, threadId, isMock });
+
   const response = await fetch(url);
   const text = await response.text();
   return { content: text, url };

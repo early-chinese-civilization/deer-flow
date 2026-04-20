@@ -212,7 +212,7 @@ FastAPI application on port 8001 with health check at `GET /health`.
 | **MCP** (`/api/mcp`) | `GET /config` - get config; `PUT /config` - update config (saves to extensions_config.json) |
 | **Skills** (`/api/skills`) | `GET /` - list skills; `GET /{name}` - details; `PUT /{name}` - update enabled; `POST /install` - install from .skill archive (accepts standard optional frontmatter like `version`, `author`, `compatibility`) |
 | **Memory** (`/api/memory`) | `GET /` - memory data; `POST /reload` - force reload; `GET /config` - config; `GET /status` - config + data |
-| **Uploads** (`/api/threads/{id}/uploads`) | `POST /` - upload files (auto-converts PDF/PPT/Excel/Word); `GET /list` - list; `DELETE /{filename}` - delete |
+| **Uploads** (`/api/workspaces/{workspace_id}/uploads`) | `POST /` - upload workspace files (auto-converts PDF/PPT/Excel/Word, mirrors into the bound thread when `thread_id` is provided); `GET /list` - list canonical workspace files plus a nested tree; `DELETE /` - delete by JSON body (`filename`, optional `object_key`) |
 | **Threads** (`/api/threads/{id}`) | `DELETE /` - remove DeerFlow-managed local thread data after LangGraph thread deletion; unexpected failures are logged server-side and return a generic 500 detail |
 | **Artifacts** (`/api/threads/{id}/artifacts`) | `GET /{path}` - serve artifacts only after authenticated thread ownership checks; active content types (`text/html`, `application/xhtml+xml`, `image/svg+xml`) are always forced as download attachments to reduce XSS risk; `?download=true` still forces download for other file types |
 | **Suggestions** (`/api/threads/{id}/suggestions`) | `POST /` - generate follow-up questions for an owned thread; rich list/block model content is normalized before JSON parsing |
@@ -477,11 +477,12 @@ When using `make dev` from root, the frontend automatically connects through ngi
 ### File Upload
 
 Multi-file upload with automatic document conversion:
-- Endpoint: `POST /api/threads/{thread_id}/uploads`
+- Endpoints: `POST /api/workspaces/{workspace_id}/uploads`, `GET /api/workspaces/{workspace_id}/uploads/list`, `DELETE /api/workspaces/{workspace_id}/uploads`
 - Supports: PDF, PPT, Excel, Word documents (converted via `markitdown`)
 - Rejects directory inputs before copying so uploads stay all-or-nothing
 - Reuses one conversion worker per request when called from an active event loop
-- Files stored in thread-isolated directories
+- Canonical files are stored under the workspace OSS prefix and still mirrored into the thread uploads directory when `thread_id` is provided
+- Listing returns both a flat file list and a nested directory tree; delete accepts `filename` plus optional `object_key` so same-name files in different folders can be targeted precisely
 - Agent receives uploaded file list via `UploadsMiddleware`
 
 See [docs/FILE_UPLOAD.md](docs/FILE_UPLOAD.md) for details.

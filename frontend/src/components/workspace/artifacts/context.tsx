@@ -11,9 +11,22 @@ import {
 import { useSidebar } from "@/components/ui/sidebar";
 import { env } from "@/env";
 
+export interface ArtifactSource {
+  filepath: string;
+  viewUrl: string;
+}
+
 export interface ArtifactsContextType {
   artifacts: string[];
   setArtifacts: Dispatch<SetStateAction<string[]>>;
+  setArtifactSourcesForThread: (
+    threadId: string,
+    sources: ArtifactSource[],
+  ) => void;
+  getArtifactSource: (
+    threadId: string,
+    filepath: string,
+  ) => ArtifactSource | null;
 
   selectedArtifact: string | null;
   autoSelect: boolean;
@@ -35,6 +48,9 @@ interface ArtifactsProviderProps {
 
 export function ArtifactsProvider({ children }: ArtifactsProviderProps) {
   const [artifacts, setArtifacts] = useState<string[]>([]);
+  const [artifactSourcesByThread, setArtifactSourcesByThread] = useState<
+    Record<string, Record<string, ArtifactSource>>
+  >({});
   const [selectedArtifact, setSelectedArtifact] = useState<string | null>(null);
   const [autoSelect, setAutoSelect] = useState(true);
   const [open, setOpen] = useState(
@@ -62,9 +78,52 @@ export function ArtifactsProvider({ children }: ArtifactsProviderProps) {
     setOpen(false);
   }, []);
 
+  const setArtifactSourcesForThread = useCallback(
+    (threadId: string, sources: ArtifactSource[]) => {
+      const nextSources = Object.fromEntries(
+        sources.map((source) => [source.filepath, source]),
+      );
+
+      setArtifactSourcesByThread((currentSources) => {
+        const currentThreadSources = currentSources[threadId] ?? {};
+        const currentKeys = Object.keys(currentThreadSources);
+        const nextKeys = Object.keys(nextSources);
+        const isUnchanged =
+          currentKeys.length === nextKeys.length &&
+          nextKeys.every((key) => {
+            const currentSource = currentThreadSources[key];
+            const nextSource = nextSources[key];
+            return (
+              currentSource?.filepath === nextSource?.filepath &&
+              currentSource?.viewUrl === nextSource?.viewUrl
+            );
+          });
+
+        if (isUnchanged) {
+          return currentSources;
+        }
+
+        return {
+          ...currentSources,
+          [threadId]: nextSources,
+        };
+      });
+    },
+    [],
+  );
+
+  const getArtifactSource = useCallback(
+    (threadId: string, filepath: string) => {
+      return artifactSourcesByThread[threadId]?.[filepath] ?? null;
+    },
+    [artifactSourcesByThread],
+  );
+
   const value: ArtifactsContextType = {
     artifacts,
     setArtifacts,
+    setArtifactSourcesForThread,
+    getArtifactSource,
 
     open,
     autoOpen,

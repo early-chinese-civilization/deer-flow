@@ -269,6 +269,29 @@ export const enUS: Translations = {
   uploads: {
     uploading: "Uploading...",
     uploadingFiles: "Uploading files, please wait...",
+    deleteSuccess: "File deleted",
+    deleteFailed: "Failed to delete file",
+  },
+
+  artifacts: {
+    previewUnavailable: "Preview unavailable",
+    previewUnavailableDescription: (fileType: string) =>
+      `${fileType} files are not supported for inline preview yet. Download the file to view it locally.`,
+    downloadFile: "Download file",
+  },
+
+  workspaceFiles: {
+    title: "Workspace Files",
+    refresh: "Refresh file list",
+    searchPlaceholder: "Search files",
+    loadFailed: "Failed to load files",
+    noWorkspace: "No workspace available",
+    noWorkspaceDescription:
+      "This thread is not bound to a workspace_id yet, unable to read OSS file list.",
+    noFiles: "No files in workspace",
+    noFilesDescription: "Uploaded files will appear here.",
+    noMatches: "No matching files",
+    noMatchesDescription: "Try adjusting your search keywords.",
   },
 
   subtasks: {

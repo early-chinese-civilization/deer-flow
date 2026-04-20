@@ -1,11 +1,10 @@
 import {
+  AlertCircleIcon,
   Code2Icon,
   CopyIcon,
-  DownloadIcon,
   EyeIcon,
   LoaderIcon,
   PackageIcon,
-  SquareArrowOutUpRightIcon,
   XIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -20,21 +19,27 @@ import {
   ArtifactHeader,
   ArtifactTitle,
 } from "@/components/ai-elements/artifact";
-import { Select, SelectItem } from "@/components/ui/select";
 import {
-  SelectContent,
-  SelectGroup,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { CodeEditor } from "@/components/workspace/code-editor";
+import { getArtifactDisplayMode } from "@/core/artifacts/display";
 import { useArtifactContent } from "@/core/artifacts/hooks";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
 import { installSkill } from "@/core/skills/api";
 import { streamdownPlugins } from "@/core/streamdown";
-import { checkCodeFile, getFileName } from "@/core/utils/files";
+import {
+  checkCodeFile,
+  getFileExtensionDisplayName,
+  getFileName,
+} from "@/core/utils/files";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
 
@@ -54,7 +59,7 @@ export function ArtifactFileDetail({
   threadId: string;
 }) {
   const { t } = useI18n();
-  const { artifacts, deselect, select } = useArtifacts();
+  const { deselect, getArtifactSource } = useArtifacts();
   const isWriteFile = useMemo(() => {
     return filepathFromProps.startsWith("write-file:");
   }, [filepathFromProps]);
@@ -79,20 +84,39 @@ export function ArtifactFileDetail({
     }
     return checkCodeFile(filepath);
   }, [filepath, isWriteFile, isSkillFile]);
+  const displayMode = useMemo(() => {
+    if (isCodeFile) {
+      return language === "html" || language === "markdown"
+        ? "rich-preview"
+        : "code";
+    }
+
+    return getArtifactDisplayMode(filepath);
+  }, [filepath, isCodeFile, language]);
   const isSupportPreview = useMemo(() => {
-    return language === "html" || language === "markdown";
-  }, [language]);
+    return displayMode === "rich-preview";
+  }, [displayMode]);
+  const artifactSource = useMemo(() => {
+    if (isWriteFile) {
+      return null;
+    }
+    return getArtifactSource(threadId, filepath);
+  }, [filepath, getArtifactSource, isWriteFile, threadId]);
+  const { isMock } = useThread();
+  const artifactViewUrl =
+    artifactSource?.viewUrl ??
+    urlOfArtifact({ filepath, threadId, isMock });
   const { content, url } = useArtifactContent({
     threadId,
     filepath: filepathFromProps,
     enabled: isCodeFile && !isWriteFile,
+    urlOverride: artifactSource?.viewUrl,
   });
 
   const displayContent = content ?? "";
 
   const [viewMode, setViewMode] = useState<"code" | "preview">("code");
   const [isInstalling, setIsInstalling] = useState(false);
-  const { isMock } = useThread();
   useEffect(() => {
     if (isSupportPreview) {
       setViewMode("preview");
@@ -130,24 +154,7 @@ export function ArtifactFileDetail({
       <ArtifactHeader className="px-2">
         <div className="flex items-center gap-2">
           <ArtifactTitle>
-            {isWriteFile ? (
-              <div className="px-2">{getFileName(filepath)}</div>
-            ) : (
-              <Select value={filepath} onValueChange={select}>
-                <SelectTrigger className="border-none bg-transparent! shadow-none select-none focus:outline-0 active:outline-0">
-                  <SelectValue placeholder="Select a file" />
-                </SelectTrigger>
-                <SelectContent className="select-none">
-                  <SelectGroup>
-                    {(artifacts ?? []).map((artifactPath) => (
-                      <SelectItem key={artifactPath} value={artifactPath}>
-                        {getFileName(artifactPath)}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            )}
+            <div className="px-2">{getFileName(filepath)}</div>
           </ArtifactTitle>
         </div>
         <div className="flex min-w-0 grow items-center justify-center">
@@ -189,19 +196,6 @@ export function ArtifactFileDetail({
                 />
               </Tooltip>
             )}
-            {!isWriteFile && (
-              <a
-                href={urlOfArtifact({ filepath, threadId })}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <ArtifactAction
-                  icon={SquareArrowOutUpRightIcon}
-                  label={t.common.openInNewWindow}
-                  tooltip={t.common.openInNewWindow}
-                />
-              </a>
-            )}
             {isCodeFile && (
               <ArtifactAction
                 icon={CopyIcon}
@@ -218,19 +212,6 @@ export function ArtifactFileDetail({
                 }}
                 tooltip={t.clipboard.copyToClipboard}
               />
-            )}
-            {!isWriteFile && (
-              <a
-                href={urlOfArtifact({ filepath, threadId, download: true })}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <ArtifactAction
-                  icon={DownloadIcon}
-                  label={t.common.download}
-                  tooltip={t.common.download}
-                />
-              </a>
             )}
             <ArtifactAction
               icon={XIcon}
@@ -259,14 +240,42 @@ export function ArtifactFileDetail({
             readonly
           />
         )}
-        {!isCodeFile && (
+        {displayMode === "iframe-preview" && (
           <iframe
             className="size-full"
-            src={urlOfArtifact({ filepath, threadId, isMock })}
+            src={artifactViewUrl}
+          />
+        )}
+        {displayMode === "unsupported-preview" && (
+          <ArtifactUnsupportedPreview
+            fileType={getFileExtensionDisplayName(filepath)}
           />
         )}
       </ArtifactContent>
     </Artifact>
+  );
+}
+
+function ArtifactUnsupportedPreview({
+  fileType,
+}: {
+  fileType: string;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <Empty className="border-0 rounded-none">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <AlertCircleIcon />
+        </EmptyMedia>
+        <EmptyTitle>{t.artifacts.previewUnavailable}</EmptyTitle>
+        <EmptyDescription>
+          {t.artifacts.previewUnavailableDescription(fileType)}
+        </EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent />
+    </Empty>
   );
 }
 

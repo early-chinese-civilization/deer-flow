@@ -1,8 +1,17 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircleIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import {
+  AlertCircleIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  DownloadIcon,
+  FolderIcon,
+  RefreshCwIcon,
+  SearchIcon,
+} from "lucide-react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -12,8 +21,15 @@ import {
 } from "@/components/ui/input-group";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { urlOfArtifact } from "@/core/artifacts/utils";
+import { useI18n } from "@/core/i18n/hooks";
 import { getThread } from "@/core/threads/api";
-import { listUploadedFiles, type UploadedFileInfo } from "@/core/uploads";
+import {
+  downloadUploadedFile,
+  listUploadedFiles,
+  type FileTreeNode,
+  type UploadedFileInfo,
+} from "@/core/uploads";
 import { getFileIcon } from "@/core/utils/files";
 import { cn } from "@/lib/utils";
 
@@ -83,23 +99,128 @@ function WorkspaceFilesEmpty({
   );
 }
 
+function WorkspaceDirectoryNode({
+  node,
+  selectedFile,
+  downloadLabel,
+  onFileSelect,
+  onFileDownload,
+  threadId,
+}: {
+  node: FileTreeNode;
+  selectedFile: string | null;
+  downloadLabel: string;
+  onFileSelect: (file: UploadedFileInfo) => void;
+  onFileDownload: (file: UploadedFileInfo, downloadHref: string) => void;
+  threadId: string;
+}) {
+  const [isExpanded, setIsExpanded] = useState(true);
+
+  return (
+    <div className="space-y-1">
+      <button
+        type="button"
+        className="hover:bg-accent/50 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        {isExpanded ? (
+          <ChevronDownIcon className="text-muted-foreground size-4 shrink-0" />
+        ) : (
+          <ChevronRightIcon className="text-muted-foreground size-4 shrink-0" />
+        )}
+        <FolderIcon className="text-muted-foreground size-4 shrink-0" />
+        <span className="text-foreground text-sm font-medium">{node.name}</span>
+      </button>
+      {isExpanded && node.children && (
+        <div className="ml-4 space-y-1">
+          {node.children.map((child) =>
+            child.type === "directory" ? (
+              <WorkspaceDirectoryNode
+                key={child.path}
+                node={child}
+                selectedFile={selectedFile}
+                downloadLabel={downloadLabel}
+                onFileSelect={onFileSelect}
+                onFileDownload={onFileDownload}
+                threadId={threadId}
+              />
+            ) : (
+              <WorkspaceFileRow
+                key={child.object_key}
+                file={{
+                  filename: child.filename!,
+                  size: child.size!,
+                  path: child.path,
+                  virtual_path: child.virtual_path!,
+                  relative_path: child.path,
+                  artifact_url: child.artifact_url!,
+                  object_key: child.object_key!,
+                  signed_url: child.signed_url,
+                  extension: child.extension,
+                  modified: child.modified,
+                  markdown_file: child.markdown_file,
+                  markdown_path: child.markdown_path,
+                  markdown_virtual_path: child.markdown_virtual_path,
+                  markdown_artifact_url: child.markdown_artifact_url,
+                  markdown_object_key: child.markdown_object_key,
+                  markdown_signed_url: child.markdown_signed_url,
+                }}
+                downloadHref={
+                  child.artifact_url
+                    ? `${child.artifact_url}${child.artifact_url.includes("?") ? "&" : "?"}download=true`
+                    : urlOfArtifact({
+                        filepath: child.virtual_path!,
+                        threadId,
+                        download: true,
+                      })
+                }
+                downloadLabel={downloadLabel}
+                selected={selectedFile === child.object_key}
+                onDownload={onFileDownload}
+                onSelect={onFileSelect}
+              />
+            ),
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WorkspaceFileRow({
   file,
+  downloadHref,
+  downloadLabel,
   selected,
+  onDownload,
   onSelect,
 }: {
   file: UploadedFileInfo;
+  downloadHref: string;
+  downloadLabel: string;
   selected: boolean;
+  onDownload: (file: UploadedFileInfo, downloadHref: string) => void;
   onSelect: (file: UploadedFileInfo) => void;
 }) {
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    onSelect(file);
+  };
+
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       className={cn(
-        "border-border/50 hover:bg-accent/70 flex w-full items-start gap-3 rounded-lg border px-3 py-3 text-left transition-colors",
+        "border-border/50 hover:bg-accent/70 focus-visible:ring-ring/50 flex w-full items-start gap-3 rounded-lg border px-3 py-3 text-left transition-colors focus-visible:ring-[3px] focus-visible:outline-none",
         selected && "bg-accent border-border",
       )}
       onClick={() => onSelect(file)}
+      onKeyDown={handleKeyDown}
     >
       <span className="text-muted-foreground mt-0.5 shrink-0">
         {getFileIcon(file.filename, "size-4")}
@@ -113,7 +234,24 @@ function WorkspaceFileRow({
           <span>{formatModifiedTime(file.modified)}</span>
         </span>
       </span>
-    </button>
+      <div className="flex shrink-0 items-center gap-1">
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          title={downloadLabel}
+          aria-label={downloadLabel}
+          onClick={(event) => {
+            event.stopPropagation();
+            onDownload(file, downloadHref);
+          }}
+        >
+          <span aria-hidden="true">
+            <DownloadIcon className="size-4" />
+          </span>
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -126,11 +264,13 @@ export function WorkspaceFilesPanel({
 }) {
   const [query, setQuery] = useState("");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const { t } = useI18n();
   const {
     deselect,
     open: artifactsOpen,
     select: selectArtifact,
     selectedArtifact,
+    setArtifactSourcesForThread,
     setArtifacts,
     setOpen: setArtifactsOpen,
   } = useArtifacts();
@@ -144,10 +284,27 @@ export function WorkspaceFilesPanel({
   const workspaceId = threadQuery.data?.workspace_id;
 
   const filesQuery = useQuery({
-    queryKey: ["uploads", "list", workspaceId, threadId],
-    queryFn: () => listUploadedFiles(workspaceId!, { threadId }),
+    queryKey: ["uploads", "list", workspaceId],
+    queryFn: () => listUploadedFiles(workspaceId!),
     enabled: Boolean(workspaceId),
   });
+
+  const workspaceArtifactSources = useMemo(() => {
+    const files = filesQuery.data?.files ?? [];
+    return files
+      .filter((file) => file.artifact_url)
+      .map((file) => {
+        const viewUrl = file.artifact_url!;
+        return {
+          filepath: file.virtual_path,
+          viewUrl,
+        };
+      });
+  }, [filesQuery.data?.files]);
+
+  useEffect(() => {
+    setArtifactSourcesForThread(threadId, workspaceArtifactSources);
+  }, [setArtifactSourcesForThread, threadId, workspaceArtifactSources]);
 
   useEffect(() => {
     const files = filesQuery.data?.files ?? [];
@@ -185,17 +342,45 @@ export function WorkspaceFilesPanel({
     }
   }, [filesQuery.data?.files, selectedFile]);
 
-  const filteredFiles = useMemo(() => {
-    const files = filesQuery.data?.files ?? [];
+  const filteredTree = useMemo(() => {
+    const tree = filesQuery.data?.tree ?? [];
     const normalizedQuery = query.trim().toLocaleLowerCase();
+
     if (!normalizedQuery) {
-      return files;
+      return tree;
     }
 
-    return files.filter((file) =>
-      file.filename.toLocaleLowerCase().includes(normalizedQuery),
-    );
-  }, [filesQuery.data?.files, query]);
+    // Filter tree to only show directories and files that match the search
+    const filterNode = (node: FileTreeNode): FileTreeNode | null => {
+      if (node.type === "file") {
+        // Check if file matches search
+        if (node.filename?.toLocaleLowerCase().includes(normalizedQuery)) {
+          return node;
+        }
+        return null;
+      }
+
+      // For directories, recursively filter children
+      if (node.children) {
+        const filteredChildren = node.children
+          .map(filterNode)
+          .filter((child): child is FileTreeNode => child !== null);
+
+        if (filteredChildren.length > 0) {
+          return {
+            ...node,
+            children: filteredChildren,
+          };
+        }
+      }
+
+      return null;
+    };
+
+    return tree
+      .map(filterNode)
+      .filter((node): node is FileTreeNode => node !== null);
+  }, [filesQuery.data?.tree, query]);
 
   const isLoading =
     threadQuery.isLoading || (Boolean(workspaceId) && filesQuery.isLoading);
@@ -235,6 +420,12 @@ export function WorkspaceFilesPanel({
     setArtifactsOpen(true);
   };
 
+  const handleFileDownload = (file: UploadedFileInfo, downloadHref: string) => {
+    void downloadUploadedFile(downloadHref, file.filename).catch((error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to download file");
+    });
+  };
+
   return (
     <aside
       className={cn(
@@ -245,13 +436,13 @@ export function WorkspaceFilesPanel({
       <div className="border-border/60 flex shrink-0 flex-col gap-3 border-b px-4 py-4">
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-sm font-semibold">工作区文件列表</h2>
+            <h2 className="truncate text-sm font-semibold">{t.workspaceFiles.title}</h2>
           </div>
           <Button
             size="icon-sm"
             variant="ghost"
-            title="刷新文件列表"
-            aria-label="刷新文件列表"
+            title={t.workspaceFiles.refresh}
+            aria-label={t.workspaceFiles.refresh}
             disabled={isRefreshing}
             onClick={handleRefresh}
           >
@@ -266,8 +457,8 @@ export function WorkspaceFilesPanel({
           </InputGroupAddon>
           <InputGroupInput
             value={query}
-            placeholder="搜索文件"
-            aria-label="搜索文件"
+            placeholder={t.workspaceFiles.searchPlaceholder}
+            aria-label={t.workspaceFiles.searchPlaceholder}
             onChange={(event) => setQuery(event.target.value)}
           />
         </InputGroup>
@@ -279,36 +470,76 @@ export function WorkspaceFilesPanel({
             <WorkspaceFilesLoading />
           ) : errorMessage ? (
             <WorkspaceFilesEmpty
-              title="加载文件失败"
+              title={t.workspaceFiles.loadFailed}
               description={errorMessage}
             />
           ) : !workspaceId ? (
             <WorkspaceFilesEmpty
-              title="当前没有工作区"
-              description="该会话还没有绑定 workspace_id，暂时无法读取 OSS 文件列表。"
+              title={t.workspaceFiles.noWorkspace}
+              description={t.workspaceFiles.noWorkspaceDescription}
             />
-          ) : filteredFiles.length > 0 ? (
+          ) : filteredTree.length > 0 ? (
             <div className="space-y-2 pr-2">
-              {filteredFiles.map((file) => (
-                <WorkspaceFileRow
-                  key={file.object_key}
-                  file={file}
-                  selected={selectedFile === file.object_key}
-                  onSelect={handleFileSelect}
-                />
-              ))}
+              {filteredTree.map((node) =>
+                node.type === "directory" ? (
+                  <WorkspaceDirectoryNode
+                    key={node.path}
+                    node={node}
+                    selectedFile={selectedFile}
+                    downloadLabel={t.common.download}
+                    onFileSelect={handleFileSelect}
+                    onFileDownload={handleFileDownload}
+                    threadId={threadId}
+                  />
+                ) : (
+                  <WorkspaceFileRow
+                    key={node.object_key}
+                    file={{
+                      filename: node.filename!,
+                      size: node.size!,
+                      path: node.path,
+                      virtual_path: node.virtual_path!,
+                      relative_path: node.path,
+                      artifact_url: node.artifact_url!,
+                      object_key: node.object_key!,
+                      signed_url: node.signed_url,
+                      extension: node.extension,
+                      modified: node.modified,
+                      markdown_file: node.markdown_file,
+                      markdown_path: node.markdown_path,
+                      markdown_virtual_path: node.markdown_virtual_path,
+                      markdown_artifact_url: node.markdown_artifact_url,
+                      markdown_object_key: node.markdown_object_key,
+                      markdown_signed_url: node.markdown_signed_url,
+                    }}
+                    downloadHref={
+                      node.artifact_url
+                        ? `${node.artifact_url}${node.artifact_url.includes("?") ? "&" : "?"}download=true`
+                        : urlOfArtifact({
+                            filepath: node.virtual_path!,
+                            threadId,
+                            download: true,
+                          })
+                    }
+                    downloadLabel={t.common.download}
+                    selected={selectedFile === node.object_key}
+                    onDownload={handleFileDownload}
+                    onSelect={handleFileSelect}
+                  />
+                ),
+              )}
             </div>
           ) : (
             <WorkspaceFilesEmpty
               title={
                 (filesQuery.data?.files.length ?? 0) > 0
-                  ? "没有匹配的文件"
-                  : "工作区中还没有文件"
+                  ? t.workspaceFiles.noMatches
+                  : t.workspaceFiles.noFiles
               }
               description={
                 (filesQuery.data?.files.length ?? 0) > 0
-                  ? "试试调整搜索关键词。"
-                  : "上传文件后会在这里显示。"
+                  ? t.workspaceFiles.noMatchesDescription
+                  : t.workspaceFiles.noFilesDescription
               }
             />
           )}

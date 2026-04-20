@@ -13,8 +13,12 @@ import { useI18n } from "../i18n/hooks";
 import type { FileInMessage } from "../messages/utils";
 import type { LocalSettings } from "../settings";
 import { useUpdateSubtask } from "../tasks/context";
-import type { UploadedFileInfo } from "../uploads";
-import { uploadFiles } from "../uploads";
+import {
+  type ListFilesResponse,
+  type UploadedFileInfo,
+  uploadFiles,
+} from "../uploads";
+import { addUploadedFilesToList } from "../uploads/cache";
 
 import { ensureThread } from "./api";
 import type { AgentThread, AgentThreadState } from "./types";
@@ -323,10 +327,17 @@ export function useThreadStream({
                 throw new Error("Thread workspace is not ready for file upload.");
               }
 
-              const uploadResponse = await uploadFiles(workspaceId, files, {
-                threadId,
-              });
+              const uploadResponse = await uploadFiles(workspaceId, files);
               uploadedFileInfo = uploadResponse.files;
+
+              queryClient.setQueriesData<ListFilesResponse | undefined>(
+                { queryKey: ["uploads", "list", workspaceId] },
+                (current) =>
+                  addUploadedFilesToList(current, uploadResponse.files),
+              );
+              void queryClient.invalidateQueries({
+                queryKey: ["uploads", "list", workspaceId],
+              });
 
               // Update optimistic human message with uploaded status + paths
               const uploadedFiles: FileInMessage[] = uploadedFileInfo.map(
