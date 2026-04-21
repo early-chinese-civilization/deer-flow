@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import os
 
-from ecc_auth import init_dependencies
+from ecc_auth import create_auth_router, init_dependencies
 from ecc_auth.config import KeycloakConfig
 from ecc_auth.identity import AuthIdentity
-from ecc_auth.routes import create_auth_router as create_shared_auth_router
 from fastapi import APIRouter
 
 from app.gateway.auth.service import build_current_user_payload, sync_local_user_from_identity
@@ -53,7 +52,7 @@ def create_gateway_auth_router(config: KeycloakConfig | None = None) -> APIRoute
 
     router = APIRouter(prefix="/api/auth", tags=["auth"])
     router.include_router(
-        create_shared_auth_router(
+        create_auth_router(
             resolved_config,
             on_user_authenticated=_on_user_authenticated,
             load_current_user=_load_current_user,

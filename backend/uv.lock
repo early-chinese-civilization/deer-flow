@@ -773,7 +773,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.13.0" },
     { name = "cryptography", specifier = ">=42.0.0" },
     { name = "deerflow-harness", editable = "packages/harness" },
-    { name = "ecc-auth", specifier = ">=0.1.0" },
+    { name = "ecc-auth", editable = "../../ecc_auth/packages/python" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "itsdangerous", specifier = ">=2.1.0" },
@@ -947,7 +947,7 @@ wheels = [
 [[package]]
 name = "ecc-auth"
 version = "0.1.0"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../../ecc_auth/packages/python" }
 dependencies = [
     { name = "authlib" },
     { name = "fastapi" },
@@ -955,10 +955,19 @@ dependencies = [
     { name = "pyjwt", extra = ["crypto"] },
     { name = "starlette" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d2/f0/0747b8244e1a2da35404adc2b06e968a83d9a60727a27767812f41a6358b/ecc_auth-0.1.0.tar.gz", hash = "sha256:1262413b23b47c16657df8b369c4ebd412f4b0c9bf2e263e5593add2c1cd1eb1", size = 11345, upload-time = "2026-04-14T17:50:34.272Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/56/86/75619306cb687593d1c1c42ef8a6d7092bf4b1a83f5d3801d890a6fb60ab/ecc_auth-0.1.0-py3-none-any.whl", hash = "sha256:e5e77050452af61e7e80a0f74eea9b3885eaebabf193295699173c7bfa97bde7", size = 12941, upload-time = "2026-04-14T17:50:32.068Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "authlib", specifier = ">=1.6" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
+    { name = "starlette", specifier = ">=0.40" },
+    { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.34" },
 ]
+provides-extras = ["dev"]
 
 [[package]]
 name = "ecdsa"

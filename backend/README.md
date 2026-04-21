@@ -115,7 +115,7 @@ FastAPI application providing REST endpoints for frontend integration:
 
 | Route | Purpose |
 |-------|---------|
-| `GET/POST /api/auth/*` | Shared Keycloak auth flow via `ecc-auth` (`/login`, `/callback`, `/me`, `/refresh`, `/logout`); the router is built after config/.env loading, `/me` and request auth use JWKS-first verification, explicit logout sets `kc_logout_marker` so refresh does not silently restore the session, and the old handwritten Keycloak/PCKE cookie helpers have been removed from the runtime path |
+| `GET/POST /api/auth/*` | Shared Keycloak auth flow via `ecc-auth` (`/login`, `/callback`, `/me`, `/refresh`, `/logout`); the router is built after config/.env loading, `/me` and request auth use JWKS-first verification, explicit logout sets `kc_logout_marker` so refresh does not silently restore the session, the backend workspace resolves `ecc-auth` from the sibling checkout for local auth integration work, and the old handwritten Keycloak/PCKE cookie helpers have been removed from the runtime path |
 | `GET /api/models` | List available LLM models |
 | `GET/PUT /api/mcp/config` | Manage MCP server configurations |
 | `GET/PUT /api/skills` | List and manage skills |
@@ -130,7 +130,9 @@ FastAPI application providing REST endpoints for frontend integration:
 | `DELETE /api/threads/{id}` | Delete DeerFlow-managed local thread data after LangGraph thread deletion; unexpected failures are logged server-side and return a generic 500 detail |
 | `GET /api/threads/{id}/artifacts/{path}` | Serve generated artifacts, but only after authenticated thread ownership checks |
 | `POST /api/threads/{id}/suggestions` | Generate follow-up suggestions for an owned thread; request body content does not bypass `thread_id` authorization |
-| `POST /api/runs/{stream,wait}` | Authenticated stateless runs; reusing `thread_id` requires ownership and missing `thread_id` creates a user-bound temporary thread first, then cleans up its thread/workspace/checkpoint/store resources on completion by default |
+| `POST /api/runs/{stream,wait}` | Authenticated stateless runs; reusing `thread_id` requires ownership and missing `thread_id` creates a user-bound temporary thread first, then cleans up its thread/workspace/checkpoint/store resources on completion by default. Gateway-backed runs overwrite protected runtime context (`thread_id`, user identity, and custom `agent_name`) from server-side auth/ownership state before invoking the agent |
+
+Shared auth-protected routes install the `ecc-auth` auth-session middleware, so dependency-driven refresh can rotate cookies even when the endpoint returns a custom `JSONResponse`, `StreamingResponse`, or file download.
 
 ### IM Channels
 
