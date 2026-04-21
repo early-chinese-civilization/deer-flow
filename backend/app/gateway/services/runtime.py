@@ -9,7 +9,7 @@ import re
 from typing import Any
 
 from fastapi import HTTPException, Request
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import convert_to_messages
 
 from app.gateway.db.engine import get_db_session
 from app.gateway.db.repository import ThreadRepository
@@ -105,19 +105,7 @@ def normalize_input(raw_input: dict[str, Any] | None) -> dict[str, Any]:
     if not messages or not isinstance(messages, list):
         return raw_input
 
-    converted = []
-    for message in messages:
-        if isinstance(message, dict):
-            role = message.get("role", message.get("type", "user"))
-            content = message.get("content", "")
-            if role in ("user", "human"):
-                converted.append(HumanMessage(content=content))
-            else:
-                converted.append(HumanMessage(content=content))
-            continue
-        converted.append(message)
-
-    return {**raw_input, "messages": converted}
+    return {**raw_input, "messages": convert_to_messages(messages)}
 
 
 def resolve_agent_factory(assistant_id: str | None):
