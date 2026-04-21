@@ -76,50 +76,59 @@ sequenceDiagram
 
 ---
 
-## 3. 上传文件到工作区(客户端直传 OSS)
+## 3. 上传文件到工作区(写入 OSS)
 
 ```mermaid
 sequenceDiagram
     participant Client as 客户端
     participant Gateway as Gateway API
+    participant FlowDB as flow 数据库
     participant OSS as 对象存储
-    participant DB as flow 数据库
     
-    Client->>Gateway: POST /api/workspaces/{workspace_id}/uploads/initiate<br/>{filename, content_type, size}
+    Client->>Gateway: POST /api/workspaces/{workspace_id}/uploads<br/>multipart/form-data(files[])
     Gateway->>Gateway: 验证用户权限
-    
-    Gateway->>DB: 查询 workspace<br/>验证所有权 (user_id)，获取 file_path
-    DB-->>Gateway: 返回 workspace 信息 (含 file_path)
-    
+
+    Gateway->>FlowDB: 查询 workspace<br/>验证所有权 (user_id)
+    FlowDB-->>Gateway: 返回 workspace 信息 (含 file_path)
+
     alt workspace.file_path 为空
-        Gateway->>DB: 初始化 workspace.file_path<br/>workspaces/{workspace_id}/
-        DB-->>Gateway: 更新成功
+        Gateway->>FlowDB: 初始化 workspace.file_path<br/>workspaces/{workspace_id}
+        FlowDB-->>Gateway: 更新成功
     end
-    
-    Gateway-->>Client: 返回上传会话<br/>{object_key, upload_url, method, headers, expires_at}
-    
-    Client->>OSS: 直传文件对象<br/>路径: workspaces/{workspace_id}/{filename}
-    OSS-->>Client: 上传成功
-    
-    loop 前端轮询
-        Client->>Gateway: GET /api/workspaces/{workspace_id}/uploads/list
-        Gateway->>OSS: 按 workspace.file_path 枚举对象
-        OSS-->>Gateway: 返回文件列表
-        Gateway-->>Client: 返回文件列表
+
+    loop 并行处理每个文件
+        Gateway->>Gateway: 规范化文件名并判断是否需要转换
+        alt PDF / PPT / Excel / Word 等可转换文件
+            Gateway->>OSS: 上传源文件<br/>key: workspaces/{workspace_id}/uploads/{filename}
+            OSS-->>Gateway: 上传成功
+            Gateway->>Gateway: 转换为 Markdown
+            alt 转换成功
+                Gateway->>OSS: 上传 Markdown 伴生文件<br/>key: workspaces/{workspace_id}/uploads/{filename_without_ext}.md
+                OSS-->>Gateway: 上传成功
+            end
+        else 普通文件
+            Gateway->>OSS: 流式上传源文件<br/>key: workspaces/{workspace_id}/uploads/{filename}
+            OSS-->>Gateway: 上传成功
+        end
+        Gateway->>Gateway: 构造文件响应<br/>artifact_url + signed_url + object_key
     end
+
+    Gateway-->>Client: 返回上传结果<br/>{success, files, message}
 ```
 
 **关键点**:
-- 主上传入口: `POST /api/workspaces/{workspace_id}/uploads/initiate`
+- 主上传入口: `POST /api/workspaces/{workspace_id}/uploads`
 - 文件列表查询: `GET /api/workspaces/{workspace_id}/uploads/list`
-- 文件主存储在 OSS,Gateway 只负责鉴权和签发上传会话,不再代理文件字节流
+- 用户文件 canonical key 位于 `workspaces/{workspace_id}/uploads/...`
+- Gateway 接收文件后写入 OSS,不再使用 `/uploads/initiate` 上传会话
 - `workspaces.file_path` 存储 workspace 的 OSS 根前缀
-- 第一版取消 PDF/Office 自动转 Markdown
-- Docker 容器通过挂载后的对象存储目录继续提供 `/mnt/user-data/uploads/...` 访问语义
+- PDF / PPT / Excel / Word 等可转换文件会额外生成 Markdown 伴生文件
+- 上传响应会同时返回 `artifact_url`（稳定代理）和 `signed_url`（短期直链）
+- `path` / `virtual_path` 继续提供 `/mnt/user-data/uploads/...` 的访问语义
 
 ---
 
-## 4. 查询工作区文件列表(OSS)
+## 4. 查询工作区文件列表与稳定访问(OSS)
 
 ```mermaid
 sequenceDiagram
@@ -130,45 +139,45 @@ sequenceDiagram
     
     Client->>Gateway: GET /api/workspaces/{workspace_id}/uploads/list
     Gateway->>Gateway: 验证用户权限
-    
-    Gateway->>FlowDB: 查询线程及关联的 workspace<br/>验证所有权 (user_id)
-    FlowDB-->>Gateway: 返回 workspace.file_path<br/>
-    
-    Gateway->>OSS: 列举对象<br/>prefix: workspaces/{workspace_id}/
-    OSS-->>Gateway: 返回文件列表<br/>[{key, size, last_modified, etag}]
-    
-    Gateway->>Gateway: 为每个文件生成签名 URL<br/>(有效期 1 小时)
-    
-    Gateway-->>Client: 返回文件列表<br/>[{filename, size, url, modified_at}]
-    
-    Note over Client: 客户端使用签名 URL 访问文件
-    
-    alt 签名 URL 过期 (1 小时后)
-        Client->>OSS: 使用过期的签名 URL 访问文件
-        OSS-->>Client: 403 Forbidden (签名已过期)
-        
-        Client->>Gateway: POST /api/workspaces/{workspace_id}/files/url<br/>{filename: "文档.pdf"}
-        Gateway->>Gateway: 验证用户权限
-        Gateway->>FlowDB: 验证文件所有权
-        FlowDB-->>Gateway: 返回 workspace.file_path
-        Gateway->>Gateway: 生成新的签名 URL
-        Gateway-->>Client: 返回新的签名 URL<br/>{url, expires_at}
-        
-        Client->>OSS: 使用新的签名 URL 访问文件
-        OSS-->>Client: 200 OK (返回文件内容)
+
+    Gateway->>FlowDB: 查询 workspace<br/>验证所有权 (user_id)
+    FlowDB-->>Gateway: 返回 workspace.file_path
+
+    alt workspace.file_path 为空
+        Gateway->>FlowDB: 初始化 workspace.file_path<br/>workspaces/{workspace_id}
+        FlowDB-->>Gateway: 更新成功
     end
+
+    Gateway->>OSS: 列举对象<br/>prefix: workspaces/{workspace_id}/
+    OSS-->>Gateway: 返回对象列表<br/>[{key, size, last_modified}]
+
+    loop 构造 canonical 文件列表
+        Gateway->>Gateway: 折叠 Markdown 伴生文件并构建 tree
+        Gateway->>Gateway: 生成 artifact_url<br/>/api/workspaces/{workspace_id}/uploads/content?object_key=...
+        Gateway->>Gateway: 生成 signed_url<br/>(短期有效,仅作辅助字段)
+    end
+
+    Gateway-->>Client: 返回文件列表<br/>{root_label, root_path, files, tree, count}
+
+    Note over Client: 长期访问使用 artifact_url / markdown_artifact_url
+
+    Client->>Gateway: GET /api/workspaces/{workspace_id}/uploads/content?object_key=...&download=false
+    Gateway->>Gateway: 校验 workspace 所有权<br/>校验 object_key 属于当前 workspace
+    Gateway->>OSS: get_object(key)
+    OSS-->>Gateway: 返回对象流
+    Gateway-->>Client: StreamingResponse(文件内容)
 ```
 
 **关键点**:
-- 列表接口: `GET /api/workspaces/{workspace_id}/files`
-- 单文件 URL 刷新接口: `POST /api/workspaces/{workspace_id}/files/url`,请求体: `{filename: "文件名.pdf"}`
-- 使用 POST 请求可避免 URL 中中文文件名的编码问题
+- 列表接口: `GET /api/workspaces/{workspace_id}/uploads/list`
+- 稳定内容代理接口: `GET /api/workspaces/{workspace_id}/uploads/content?object_key=...&download=true|false`
 - `workspace.file_path` 存储 workspace 在 OSS 中的根目录前缀,如 `workspaces/{workspace_id}/`
 - 通过该前缀列举 OSS 中的所有文件
-- 返回每个文件的签名 URL,客户端可直接访问
-- 签名 URL 默认有效期 1 小时,过期后调用单文件接口刷新该文件的签名 URL
-- 客户端收到 403 错误时,只需刷新对应文件的 URL,无需重新获取整个列表
-- 文件元数据包含:文件名、大小、修改时间、访问 URL
+- 列表返回 `files + tree + count`,文件元数据包含 `object_key`、`artifact_url`、可选 `signed_url`
+- `artifact_url` / `markdown_artifact_url` 是稳定后端代理地址,不依赖 OSS 预签名 URL 的过期时间
+- `signed_url` / `markdown_signed_url` 仍可返回,但只适合短期直连 OSS
+- 自动生成的 Markdown 伴生文件会折叠到源文件条目上,通过 `markdown_*` 字段返回
+- Gateway 在代理读取文件前会校验 `object_key` 必须属于当前 workspace
 
 ---
 
