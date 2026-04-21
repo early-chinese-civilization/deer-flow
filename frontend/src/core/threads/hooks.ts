@@ -2,7 +2,7 @@ import type { AIMessage, Message } from "@langchain/langgraph-sdk";
 import type { ThreadsClient } from "@langchain/langgraph-sdk/client";
 import { useStream } from "@langchain/langgraph-sdk/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
@@ -21,6 +21,10 @@ import {
 import { addUploadedFilesToList } from "../uploads/cache";
 
 import { ensureThread } from "./api";
+import {
+  applyPendingUploadedFiles,
+  type PendingUploadedFiles,
+} from "./message-attachments";
 import type { AgentThread, AgentThreadState } from "./types";
 
 export type ToolEndEvent = {
@@ -203,27 +207,47 @@ export function useThreadStream({
 
   // Optimistic messages shown before the server stream responds
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
+  const [pendingUploadedFiles, setPendingUploadedFiles] =
+    useState<PendingUploadedFiles | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const sendInFlightRef = useRef(false);
   // Track message count before sending so we know when server has responded
   const prevMsgCountRef = useRef(thread.messages.length);
 
-  // Clear optimistic when server messages arrive (count increases)
+  const pendingFilesResult = useMemo(
+    () => applyPendingUploadedFiles(thread.messages, pendingUploadedFiles),
+    [pendingUploadedFiles, thread.messages],
+  );
+
+  // Clear optimistic once the server-side human turn exists in the stream.
   useEffect(() => {
-    if (
-      optimisticMessages.length > 0 &&
-      thread.messages.length > prevMsgCountRef.current
-    ) {
+    const hasServerResponse =
+      pendingUploadedFiles !== null
+        ? pendingFilesResult.hasServerHumanMessage
+        : thread.messages.length > prevMsgCountRef.current;
+
+    if (optimisticMessages.length > 0 && hasServerResponse) {
       setOptimisticMessages([]);
     }
-  }, [thread.messages.length, optimisticMessages.length]);
+  }, [
+    optimisticMessages.length,
+    pendingFilesResult.hasServerHumanMessage,
+    pendingUploadedFiles,
+    thread.messages.length,
+  ]);
+
+  useEffect(() => {
+    if (pendingUploadedFiles && pendingFilesResult.hasPersistedFiles) {
+      setPendingUploadedFiles(null);
+    }
+  }, [pendingFilesResult.hasPersistedFiles, pendingUploadedFiles]);
 
   const sendMessage = useCallback(
     async (
       threadId: string,
       message: PromptInputMessage,
       extraContext?: Record<string, unknown>,
-    ) => {
+    ): Promise<void> => {
       if (sendInFlightRef.current) {
         return;
       }
@@ -269,13 +293,16 @@ export function useThreadStream({
       let uploadedFileInfo: UploadedFileInfo[] = [];
       const shouldEnsureThread =
         !threadIdRef.current || Boolean(message.files?.length);
-      let ensuredThread:
-        | Awaited<ReturnType<typeof ensureThread>>
-        | undefined = undefined;
+      let ensuredThread: Awaited<ReturnType<typeof ensureThread>> | undefined =
+        undefined;
 
       try {
         if (shouldEnsureThread) {
           ensuredThread = await ensureThread(threadId);
+          queryClient.setQueryData(
+            ["threads", "detail", threadId],
+            ensuredThread,
+          );
         }
 
         // Upload files first if any
@@ -324,7 +351,9 @@ export function useThreadStream({
             if (files.length > 0) {
               const workspaceId = ensuredThread?.workspace_id;
               if (!workspaceId) {
-                throw new Error("Thread workspace is not ready for file upload.");
+                throw new Error(
+                  "Thread workspace is not ready for file upload.",
+                );
               }
 
               const uploadResponse = await uploadFiles(workspaceId, files);
@@ -386,6 +415,15 @@ export function useThreadStream({
           }),
         );
 
+        setPendingUploadedFiles(
+          filesForSubmit.length > 0
+            ? {
+                fromIndex: prevMsgCountRef.current,
+                files: filesForSubmit,
+              }
+            : null,
+        );
+
         await thread.submit(
           {
             messages: [
@@ -431,6 +469,7 @@ export function useThreadStream({
         void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
       } catch (error) {
         setOptimisticMessages([]);
+        setPendingUploadedFiles(null);
         setIsUploading(false);
         throw error;
       } finally {
@@ -441,13 +480,19 @@ export function useThreadStream({
   );
 
   // Merge thread with optimistic messages for display
-  const mergedThread =
-    optimisticMessages.length > 0
-      ? ({
-          ...thread,
-          messages: [...thread.messages, ...optimisticMessages],
-        } as typeof thread)
-      : thread;
+  const shouldAppendOptimisticMessages =
+    optimisticMessages.length > 0 &&
+    (!pendingUploadedFiles || !pendingFilesResult.hasServerHumanMessage);
+
+  const mergedThread = shouldAppendOptimisticMessages
+    ? ({
+        ...thread,
+        messages: [...pendingFilesResult.messages, ...optimisticMessages],
+      } as typeof thread)
+    : ({
+        ...thread,
+        messages: pendingFilesResult.messages,
+      } as typeof thread);
 
   return [mergedThread, sendMessage, isUploading] as const;
 }
