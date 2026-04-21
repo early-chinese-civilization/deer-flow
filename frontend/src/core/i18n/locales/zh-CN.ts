@@ -297,6 +297,7 @@ export const zhCN: Translations = {
 
   workspaceFiles: {
     title: "工作区文件列表",
+    files: "文件",
     refresh: "刷新文件列表",
     searchPlaceholder: "搜索文件",
     loadFailed: "加载文件失败",

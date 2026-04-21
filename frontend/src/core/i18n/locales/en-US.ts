@@ -315,6 +315,7 @@ export const enUS: Translations = {
 
   workspaceFiles: {
     title: "Workspace Files",
+    files: "Files",
     refresh: "Refresh file list",
     searchPlaceholder: "Search files",
     loadFailed: "Failed to load files",

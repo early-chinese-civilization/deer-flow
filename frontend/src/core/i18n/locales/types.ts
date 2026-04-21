@@ -246,6 +246,7 @@ export interface Translations {
   // Workspace Files
   workspaceFiles: {
     title: string;
+    files: string;
     refresh: string;
     searchPlaceholder: string;
     loadFailed: string;
