@@ -267,14 +267,6 @@ export interface Translations {
     failed: string;
   };
 
-  // Token Usage
-  tokenUsage: {
-    title: string;
-    input: string;
-    output: string;
-    total: string;
-  };
-
   // Shortcuts
   shortcuts: {
     searchActions: string;

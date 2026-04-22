@@ -14,7 +14,6 @@ import { MessageList } from "@/components/workspace/messages";
 import { ThreadContext } from "@/components/workspace/messages/context";
 import { ThreadTitle } from "@/components/workspace/thread-title";
 import { TodoList } from "@/components/workspace/todo-list";
-import { TokenUsageIndicator } from "@/components/workspace/token-usage-indicator";
 import { Welcome } from "@/components/workspace/welcome";
 import { WorkspaceFilesPanel } from "@/components/workspace/workspace-files-panel";
 import { WorkspaceFilesTrigger } from "@/components/workspace/workspace-files-trigger";
@@ -90,7 +89,6 @@ export default function ChatPage() {
                   <ThreadTitle threadId={threadId} thread={thread} />
                 </div>
                 <div className="flex items-center gap-2">
-                  <TokenUsageIndicator messages={thread.messages} />
                   <ExportTrigger threadId={threadId} />
                   {!isNewThread && (
                     <WorkspaceFilesTrigger
