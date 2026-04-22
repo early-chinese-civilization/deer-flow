@@ -38,14 +38,14 @@ export function DraftAgentControl({
           size="sm"
           variant="outline"
           disabled={disabled}
-          className="bg-background/80 text-muted-foreground rounded-full px-4 text-xs font-normal backdrop-blur-sm"
+          className="text-muted-foreground min-w-28 w-fit justify-between gap-2 rounded-full px-4 text-xs font-normal transition-colors hover:bg-accent hover:text-accent-foreground"
         >
           <BotIcon className="size-4" />
-          <span>{agentName ?? t.agents.selectAgent}</span>
+          <span className="truncate">{agentName ?? t.agents.selectAgent}</span>
           <ChevronDownIcon className="size-4" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-64">
+      <DropdownMenuContent align="start" side="top" className="w-64">
         <DropdownMenuItem onSelect={() => onSelectAgent(null)}>
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <BotIcon className="size-4" />

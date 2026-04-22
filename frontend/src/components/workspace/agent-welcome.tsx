@@ -20,7 +20,7 @@ export function AgentWelcome({
   return (
     <div
       className={cn(
-        "mx-auto flex w-full flex-col items-center justify-center gap-2 px-8 py-4 text-center",
+        "mx-auto flex min-h-28 w-full max-w-2xl flex-col items-center justify-center gap-3 px-8 py-2 text-center",
         className,
       )}
     >
@@ -29,7 +29,7 @@ export function AgentWelcome({
       </div>
       <div className="text-2xl font-bold">{displayName}</div>
       {description && (
-        <p className="text-muted-foreground max-w-sm text-sm">{description}</p>
+        <p className="text-muted-foreground max-w-md text-sm">{description}</p>
       )}
     </div>
   );
