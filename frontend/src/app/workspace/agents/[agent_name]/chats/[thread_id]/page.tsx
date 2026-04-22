@@ -36,7 +36,7 @@ export default function AgentChatPage() {
   const { agent } = useAgent(agent_name);
 
   const { threadId, isNewThread, setIsNewThread } = useThreadChat();
-  const [settings, setSettings] = useThreadSettings(threadId);
+  const [settings] = useThreadSettings(threadId);
 
   const { showNotification } = useNotification();
   const [thread, sendMessage] = useThreadStream({
@@ -163,14 +163,12 @@ export default function AgentChatPage() {
                         ? "streaming"
                         : "ready"
                   }
-                  context={settings.context}
                   extraHeader={
                     isNewThread && (
                       <AgentWelcome agent={agent} agentName={agent_name} />
                     )
                   }
                   disabled={env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true"}
-                  onContextChange={(context) => setSettings("context", context)}
                   onSubmit={handleSubmit}
                   onStop={handleStop}
                 />

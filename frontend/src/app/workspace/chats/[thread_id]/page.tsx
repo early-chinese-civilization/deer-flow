@@ -29,7 +29,7 @@ import { cn } from "@/lib/utils";
 export default function ChatPage() {
   const { t } = useI18n();
   const { threadId, isNewThread, setIsNewThread, isMock } = useThreadChat();
-  const [settings, setSettings] = useThreadSettings(threadId);
+  const [settings] = useThreadSettings(threadId);
   const [showFilesPanel, setShowFilesPanel] = useState(true);
   useSpecificChatMode();
 
@@ -141,16 +141,10 @@ export default function ChatPage() {
                             ? "streaming"
                             : "ready"
                       }
-                      context={settings.context}
-                      extraHeader={
-                        isNewThread && <Welcome mode={settings.context.mode} />
-                      }
+                      extraHeader={isNewThread && <Welcome />}
                       disabled={
                         env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ||
                         isUploading
-                      }
-                      onContextChange={(context) =>
-                        setSettings("context", context)
                       }
                       onSubmit={handleSubmit}
                       onStop={handleStop}
