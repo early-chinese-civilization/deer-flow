@@ -66,6 +66,7 @@ export function InputBox({
   autoFocus,
   status = "ready",
   extraHeader,
+  agentControl,
   isNewThread,
   threadId,
   initialValue,
@@ -77,6 +78,7 @@ export function InputBox({
   status?: ChatStatus;
   disabled?: boolean;
   extraHeader?: React.ReactNode;
+  agentControl?: React.ReactNode;
   isNewThread?: boolean;
   threadId: string;
   initialValue?: string;
@@ -311,12 +313,21 @@ export function InputBox({
             />
           </PromptInputTools>
         </PromptInputFooter>
-        {isNewThread && searchParams.get("mode") !== "skill" && (
+        {isNewThread &&
+          (agentControl != null || searchParams.get("mode") !== "skill") && (
           <div className="absolute right-0 -bottom-20 left-0 z-0 flex items-center justify-center">
-            <SuggestionList />
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {agentControl}
+              {searchParams.get("mode") !== "skill" && <SuggestionList />}
+            </div>
           </div>
         )}
-        {!isNewThread && (
+        {!isNewThread && agentControl && (
+          <div className="absolute right-0 -bottom-20 left-0 z-0 flex items-center justify-center">
+            {agentControl}
+          </div>
+        )}
+        {!isNewThread && !agentControl && (
           <div className="bg-background absolute right-0 -bottom-[17px] left-0 z-0 h-4"></div>
         )}
       </PromptInput>

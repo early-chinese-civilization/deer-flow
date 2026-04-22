@@ -26,6 +26,8 @@ import {
 import { useDeleteAgent } from "@/core/agents";
 import type { Agent } from "@/core/agents";
 import { useI18n } from "@/core/i18n/hooks";
+import { pathOfNewThread } from "@/core/threads/utils";
+import { uuid } from "@/core/utils/uuid";
 
 interface AgentCardProps {
   agent: Agent;
@@ -38,7 +40,12 @@ export function AgentCard({ agent }: AgentCardProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   function handleChat() {
-    router.push(`/workspace/agents/${agent.name}/chats/new`);
+    router.push(
+      pathOfNewThread({
+        agentName: agent.name,
+        draftNonce: uuid(),
+      }),
+    );
   }
 
   function handleEdit() {

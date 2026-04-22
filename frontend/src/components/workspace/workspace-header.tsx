@@ -2,7 +2,7 @@
 
 import { MessageSquarePlus } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import {
   SidebarMenu,
@@ -12,6 +12,8 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useI18n } from "@/core/i18n/hooks";
+import { pathOfNewThread } from "@/core/threads/utils";
+import { uuid } from "@/core/utils/uuid";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +21,19 @@ export function WorkspaceHeader({ className }: { className?: string }) {
   const { t } = useI18n();
   const { state } = useSidebar();
   const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  function handleNewChat() {
+    router.push(
+      pathOfNewThread({
+        currentSearch: searchParams.toString(),
+        agentName: null,
+        draftNonce: uuid(),
+      }),
+    );
+  }
+
   return (
     <>
       <div
@@ -53,12 +68,10 @@ export function WorkspaceHeader({ className }: { className?: string }) {
         <SidebarMenuItem>
           <SidebarMenuButton
             isActive={pathname === "/workspace/chats/new"}
-            asChild
+            onClick={handleNewChat}
           >
-            <Link className="text-muted-foreground" href="/workspace/chats/new">
-              <MessageSquarePlus size={16} />
-              <span>{t.sidebar.newChat}</span>
-            </Link>
+            <MessageSquarePlus size={16} />
+            <span>{t.sidebar.newChat}</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
