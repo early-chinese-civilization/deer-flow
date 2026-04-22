@@ -379,7 +379,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                 <p className="text-destructive text-sm">{submitError}</p>
               )}
 
-              <div className="flex items-center justify-end gap-3 border-t pt-4">
+              <div className="flex items-center justify-end gap-3">
                 <Button
                   variant="outline"
                   onClick={() => router.push("/workspace/agents")}
