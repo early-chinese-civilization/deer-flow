@@ -203,6 +203,7 @@ async def stateless_stream(
         resolution.thread_id,
         request,
         thread_record=resolution.access_record,
+        current_user=current_user,
     )
 
     return StreamingResponse(
@@ -251,6 +252,7 @@ async def stateless_wait(
         resolution.thread_id,
         request,
         thread_record=resolution.access_record,
+        current_user=current_user,
     )
 
     if record.task is not None:

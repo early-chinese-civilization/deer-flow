@@ -1,10 +1,12 @@
 """Tests for RunManager."""
 
 import re
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
-from deerflow.runtime import RunManager, RunStatus
+from deerflow.runtime import RunManager, RunStatus, run_agent
 
 ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
 
@@ -141,3 +143,57 @@ async def test_create_defaults(manager: RunManager):
     assert record.kwargs == {}
     assert record.multitask_strategy == "reject"
     assert record.assistant_id is None
+
+
+@pytest.mark.anyio
+async def test_run_agent_passes_config_context_to_runtime(manager: RunManager):
+    """Gateway-owned thread/user bindings must reach middleware/tool runtime context."""
+    record = await manager.create("thread-1")
+    captured_context = {}
+
+    class _Agent:
+        checkpointer = None
+        store = None
+        interrupt_before_nodes = None
+        interrupt_after_nodes = None
+
+        async def astream(self, *args, **kwargs):
+            if False:
+                yield None
+
+    def _agent_factory(*, config):
+        runtime = config["configurable"]["__pregel_runtime"]
+        captured_context.update(runtime.context)
+        return _Agent()
+
+    bridge = SimpleNamespace(
+        publish=AsyncMock(),
+        publish_end=AsyncMock(),
+        cleanup=AsyncMock(),
+    )
+    checkpointer = SimpleNamespace(aget_tuple=AsyncMock(return_value=None))
+
+    await run_agent(
+        bridge,
+        manager,
+        record,
+        checkpointer=checkpointer,
+        store=object(),
+        agent_factory=_agent_factory,
+        graph_input={},
+        config={
+            "context": {
+                "thread_id": "evil-thread",
+                "user_id": "7",
+                "external_auth_id": "kc-sub",
+            },
+            "configurable": {"thread_id": "thread-1"},
+        },
+    )
+
+    assert captured_context == {
+        "thread_id": "thread-1",
+        "user_id": "7",
+        "external_auth_id": "kc-sub",
+    }
+    assert record.status == RunStatus.success

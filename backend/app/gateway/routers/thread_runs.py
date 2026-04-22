@@ -111,7 +111,6 @@ async def create_run(
     db: AsyncSession = Depends(get_db),
 ) -> RunResponse:
     """Create a background run (returns immediately)."""
-    print("hudi enter")
     thread_record = await _require_owned_thread(
         thread_id=thread_id,
         request=request,
@@ -124,6 +123,7 @@ async def create_run(
         thread_id,
         request,
         thread_record=thread_record,
+        current_user=current_user,
     )
     return _record_to_response(record)
 
@@ -143,7 +143,6 @@ async def stream_run(
         current_user=current_user,
         db=db,
     )
-    print("user enter1:", current_user.username)
     bridge = get_stream_bridge(request)
     run_mgr = get_run_manager(request)
     record = await gateway_services.start_run(
@@ -151,6 +150,7 @@ async def stream_run(
         thread_id,
         request,
         thread_record=thread_record,
+        current_user=current_user,
     )
 
     return StreamingResponse(
@@ -185,6 +185,7 @@ async def wait_run(
         thread_id,
         request,
         thread_record=thread_record,
+        current_user=current_user,
     )
 
     if record.task is not None:
@@ -337,7 +338,6 @@ async def stream_existing_run(
     wait: int = Query(default=0, description="Block until cancelled (1) or return immediately (0)"),
 ):
     """Join an existing run's SSE stream (GET), or cancel-then-stream (POST)."""
-    print("user enter2:", current_user)
     await _require_owned_thread(
         thread_id=thread_id,
         request=request,

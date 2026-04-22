@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import re
@@ -40,6 +41,19 @@ _CONTEXT_CONFIGURABLE_KEYS = {
     "is_plan_mode",
     "subagent_enabled",
     "max_concurrent_subagents",
+}
+_REQUEST_CONFIGURABLE_BLOCKLIST = {
+    "__pregel_runtime",
+    "is_bootstrap",
+}
+_TRUSTED_CONTEXT_KEYS = {
+    "thread_id",
+    "user_id",
+    "external_auth_id",
+    "username",
+    "display_name",
+    "email",
+    "agent_name",
 }
 
 
@@ -145,9 +159,24 @@ def build_run_config(
                     list(request_config.get("configurable", {}).keys()),
                 )
             config["context"] = request_config["context"]
+            context_agent_name = request_config["context"].get("agent_name")
+            if context_agent_name is not None and (not assistant_id or assistant_id == _DEFAULT_ASSISTANT_ID):
+                configurable = config.setdefault("configurable", {})
+                if "agent_name" not in configurable:
+                    normalized = str(context_agent_name).strip().lower().replace("_", "-")
+                    if not normalized or not re.fullmatch(r"[a-z0-9-]+", normalized):
+                        raise ValueError(f"Invalid context.agent_name {context_agent_name!r}: must contain only letters, digits, and hyphens after normalization.")
+                    configurable["agent_name"] = normalized
         else:
             configurable = {"thread_id": thread_id}
-            configurable.update(request_config.get("configurable", {}))
+            client_configurable = request_config.get("configurable", {})
+            configurable.update(
+                {
+                    key: value
+                    for key, value in client_configurable.items()
+                    if key not in _REQUEST_CONFIGURABLE_BLOCKLIST
+                }
+            )
             config["configurable"] = configurable
         for key, value in request_config.items():
             if key not in ("configurable", "context"):
@@ -155,18 +184,81 @@ def build_run_config(
     else:
         config["configurable"] = {"thread_id": thread_id}
 
-    if assistant_id and assistant_id != _DEFAULT_ASSISTANT_ID and "configurable" in config:
-        if "agent_name" not in config["configurable"]:
+    if assistant_id and assistant_id != _DEFAULT_ASSISTANT_ID:
+        configurable = config.setdefault("configurable", {})
+        if "agent_name" not in configurable:
             normalized = assistant_id.strip().lower().replace("_", "-")
             if not normalized or not re.fullmatch(r"[a-z0-9-]+", normalized):
-                raise ValueError(
-                    f"Invalid assistant_id {assistant_id!r}: must contain only letters, digits, and hyphens after normalization."
-                )
-            config["configurable"]["agent_name"] = normalized
+                raise ValueError(f"Invalid assistant_id {assistant_id!r}: must contain only letters, digits, and hyphens after normalization.")
+            configurable["agent_name"] = normalized
 
     if metadata:
         config.setdefault("metadata", {}).update(metadata)
     return config
+
+
+def _normalize_user_value(value: Any) -> Any:
+    if value is None:
+        return None
+    return str(value)
+
+
+def build_trusted_run_context(
+    *,
+    thread_id: str,
+    current_user: Any | None,
+) -> dict[str, Any]:
+    """Build server-owned runtime context that client input cannot override."""
+    context: dict[str, Any] = {"thread_id": thread_id}
+
+    if current_user is not None:
+        user_fields = {
+            "user_id": getattr(current_user, "id", None),
+            "external_auth_id": getattr(current_user, "external_auth_id", None),
+            "username": getattr(current_user, "username", None),
+            "display_name": getattr(current_user, "display_name", None),
+            "email": getattr(current_user, "email", None),
+        }
+        context.update({key: _normalize_user_value(value) for key, value in user_fields.items() if value is not None})
+
+    return context
+
+
+def _apply_trusted_run_context(config: dict[str, Any], trusted_context: dict[str, Any]) -> None:
+    """Overwrite protected runtime context keys with server-derived values."""
+    context = config.setdefault("context", {})
+    if not isinstance(context, dict):
+        context = {}
+        config["context"] = context
+
+    for key in _TRUSTED_CONTEXT_KEYS:
+        if key in trusted_context:
+            context[key] = trusted_context[key]
+        else:
+            context.pop(key, None)
+
+    configurable = config.setdefault("configurable", {})
+    configurable["thread_id"] = trusted_context["thread_id"]
+
+
+def build_public_run_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Strip server-owned bindings before exposing run config back to clients."""
+    public_config = copy.deepcopy(config)
+
+    context = public_config.get("context")
+    if isinstance(context, dict):
+        for key in _TRUSTED_CONTEXT_KEYS:
+            context.pop(key, None)
+        if not context:
+            public_config.pop("context", None)
+
+    configurable = public_config.get("configurable")
+    if isinstance(configurable, dict):
+        configurable.pop("thread_id", None)
+        if not configurable:
+            public_config.pop("configurable", None)
+
+    return public_config
 
 
 def _product_thread_status(run_status: RunStatus) -> str:
@@ -198,9 +290,7 @@ async def _sync_thread_product_state_after_run(
     title: str | None = None
 
     try:
-        checkpoint_tuple = await checkpointer.aget_tuple(
-            {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
-        )
+        checkpoint_tuple = await checkpointer.aget_tuple({"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}})
     except Exception:
         logger.debug("Failed to load final checkpoint for thread %s", thread_id, exc_info=True)
 
@@ -252,6 +342,7 @@ async def start_run(
     request: Request,
     *,
     thread_record: Any | None = None,
+    current_user: Any | None = None,
 ) -> RunRecord:
     """Create a RunRecord and launch the background agent task."""
     bridge = get_stream_bridge(request)
@@ -264,12 +355,46 @@ async def start_run(
     disconnect = DisconnectMode.cancel if body.on_disconnect == "cancel" else DisconnectMode.continue_
 
     try:
+        config = build_run_config(
+            thread_id,
+            body.config,
+            body.metadata,
+            assistant_id=body.assistant_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    context = getattr(body, "context", None)
+    if context:
+        configurable = config.setdefault("configurable", {})
+        for key in _CONTEXT_CONFIGURABLE_KEYS:
+            if key in context:
+                configurable.setdefault(key, context[key])
+        context_agent_name = context.get("agent_name")
+        if context_agent_name is not None and (not body.assistant_id or body.assistant_id == _DEFAULT_ASSISTANT_ID):
+            if "agent_name" not in configurable:
+                normalized = str(context_agent_name).strip().lower().replace("_", "-")
+                if not normalized or not re.fullmatch(r"[a-z0-9-]+", normalized):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid context.agent_name {context_agent_name!r}: must contain only letters, digits, and hyphens after normalization.",
+                    )
+                configurable["agent_name"] = normalized
+
+    trusted_context = build_trusted_run_context(
+        thread_id=thread_id,
+        current_user=current_user,
+    )
+    _apply_trusted_run_context(config, trusted_context)
+    public_config = build_public_run_config(config)
+
+    try:
         record = await run_mgr.create_or_reject(
             thread_id,
             body.assistant_id,
             on_disconnect=disconnect,
             metadata=body.metadata or {},
-            kwargs={"input": body.input, "config": body.config},
+            kwargs={"input": body.input, "config": public_config},
             multitask_strategy=body.multitask_strategy,
         )
     except ConflictError as exc:
@@ -313,20 +438,6 @@ async def start_run(
 
     agent_factory = resolve_agent_factory(body.assistant_id)
     graph_input = normalize_input(body.input)
-    config = build_run_config(
-        thread_id,
-        body.config,
-        body.metadata,
-        assistant_id=body.assistant_id,
-    )
-
-    context = getattr(body, "context", None)
-    if context:
-        configurable = config.setdefault("configurable", {})
-        for key in _CONTEXT_CONFIGURABLE_KEYS:
-            if key in context:
-                configurable.setdefault(key, context[key])
-
     stream_modes = normalize_stream_modes(body.stream_mode)
 
     task = asyncio.create_task(

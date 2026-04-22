@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -149,6 +149,57 @@ def test_build_run_config_explicit_agent_name_not_overwritten():
         assistant_id="other-agent",
     )
     assert config["configurable"]["agent_name"] == "explicit-agent"
+
+
+def test_build_run_config_injects_agent_name_even_when_request_uses_context():
+    """Custom assistant selection must survive LangGraph's context-first request shape."""
+    from app.gateway.services import build_run_config
+
+    config = build_run_config(
+        "thread-1",
+        {"context": {"model_name": "gpt-4"}},
+        None,
+        assistant_id="trusted-agent",
+    )
+
+    assert config["context"]["model_name"] == "gpt-4"
+    assert config["configurable"]["agent_name"] == "trusted-agent"
+
+
+def test_build_run_config_promotes_context_agent_name_for_lead_agent_requests():
+    """Frontend custom-agent chats still send lead_agent plus context.agent_name."""
+    from app.gateway.services import build_run_config
+
+    config = build_run_config(
+        "thread-1",
+        {"context": {"model_name": "gpt-4", "agent_name": "VIP_AGENT"}},
+        None,
+        assistant_id="lead_agent",
+    )
+
+    assert config["context"]["agent_name"] == "VIP_AGENT"
+    assert config["configurable"]["agent_name"] == "vip-agent"
+
+
+def test_build_run_config_blocks_runtime_only_configurable_keys():
+    """Gateway callers must not inject runtime-only configurable flags."""
+    from app.gateway.services import build_run_config
+
+    config = build_run_config(
+        "thread-1",
+        {
+            "configurable": {
+                "is_bootstrap": True,
+                "__pregel_runtime": "spoofed",
+                "model_name": "gpt-4",
+            }
+        },
+        None,
+    )
+
+    assert config["configurable"]["model_name"] == "gpt-4"
+    assert "is_bootstrap" not in config["configurable"]
+    assert "__pregel_runtime" not in config["configurable"]
 
 
 def test_resolve_agent_factory_returns_make_lead_agent():
@@ -348,6 +399,63 @@ def test_build_run_config_no_request_config():
     assert "context" not in config
 
 
+def test_build_trusted_run_context_projects_authenticated_user():
+    """Trusted runtime context is derived from server-side auth state."""
+    from app.gateway.services.runtime import build_trusted_run_context
+
+    context = build_trusted_run_context(
+        thread_id="thread-1",
+        current_user=SimpleNamespace(
+            id=7,
+            external_auth_id="kc-sub",
+            username="alice",
+            display_name="Alice",
+            email="alice@example.com",
+        ),
+    )
+
+    assert context == {
+        "thread_id": "thread-1",
+        "user_id": "7",
+        "external_auth_id": "kc-sub",
+        "username": "alice",
+        "display_name": "Alice",
+        "email": "alice@example.com",
+    }
+
+
+def test_build_public_run_config_strips_server_owned_context():
+    """Public run records must not echo trusted auth/runtime bindings."""
+    from app.gateway.services.runtime import build_public_run_config
+
+    public = build_public_run_config(
+        {
+            "context": {
+                "thread_id": "thread-1",
+                "user_id": "7",
+                "external_auth_id": "kc-sub",
+                "agent_name": "private-agent",
+                "model_name": "gpt-4",
+            },
+            "configurable": {
+                "thread_id": "thread-1",
+                "agent_name": "private-agent",
+                "model_name": "gpt-4",
+            },
+            "metadata": {"source": "ui"},
+        }
+    )
+
+    assert public == {
+        "context": {"model_name": "gpt-4"},
+        "configurable": {
+            "agent_name": "private-agent",
+            "model_name": "gpt-4",
+        },
+        "metadata": {"source": "ui"},
+    }
+
+
 @pytest.mark.anyio
 async def test_sync_thread_product_state_after_run_updates_store_and_db_thread_status_and_title(monkeypatch):
     from app.gateway.services.runtime import _sync_thread_product_state_after_run
@@ -484,6 +592,338 @@ async def test_start_run_marks_store_busy_before_db_mirror(monkeypatch):
         thread_id="thread-1",
         workspace_id=str(thread.workspace_id),
     )
+
+
+@pytest.mark.anyio
+async def test_start_run_overwrites_client_identity_context(monkeypatch):
+    from app.gateway.services.runtime import start_run
+    from deerflow.runtime import DisconnectMode, RunStatus
+
+    body = SimpleNamespace(
+        on_disconnect="cancel",
+        assistant_id="trusted-agent",
+        metadata=None,
+        input={"messages": [{"role": "user", "content": "hi"}]},
+        config={
+            "context": {
+                "thread_id": "evil-thread",
+                "user_id": "evil-user",
+                "external_auth_id": "evil-sub",
+                "agent_name": "evil-agent",
+            },
+        },
+        context={
+            "model_name": "gpt-4",
+            "is_plan_mode": True,
+        },
+        multitask_strategy="reject",
+        stream_mode=None,
+        stream_subgraphs=False,
+        interrupt_before=None,
+        interrupt_after=None,
+    )
+    record = SimpleNamespace(
+        run_id="run-1",
+        thread_id="thread-1",
+        assistant_id=None,
+        status=RunStatus.pending,
+        metadata={},
+        kwargs={},
+        multitask_strategy="reject",
+        created_at="",
+        updated_at="",
+        on_disconnect=DisconnectMode.cancel,
+        task=None,
+    )
+    run_mgr = SimpleNamespace(create_or_reject=AsyncMock(return_value=record))
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                stream_bridge=SimpleNamespace(),
+                run_manager=run_mgr,
+                checkpointer=SimpleNamespace(),
+                store=SimpleNamespace(),
+            )
+        )
+    )
+    captured: dict[str, object] = {}
+
+    async def _run_agent(*args, **kwargs):
+        captured["config"] = kwargs["config"]
+
+    monkeypatch.setattr("app.gateway.services.runtime.run_agent", _run_agent)
+    monkeypatch.setattr("app.gateway.services.runtime._sync_thread_product_state_after_run", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.gateway.services.runtime._sync_bound_workspace_to_thread", AsyncMock(return_value=None))
+
+    await start_run(
+        body,
+        "thread-1",
+        request,
+        thread_record=None,
+        current_user=SimpleNamespace(
+            id=7,
+            external_auth_id="kc-sub",
+            username="alice",
+            display_name="Alice",
+            email="alice@example.com",
+        ),
+    )
+    await asyncio.sleep(0)
+
+    config = captured["config"]
+    assert config["context"]["thread_id"] == "thread-1"
+    assert config["context"]["user_id"] == "7"
+    assert config["context"]["external_auth_id"] == "kc-sub"
+    assert config["context"]["username"] == "alice"
+    assert "agent_name" not in config["context"]
+    assert config["configurable"]["thread_id"] == "thread-1"
+    assert config["configurable"]["agent_name"] == "trusted-agent"
+    assert config["configurable"]["model_name"] == "gpt-4"
+    assert config["configurable"]["is_plan_mode"] is True
+    assert "is_bootstrap" not in config["configurable"]
+
+
+@pytest.mark.anyio
+async def test_start_run_stores_sanitized_public_config_in_run_record(monkeypatch):
+    from app.gateway.services.runtime import start_run
+    from deerflow.runtime import DisconnectMode, RunStatus
+
+    body = SimpleNamespace(
+        on_disconnect="cancel",
+        assistant_id="trusted-agent",
+        metadata={"source": "ui"},
+        input={"messages": [{"role": "user", "content": "hi"}]},
+        config={
+            "context": {
+                "thread_id": "evil-thread",
+                "user_id": "evil-user",
+                "external_auth_id": "evil-sub",
+                "model_name": "gpt-4",
+            },
+        },
+        context=None,
+        multitask_strategy="reject",
+        stream_mode=None,
+        stream_subgraphs=False,
+        interrupt_before=None,
+        interrupt_after=None,
+    )
+    record = SimpleNamespace(
+        run_id="run-1",
+        thread_id="thread-1",
+        assistant_id=None,
+        status=RunStatus.pending,
+        metadata={},
+        kwargs={},
+        multitask_strategy="reject",
+        created_at="",
+        updated_at="",
+        on_disconnect=DisconnectMode.cancel,
+        task=None,
+    )
+    run_mgr = SimpleNamespace(create_or_reject=AsyncMock(return_value=record))
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                stream_bridge=SimpleNamespace(),
+                run_manager=run_mgr,
+                checkpointer=SimpleNamespace(),
+                store=SimpleNamespace(),
+            )
+        )
+    )
+
+    async def _run_agent(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("app.gateway.services.runtime.run_agent", _run_agent)
+    monkeypatch.setattr("app.gateway.services.runtime._sync_thread_product_state_after_run", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.gateway.services.runtime._sync_bound_workspace_to_thread", AsyncMock(return_value=None))
+
+    await start_run(
+        body,
+        "thread-1",
+        request,
+        current_user=SimpleNamespace(
+            id=7,
+            external_auth_id="kc-sub",
+            username="alice",
+            display_name="Alice",
+            email="alice@example.com",
+        ),
+    )
+    await asyncio.sleep(0)
+
+    stored_config = run_mgr.create_or_reject.await_args.kwargs["kwargs"]["config"]
+    assert stored_config == {
+        "context": {"model_name": "gpt-4"},
+        "configurable": {"agent_name": "trusted-agent"},
+        "metadata": {"source": "ui"},
+        "recursion_limit": 100,
+    }
+
+
+@pytest.mark.anyio
+async def test_start_run_keeps_custom_agent_selection_from_context(monkeypatch):
+    from app.gateway.services.runtime import start_run
+    from deerflow.runtime import DisconnectMode, RunStatus
+
+    body = SimpleNamespace(
+        on_disconnect="cancel",
+        assistant_id="lead_agent",
+        metadata=None,
+        input={"messages": [{"role": "user", "content": "hi"}]},
+        config={"context": {"agent_name": "VIP_AGENT", "model_name": "gpt-4"}},
+        context=None,
+        multitask_strategy="reject",
+        stream_mode=None,
+        stream_subgraphs=False,
+        interrupt_before=None,
+        interrupt_after=None,
+    )
+    record = SimpleNamespace(
+        run_id="run-1",
+        thread_id="thread-1",
+        assistant_id=None,
+        status=RunStatus.pending,
+        metadata={},
+        kwargs={},
+        multitask_strategy="reject",
+        created_at="",
+        updated_at="",
+        on_disconnect=DisconnectMode.cancel,
+        task=None,
+    )
+    run_mgr = SimpleNamespace(create_or_reject=AsyncMock(return_value=record))
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                stream_bridge=SimpleNamespace(),
+                run_manager=run_mgr,
+                checkpointer=SimpleNamespace(),
+                store=SimpleNamespace(),
+            )
+        )
+    )
+    captured: dict[str, object] = {}
+
+    async def _run_agent(*args, **kwargs):
+        captured["config"] = kwargs["config"]
+
+    monkeypatch.setattr("app.gateway.services.runtime.run_agent", _run_agent)
+    monkeypatch.setattr("app.gateway.services.runtime._sync_thread_product_state_after_run", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.gateway.services.runtime._sync_bound_workspace_to_thread", AsyncMock(return_value=None))
+
+    await start_run(
+        body,
+        "thread-1",
+        request,
+        thread_record=None,
+        current_user=SimpleNamespace(
+            id=7,
+            external_auth_id="kc-sub",
+            username="alice",
+            display_name="Alice",
+            email="alice@example.com",
+        ),
+    )
+    await asyncio.sleep(0)
+
+    config = captured["config"]
+    assert config["context"]["thread_id"] == "thread-1"
+    assert "agent_name" not in config["context"]
+    assert config["configurable"]["agent_name"] == "vip-agent"
+
+    stored_config = run_mgr.create_or_reject.await_args.kwargs["kwargs"]["config"]
+    assert stored_config == {
+        "context": {"model_name": "gpt-4"},
+        "configurable": {"agent_name": "vip-agent"},
+        "recursion_limit": 100,
+    }
+
+
+@pytest.mark.anyio
+async def test_start_run_keeps_custom_agent_selection_from_top_level_context(monkeypatch):
+    from app.gateway.services.runtime import start_run
+    from deerflow.runtime import DisconnectMode, RunStatus
+
+    body = SimpleNamespace(
+        on_disconnect="cancel",
+        assistant_id="lead_agent",
+        metadata=None,
+        input={"messages": [{"role": "user", "content": "hi"}]},
+        config=None,
+        context={"agent_name": "VIP_AGENT", "model_name": "gpt-4", "is_plan_mode": True},
+        multitask_strategy="reject",
+        stream_mode=None,
+        stream_subgraphs=False,
+        interrupt_before=None,
+        interrupt_after=None,
+    )
+    record = SimpleNamespace(
+        run_id="run-1",
+        thread_id="thread-1",
+        assistant_id=None,
+        status=RunStatus.pending,
+        metadata={},
+        kwargs={},
+        multitask_strategy="reject",
+        created_at="",
+        updated_at="",
+        on_disconnect=DisconnectMode.cancel,
+        task=None,
+    )
+    run_mgr = SimpleNamespace(create_or_reject=AsyncMock(return_value=record))
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                stream_bridge=SimpleNamespace(),
+                run_manager=run_mgr,
+                checkpointer=SimpleNamespace(),
+                store=SimpleNamespace(),
+            )
+        )
+    )
+    captured: dict[str, object] = {}
+
+    async def _run_agent(*args, **kwargs):
+        captured["config"] = kwargs["config"]
+
+    monkeypatch.setattr("app.gateway.services.runtime.run_agent", _run_agent)
+    monkeypatch.setattr("app.gateway.services.runtime._sync_thread_product_state_after_run", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.gateway.services.runtime._sync_bound_workspace_to_thread", AsyncMock(return_value=None))
+
+    await start_run(
+        body,
+        "thread-1",
+        request,
+        thread_record=None,
+        current_user=SimpleNamespace(
+            id=7,
+            external_auth_id="kc-sub",
+            username="alice",
+            display_name="Alice",
+            email="alice@example.com",
+        ),
+    )
+    await asyncio.sleep(0)
+
+    config = captured["config"]
+    assert config["context"]["thread_id"] == "thread-1"
+    assert "agent_name" not in config["context"]
+    assert config["configurable"]["agent_name"] == "vip-agent"
+    assert config["configurable"]["model_name"] == "gpt-4"
+    assert config["configurable"]["is_plan_mode"] is True
+
+    stored_config = run_mgr.create_or_reject.await_args.kwargs["kwargs"]["config"]
+    assert stored_config == {
+        "configurable": {
+            "agent_name": "vip-agent",
+            "model_name": "gpt-4",
+            "is_plan_mode": True,
+        },
+        "recursion_limit": 100,
+    }
 
 
 @pytest.mark.anyio
