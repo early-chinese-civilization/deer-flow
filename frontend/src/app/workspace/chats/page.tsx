@@ -50,7 +50,7 @@ export default function ChatsPage() {
                 {filteredThreads?.map((thread) => (
                   <Link
                     key={thread.thread_id}
-                    href={pathOfThread(thread.thread_id)}
+                    href={pathOfThread(thread)}
                   >
                     <div className="flex flex-col gap-2 border-b p-4">
                       <div>
