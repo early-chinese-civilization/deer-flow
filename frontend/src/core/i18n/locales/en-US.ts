@@ -315,6 +315,7 @@ export const enUS: Translations = {
 
   workspaceFiles: {
     title: "Workspace Files",
+    files: "Files",
     refresh: "Refresh file list",
     searchPlaceholder: "Search files",
     loadFailed: "Failed to load files",
@@ -334,14 +335,6 @@ export const enUS: Translations = {
     in_progress: "Running subtask",
     completed: "Subtask completed",
     failed: "Subtask failed",
-  },
-
-  // Token Usage
-  tokenUsage: {
-    title: "Token Usage",
-    input: "Input",
-    output: "Output",
-    total: "Total",
   },
 
   // Shortcuts

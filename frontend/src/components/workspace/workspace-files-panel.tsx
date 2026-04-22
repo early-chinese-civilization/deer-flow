@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircleIcon,
   ChevronDownIcon,
@@ -9,6 +9,7 @@ import {
   FolderIcon,
   RefreshCwIcon,
   SearchIcon,
+  XIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { toast } from "sonner";
@@ -23,6 +24,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
+import type { ThreadRecord } from "@/core/threads";
 import { getThread } from "@/core/threads/api";
 import {
   downloadUploadedFile,
@@ -258,13 +260,16 @@ function WorkspaceFileRow({
 export function WorkspaceFilesPanel({
   threadId,
   className,
+  onClose,
 }: {
   threadId: string;
   className?: string;
+  onClose?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const { t } = useI18n();
+  const queryClient = useQueryClient();
   const {
     deselect,
     open: artifactsOpen,
@@ -274,11 +279,24 @@ export function WorkspaceFilesPanel({
     setArtifacts,
     setOpen: setArtifactsOpen,
   } = useArtifacts();
+  const initialThread = useMemo<ThreadRecord | undefined>(
+    () =>
+      threadId && threadId !== "new"
+        ? queryClient.getQueryData<ThreadRecord>([
+            "threads",
+            "detail",
+            threadId,
+          ])
+        : undefined,
+    [queryClient, threadId],
+  );
 
   const threadQuery = useQuery({
     queryKey: ["threads", "detail", threadId],
     queryFn: () => getThread(threadId),
-    enabled: Boolean(threadId) && threadId !== "new",
+    enabled: !initialThread && Boolean(threadId) && threadId !== "new",
+    initialData: initialThread,
+    refetchOnWindowFocus: false,
   });
 
   const workspaceId = threadQuery.data?.workspace_id;
@@ -287,6 +305,7 @@ export function WorkspaceFilesPanel({
     queryKey: ["uploads", "list", workspaceId],
     queryFn: () => listUploadedFiles(workspaceId!),
     enabled: Boolean(workspaceId),
+    refetchOnWindowFocus: false,
   });
 
   const workspaceArtifactSources = useMemo(() => {
@@ -324,12 +343,7 @@ export function WorkspaceFilesPanel({
     if (nextSelectedFile !== selectedFile) {
       setSelectedFile(nextSelectedFile);
     }
-  }, [
-    artifactsOpen,
-    filesQuery.data?.files,
-    selectedArtifact,
-    selectedFile,
-  ]);
+  }, [artifactsOpen, filesQuery.data?.files, selectedArtifact, selectedFile]);
 
   useEffect(() => {
     if (!selectedFile) {
@@ -422,7 +436,9 @@ export function WorkspaceFilesPanel({
 
   const handleFileDownload = (file: UploadedFileInfo, downloadHref: string) => {
     void downloadUploadedFile(downloadHref, file.filename).catch((error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to download file");
+      toast.error(
+        error instanceof Error ? error.message : "Failed to download file",
+      );
     });
   };
 
@@ -436,7 +452,9 @@ export function WorkspaceFilesPanel({
       <div className="border-border/60 flex shrink-0 flex-col gap-3 border-b px-4 py-4">
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-sm font-semibold">{t.workspaceFiles.title}</h2>
+            <h2 className="truncate text-sm font-semibold">
+              {t.workspaceFiles.title}
+            </h2>
           </div>
           <Button
             size="icon-sm"
@@ -450,6 +468,17 @@ export function WorkspaceFilesPanel({
               className={cn("size-4", isRefreshing && "animate-spin")}
             />
           </Button>
+          {onClose && (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              title={t.common.close}
+              aria-label={t.common.close}
+              onClick={onClose}
+            >
+              <XIcon className="size-4" />
+            </Button>
+          )}
         </div>
         <InputGroup>
           <InputGroupAddon>

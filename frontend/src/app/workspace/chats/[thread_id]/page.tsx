@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 
 import { type PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import {
@@ -14,9 +14,9 @@ import { MessageList } from "@/components/workspace/messages";
 import { ThreadContext } from "@/components/workspace/messages/context";
 import { ThreadTitle } from "@/components/workspace/thread-title";
 import { TodoList } from "@/components/workspace/todo-list";
-import { TokenUsageIndicator } from "@/components/workspace/token-usage-indicator";
 import { Welcome } from "@/components/workspace/welcome";
 import { WorkspaceFilesPanel } from "@/components/workspace/workspace-files-panel";
+import { WorkspaceFilesTrigger } from "@/components/workspace/workspace-files-trigger";
 import { useI18n } from "@/core/i18n/hooks";
 import { useNotification } from "@/core/notification/hooks";
 import { useThreadSettings } from "@/core/settings";
@@ -28,7 +28,8 @@ import { cn } from "@/lib/utils";
 export default function ChatPage() {
   const { t } = useI18n();
   const { threadId, isNewThread, setIsNewThread, isMock } = useThreadChat();
-  const [settings, setSettings] = useThreadSettings(threadId);
+  const [settings] = useThreadSettings(threadId);
+  const [showFilesPanel, setShowFilesPanel] = useState(true);
   useSpecificChatMode();
 
   const { showNotification } = useNotification();
@@ -88,8 +89,12 @@ export default function ChatPage() {
                   <ThreadTitle threadId={threadId} thread={thread} />
                 </div>
                 <div className="flex items-center gap-2">
-                  <TokenUsageIndicator messages={thread.messages} />
                   <ExportTrigger threadId={threadId} />
+                  {!isNewThread && (
+                    <WorkspaceFilesTrigger
+                      onClick={() => setShowFilesPanel(true)}
+                    />
+                  )}
                 </div>
               </header>
               <main className="flex min-h-0 max-w-full grow flex-col">
@@ -134,16 +139,10 @@ export default function ChatPage() {
                             ? "streaming"
                             : "ready"
                       }
-                      context={settings.context}
-                      extraHeader={
-                        isNewThread && <Welcome mode={settings.context.mode} />
-                      }
+                      extraHeader={isNewThread && <Welcome />}
                       disabled={
                         env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ||
                         isUploading
-                      }
-                      onContextChange={(context) =>
-                        setSettings("context", context)
                       }
                       onSubmit={handleSubmit}
                       onStop={handleStop}
@@ -159,10 +158,11 @@ export default function ChatPage() {
             </div>
           </ChatBox>
         </div>
-        {!isNewThread && (
+        {!isNewThread && showFilesPanel && (
           <WorkspaceFilesPanel
             threadId={threadId}
             className="w-[clamp(320px,22vw,420px)] shrink-0"
+            onClose={() => setShowFilesPanel(false)}
           />
         )}
       </div>
