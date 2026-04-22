@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "deerflow-harness",
-    "ecc-auth>=0.1.0",
+    "ecc-auth>=0.1.1",
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
     "python-multipart>=0.0.20",
@@ -34,4 +34,3 @@ members = ["packages/harness"]
 
 [tool.uv.sources]
 deerflow-harness = { workspace = true }
-ecc-auth = { path = "../../ecc_auth/packages/python", editable = true }
