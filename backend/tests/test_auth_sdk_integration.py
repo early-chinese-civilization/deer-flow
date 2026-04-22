@@ -210,6 +210,28 @@ def test_create_app_builds_auth_router_after_loading_config() -> None:
     assert call_order[:2] == ["config", "router"]
 
 
+def test_create_gateway_auth_router_fails_fast_without_required_keycloak_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("KEYCLOAK_URL", raising=False)
+    monkeypatch.setenv("KEYCLOAK_REALM", "ecc")
+    monkeypatch.setenv("KEYCLOAK_CLIENT_ID", "client-id")
+
+    with pytest.raises(KeyError):
+        auth_routes.create_gateway_auth_router()
+
+
+def test_create_gateway_auth_router_rejects_empty_required_keycloak_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KEYCLOAK_URL", " ")
+    monkeypatch.setenv("KEYCLOAK_REALM", "ecc")
+    monkeypatch.setenv("KEYCLOAK_CLIENT_ID", "client-id")
+
+    with pytest.raises(RuntimeError, match="KEYCLOAK_URL must not be empty"):
+        auth_routes.create_gateway_auth_router()
+
+
 @pytest.mark.anyio
 async def test_gateway_dependency_projects_auth_identity_to_local_user() -> None:
     identity = AuthIdentity(

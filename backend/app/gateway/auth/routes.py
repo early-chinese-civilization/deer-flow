@@ -22,12 +22,19 @@ def _is_tls_insecure() -> bool:
     }
 
 
+def _get_required_env(name: str) -> str:
+    value = os.environ[name].strip()
+    if not value:
+        raise RuntimeError(f"{name} must not be empty")
+    return value
+
+
 def _build_keycloak_config() -> KeycloakConfig:
-    """Build ecc-auth config without forcing a confidential-client secret."""
+    """Build ecc-auth config and fail fast when required env is missing."""
     return KeycloakConfig(
-        url=os.getenv("KEYCLOAK_URL", ""),
-        realm=os.getenv("KEYCLOAK_REALM", ""),
-        client_id=os.getenv("KEYCLOAK_CLIENT_ID", ""),
+        url=_get_required_env("KEYCLOAK_URL"),
+        realm=_get_required_env("KEYCLOAK_REALM"),
+        client_id=_get_required_env("KEYCLOAK_CLIENT_ID"),
         client_secret=os.getenv("KEYCLOAK_CLIENT_SECRET", ""),
         tls_insecure=_is_tls_insecure(),
     )

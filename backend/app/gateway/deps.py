@@ -78,9 +78,10 @@ async def get_current_user(
 ) -> User:
     """Resolve the current DeerFlow user via shared identity verification.
 
-    This keeps the SDK-owned auth semantics (JWKS-first, no refresh side
-    effects in business routes) while preserving DeerFlow's local `User`
-    projection for ownership checks and existing business queries.
+    This keeps the SDK-owned auth semantics (JWKS-first with shared refresh
+    fallback and cookie persistence handled by the auth-session middleware)
+    while preserving DeerFlow's local `User` projection for ownership checks
+    and existing business queries.
     """
     return await sync_local_user_from_identity(db=db, identity=identity)
 
