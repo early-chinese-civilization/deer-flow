@@ -10,10 +10,11 @@ import re
 from typing import Any
 
 from fastapi import HTTPException, Request
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import convert_to_messages
 
 from app.gateway.db.engine import get_db_session
-from app.gateway.db.repository import ThreadRepository
+from app.gateway.db.models import User
+from app.gateway.db.repository import AgentRepository, ThreadRepository
 from app.gateway.deps import get_checkpointer, get_run_manager, get_store, get_stream_bridge
 from app.gateway.services.ownership import ThreadAccessRecord
 from app.gateway.services.thread_store import upsert_thread_record
@@ -54,7 +55,51 @@ _TRUSTED_CONTEXT_KEYS = {
     "display_name",
     "email",
     "agent_name",
+    "runtime_agent",
 }
+
+
+def _resolve_requested_agent_name(body: Any) -> str | None:
+    """Resolve the effective agent_name from request context/configurable payloads."""
+    context = getattr(body, "context", None)
+    if isinstance(context, dict):
+        raw_agent_name = context.get("agent_name")
+        if isinstance(raw_agent_name, str) and raw_agent_name.strip():
+            return raw_agent_name.strip().lower()
+
+    request_config = getattr(body, "config", None)
+    if isinstance(request_config, dict):
+        configurable = request_config.get("configurable", {})
+        if isinstance(configurable, dict):
+            raw_agent_name = configurable.get("agent_name")
+            if isinstance(raw_agent_name, str) and raw_agent_name.strip():
+                return raw_agent_name.strip().lower()
+
+    return None
+
+
+async def _load_runtime_agent_payload(*, user_id: int, agent_name: str | None) -> dict[str, Any]:
+    """Load the runtime agent payload injected into config.context."""
+    async with get_db_session() as db:
+        bundle = await AgentRepository.get_runtime_agent_bundle(
+            db,
+            user_id=user_id,
+            agent_name=agent_name,
+        )
+
+    return {
+        "user_id": bundle.user_id,
+        "agent_name": bundle.agent_name,
+        "memory": bundle.memory_json,
+        "soul": bundle.soul,
+        "skills": [
+            {
+                "name": skill.name,
+                "description": skill.description,
+            }
+            for skill in bundle.skills
+        ],
+    }
 
 
 def _get_thread_workspace_id(thread_record: Any | None) -> str | None:
@@ -119,19 +164,7 @@ def normalize_input(raw_input: dict[str, Any] | None) -> dict[str, Any]:
     if not messages or not isinstance(messages, list):
         return raw_input
 
-    converted = []
-    for message in messages:
-        if isinstance(message, dict):
-            role = message.get("role", message.get("type", "user"))
-            content = message.get("content", "")
-            if role in ("user", "human"):
-                converted.append(HumanMessage(content=content))
-            else:
-                converted.append(HumanMessage(content=content))
-            continue
-        converted.append(message)
-
-    return {**raw_input, "messages": converted}
+    return {**raw_input, "messages": convert_to_messages(messages)}
 
 
 def resolve_agent_factory(assistant_id: str | None):
@@ -342,7 +375,7 @@ async def start_run(
     request: Request,
     *,
     thread_record: Any | None = None,
-    current_user: Any | None = None,
+    current_user: User | None = None,
 ) -> RunRecord:
     """Create a RunRecord and launch the background agent task."""
     bridge = get_stream_bridge(request)
@@ -438,6 +471,12 @@ async def start_run(
 
     agent_factory = resolve_agent_factory(body.assistant_id)
     graph_input = normalize_input(body.input)
+    runtime_context = config.setdefault("context", {})
+    if current_user is not None and getattr(current_user, "id", None) is not None:
+        runtime_context["runtime_agent"] = await _load_runtime_agent_payload(
+            user_id=current_user.id,
+            agent_name=config.get("configurable", {}).get("agent_name"),
+        )
     stream_modes = normalize_stream_modes(body.stream_mode)
 
     task = asyncio.create_task(

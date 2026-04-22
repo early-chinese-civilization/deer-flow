@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,6 +13,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.gateway.db.models import Agent, AgentSkill, Memory, Skill, Thread, User, Workspace
+
+
+@dataclass(frozen=True)
+class RuntimeSkillDescriptor:
+    """Resolved skill metadata injected into the runtime prompt."""
+
+    name: str
+    description: str
+
+
+@dataclass(frozen=True)
+class RuntimeAgentBundle:
+    """Resolved runtime resources for a user + agent combination."""
+
+    user_id: int
+    agent_name: str | None
+    memory_json: dict[str, Any]
+    soul: str | None
+    skills: list[RuntimeSkillDescriptor]
 
 
 def _as_optional_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
@@ -357,6 +377,84 @@ class AgentRepository:
         )
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
+
+    @staticmethod
+    def _active_runtime_skills(agent: Agent) -> list[RuntimeSkillDescriptor]:
+        """Return ordered active skill descriptors for an agent."""
+        active_associations = [
+            association
+            for association in agent.agent_skills
+            if association.deleted_at is None
+            and association.enabled
+            and association.skill is not None
+            and association.skill.deleted_at is None
+        ]
+        active_associations.sort(key=lambda association: (association.display_order, association.id))
+        return [
+            RuntimeSkillDescriptor(
+                name=association.skill.name,
+                description=association.skill.description or "",
+            )
+            for association in active_associations
+        ]
+
+    @staticmethod
+    async def _public_runtime_skills(db: AsyncSession) -> list[RuntimeSkillDescriptor]:
+        """Return ordered descriptors for all active public skills."""
+        result = await db.execute(
+            select(Skill)
+            .where(
+                Skill.user_id.is_(None),
+                Skill.deleted_at.is_(None),
+            )
+            .order_by(Skill.name.asc(), Skill.owner_user_id.asc().nullsfirst(), Skill.created_at.desc())
+        )
+        return [
+            RuntimeSkillDescriptor(
+                name=skill.name,
+                description=skill.description or "",
+            )
+            for skill in result.scalars().all()
+        ]
+
+    @staticmethod
+    async def get_runtime_agent_bundle(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        agent_name: str | None,
+    ) -> RuntimeAgentBundle:
+        """Resolve runtime memory, soul, and skills for the given user and agent."""
+        memory_row = await MemoryRepository.get_memory_by_user_id(db, user_id)
+        memory_json = dict(memory_row.memory_json or {}) if memory_row is not None else {}
+
+        normalized_agent_name = agent_name.strip().lower() if isinstance(agent_name, str) and agent_name.strip() else None
+        if normalized_agent_name is None:
+            return RuntimeAgentBundle(
+                user_id=user_id,
+                agent_name=None,
+                memory_json=memory_json,
+                soul=None,
+                skills=await AgentRepository._public_runtime_skills(db),
+            )
+
+        agent = await AgentRepository.get_agent_by_name(db, user_id=user_id, name=normalized_agent_name)
+        if agent is None:
+            return RuntimeAgentBundle(
+                user_id=user_id,
+                agent_name=normalized_agent_name,
+                memory_json=memory_json,
+                soul=None,
+                skills=await AgentRepository._public_runtime_skills(db),
+            )
+
+        return RuntimeAgentBundle(
+            user_id=user_id,
+            agent_name=agent.name,
+            memory_json=memory_json,
+            soul=agent.soul,
+            skills=AgentRepository._active_runtime_skills(agent),
+        )
 
     @staticmethod
     async def update_agent(

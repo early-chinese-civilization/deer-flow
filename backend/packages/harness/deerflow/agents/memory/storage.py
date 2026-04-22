@@ -1,6 +1,7 @@
 """Memory storage providers."""
 
 import abc
+import asyncio
 import json
 import logging
 import threading
@@ -13,6 +14,30 @@ from deerflow.config.memory_config import get_memory_config
 from deerflow.config.paths import get_paths
 
 logger = logging.getLogger(__name__)
+
+
+def _run_async(coro):
+    """Run async DB helpers from both sync and async call sites."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    result: dict[str, Any] = {}
+    error: dict[str, BaseException] = {}
+
+    def _runner() -> None:
+        try:
+            result["value"] = asyncio.run(coro)
+        except BaseException as exc:  # pragma: no cover - re-raised on caller thread
+            error["value"] = exc
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join()
+    if "value" in error:
+        raise error["value"]
+    return result.get("value")
 
 
 def create_empty_memory() -> dict[str, Any]:
@@ -38,17 +63,17 @@ class MemoryStorage(abc.ABC):
     """Abstract base class for memory storage providers."""
 
     @abc.abstractmethod
-    def load(self, agent_name: str | None = None) -> dict[str, Any]:
+    def load(self, user_id: int | None = None, agent_name: str | None = None) -> dict[str, Any]:
         """Load memory data for the given agent."""
         pass
 
     @abc.abstractmethod
-    def reload(self, agent_name: str | None = None) -> dict[str, Any]:
+    def reload(self, user_id: int | None = None, agent_name: str | None = None) -> dict[str, Any]:
         """Force reload memory data for the given agent."""
         pass
 
     @abc.abstractmethod
-    def save(self, memory_data: dict[str, Any], agent_name: str | None = None) -> bool:
+    def save(self, memory_data: dict[str, Any], user_id: int | None = None, agent_name: str | None = None) -> bool:
         """Save memory data for the given agent."""
         pass
 
@@ -100,8 +125,9 @@ class FileMemoryStorage(MemoryStorage):
             logger.warning("Failed to load memory file: %s", e)
             return create_empty_memory()
 
-    def load(self, agent_name: str | None = None) -> dict[str, Any]:
+    def load(self, user_id: int | None = None, agent_name: str | None = None) -> dict[str, Any]:
         """Load memory data (cached with file modification time check)."""
+        del user_id
         file_path = self._get_memory_file_path(agent_name)
 
         try:
@@ -118,8 +144,9 @@ class FileMemoryStorage(MemoryStorage):
 
         return cached[0]
 
-    def reload(self, agent_name: str | None = None) -> dict[str, Any]:
+    def reload(self, user_id: int | None = None, agent_name: str | None = None) -> dict[str, Any]:
         """Reload memory data from file, forcing cache invalidation."""
+        del user_id
         file_path = self._get_memory_file_path(agent_name)
         memory_data = self._load_memory_from_file(agent_name)
 
@@ -131,8 +158,9 @@ class FileMemoryStorage(MemoryStorage):
         self._memory_cache[agent_name] = (memory_data, mtime)
         return memory_data
 
-    def save(self, memory_data: dict[str, Any], agent_name: str | None = None) -> bool:
+    def save(self, memory_data: dict[str, Any], user_id: int | None = None, agent_name: str | None = None) -> bool:
         """Save memory data to file and update cache."""
+        del user_id
         file_path = self._get_memory_file_path(agent_name)
 
         try:
@@ -156,6 +184,83 @@ class FileMemoryStorage(MemoryStorage):
         except OSError as e:
             logger.error("Failed to save memory file: %s", e)
             return False
+
+
+class DatabaseMemoryStorage(MemoryStorage):
+    """Database-backed memory storage provider."""
+
+    def __init__(self):
+        self._memory_cache: dict[int, dict[str, Any]] = {}
+        self._lock = threading.Lock()
+
+    def _require_user_id(self, user_id: int | None) -> int:
+        if user_id is None:
+            raise ValueError("user_id")
+        return user_id
+
+    @staticmethod
+    async def _load_from_db(user_id: int) -> dict[str, Any]:
+        from app.gateway.db.engine import get_db_session
+        from app.gateway.db.repository import MemoryRepository
+
+        async with get_db_session() as db:
+            memory_row = await MemoryRepository.get_memory_by_user_id(db, user_id)
+        logger.info("Loaded memory from database for user %s: exists=%s", user_id, memory_row is not None)
+        return dict(memory_row.memory_json or {}) if memory_row is not None else create_empty_memory()
+
+    @staticmethod
+    async def _save_to_db(user_id: int, memory_data: dict[str, Any]) -> None:
+        from app.gateway.db.engine import get_db_session
+        from app.gateway.db.repository import MemoryRepository
+
+        logger.info(
+            "Persisting memory to database for user %s: facts=%d",
+            user_id,
+            len(memory_data.get("facts", [])),
+        )
+        async with get_db_session() as db:
+            await MemoryRepository.upsert_memory(db, user_id, memory_data, commit=True)
+        logger.info("Persisted memory to database for user %s", user_id)
+
+    def load(self, user_id: int | None = None, agent_name: str | None = None) -> dict[str, Any]:
+        del agent_name
+        normalized_user_id = self._require_user_id(user_id)
+        with self._lock:
+            cached = self._memory_cache.get(normalized_user_id)
+        if cached is not None:
+            logger.debug("Memory cache hit for user %s", normalized_user_id)
+            return cached
+
+        logger.info("Memory cache miss for user %s; loading from database", normalized_user_id)
+        memory_data = _run_async(self._load_from_db(normalized_user_id))
+        with self._lock:
+            self._memory_cache[normalized_user_id] = memory_data
+        return memory_data
+
+    def reload(self, user_id: int | None = None, agent_name: str | None = None) -> dict[str, Any]:
+        del agent_name
+        normalized_user_id = self._require_user_id(user_id)
+        logger.info("Reloading memory from database for user %s", normalized_user_id)
+        memory_data = _run_async(self._load_from_db(normalized_user_id))
+        with self._lock:
+            self._memory_cache[normalized_user_id] = memory_data
+        return memory_data
+
+    def save(self, memory_data: dict[str, Any], user_id: int | None = None, agent_name: str | None = None) -> bool:
+        del agent_name
+        normalized_user_id = self._require_user_id(user_id)
+        memory_data["lastUpdated"] = datetime.utcnow().isoformat() + "Z"
+        try:
+            logger.info("Saving memory through DatabaseMemoryStorage for user %s", normalized_user_id)
+            _run_async(self._save_to_db(normalized_user_id, memory_data))
+        except Exception as exc:
+            logger.error("Failed to save database memory for user %s: %s", normalized_user_id, exc)
+            return False
+
+        with self._lock:
+            self._memory_cache[normalized_user_id] = memory_data
+        logger.info("Memory cache updated after save for user %s", normalized_user_id)
+        return True
 
 
 _storage_instance: MemoryStorage | None = None

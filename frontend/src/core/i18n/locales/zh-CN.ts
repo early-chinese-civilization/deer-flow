@@ -297,6 +297,7 @@ export const zhCN: Translations = {
 
   workspaceFiles: {
     title: "工作区文件列表",
+    files: "文件",
     refresh: "刷新文件列表",
     searchPlaceholder: "搜索文件",
     loadFailed: "加载文件失败",
@@ -315,14 +316,6 @@ export const zhCN: Translations = {
     in_progress: "子任务运行中",
     completed: "子任务已完成",
     failed: "子任务失败",
-  },
-
-  // Token Usage
-  tokenUsage: {
-    title: "Token 用量",
-    input: "输入",
-    output: "输出",
-    total: "总计",
   },
 
   // Shortcuts

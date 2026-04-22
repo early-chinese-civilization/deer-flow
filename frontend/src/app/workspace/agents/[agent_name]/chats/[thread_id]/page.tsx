@@ -14,7 +14,6 @@ import { MessageList } from "@/components/workspace/messages";
 import { ThreadContext } from "@/components/workspace/messages/context";
 import { ThreadTitle } from "@/components/workspace/thread-title";
 import { TodoList } from "@/components/workspace/todo-list";
-import { TokenUsageIndicator } from "@/components/workspace/token-usage-indicator";
 import { Tooltip } from "@/components/workspace/tooltip";
 import { useAgent } from "@/core/agents";
 import { useI18n } from "@/core/i18n/hooks";
@@ -36,7 +35,7 @@ export default function AgentChatPage() {
   const { agent } = useAgent(agent_name);
 
   const { threadId, isNewThread, setIsNewThread } = useThreadChat();
-  const [settings, setSettings] = useThreadSettings(threadId);
+  const [settings] = useThreadSettings(threadId);
 
   const { showNotification } = useNotification();
   const [thread, sendMessage] = useThreadStream({
@@ -115,7 +114,6 @@ export default function AgentChatPage() {
                   <PlusSquare /> {t.agents.newChat}
                 </Button>
               </Tooltip>
-              <TokenUsageIndicator messages={thread.messages} />
               <ExportTrigger threadId={threadId} />
             </div>
           </header>
@@ -163,14 +161,12 @@ export default function AgentChatPage() {
                         ? "streaming"
                         : "ready"
                   }
-                  context={settings.context}
                   extraHeader={
                     isNewThread && (
                       <AgentWelcome agent={agent} agentName={agent_name} />
                     )
                   }
                   disabled={env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true"}
-                  onContextChange={(context) => setSettings("context", context)}
                   onSubmit={handleSubmit}
                   onStop={handleStop}
                 />

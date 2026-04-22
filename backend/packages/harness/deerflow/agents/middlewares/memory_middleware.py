@@ -36,6 +36,25 @@ class MemoryMiddlewareState(AgentState):
     pass
 
 
+def _get_runtime_context(config_data: dict[str, Any]) -> dict[str, Any]:
+    """Resolve runtime context from LangGraph config shapes.
+
+    Depending on the execution path, LangGraph may expose injected context either
+    at the top level (`config["context"]`) or nested under
+    `config["configurable"]["context"]`.
+    """
+    top_level_context = config_data.get("context", {})
+    if isinstance(top_level_context, dict) and top_level_context:
+        return top_level_context
+
+    configurable = config_data.get("configurable", {})
+    if not isinstance(configurable, dict):
+        return {}
+
+    nested_context = configurable.get("context", {})
+    return nested_context if isinstance(nested_context, dict) else {}
+
+
 def _extract_message_text(message: Any) -> str:
     """Extract plain text from message content for filtering and signal detection."""
     content = getattr(message, "content", "")
@@ -148,7 +167,7 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
         """Initialize the MemoryMiddleware.
 
         Args:
-            agent_name: If provided, memory is stored per-agent. If None, uses global memory.
+            agent_name: Optional agent name retained for logging and context.
         """
         super().__init__()
         self._agent_name = agent_name
@@ -166,21 +185,33 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
         """
         config = get_memory_config()
         if not config.enabled:
+            logger.debug("Skipping memory update because memory is disabled")
             return None
 
         # Get thread ID from runtime context first, then fall back to LangGraph's configurable metadata
         thread_id = runtime.context.get("thread_id") if runtime.context else None
+        config_data = get_config()
         if thread_id is None:
-            config_data = get_config()
             thread_id = config_data.get("configurable", {}).get("thread_id")
         if not thread_id:
-            logger.debug("No thread_id in context, skipping memory update")
+            logger.debug("Skipping memory update because no thread_id was available in runtime/config context")
+            return None
+
+        runtime_context = _get_runtime_context(config_data)
+        runtime_agent = runtime_context.get("runtime_agent", {})
+        user_id = runtime_agent.get("user_id") if isinstance(runtime_agent, dict) else None
+        if not isinstance(user_id, int):
+            logger.debug(
+                "Skipping memory update for thread %s because runtime_agent.user_id is missing or invalid: %r",
+                thread_id,
+                user_id,
+            )
             return None
 
         # Get messages from state
         messages = state.get("messages", [])
         if not messages:
-            logger.debug("No messages in state, skipping memory update")
+            logger.debug("Skipping memory update for thread %s because state.messages is empty", thread_id)
             return None
 
         # Filter to only keep user inputs and final assistant responses
@@ -192,13 +223,33 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
         assistant_messages = [m for m in filtered_messages if getattr(m, "type", None) == "ai"]
 
         if not user_messages or not assistant_messages:
+            logger.debug(
+                "Skipping memory update for thread %s after filtering: total=%d filtered=%d human=%d ai=%d",
+                thread_id,
+                len(messages),
+                len(filtered_messages),
+                len(user_messages),
+                len(assistant_messages),
+            )
             return None
 
         # Queue the filtered conversation for memory update
         correction_detected = detect_correction(filtered_messages)
         queue = get_memory_queue()
+        logger.info(
+            "Queueing memory update for thread %s user %s: total_messages=%d filtered_messages=%d human=%d ai=%d correction=%s agent=%s",
+            thread_id,
+            user_id,
+            len(messages),
+            len(filtered_messages),
+            len(user_messages),
+            len(assistant_messages),
+            correction_detected,
+            self._agent_name or "<default>",
+        )
         queue.add(
             thread_id=thread_id,
+            user_id=user_id,
             messages=filtered_messages,
             agent_name=self._agent_name,
             correction_detected=correction_detected,
