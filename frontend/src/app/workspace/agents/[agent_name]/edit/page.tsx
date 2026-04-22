@@ -379,20 +379,22 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                 <p className="text-destructive text-sm">{submitError}</p>
               )}
 
-              <div className="flex items-center justify-end gap-3">
-                <Button
-                  variant="outline"
-                  onClick={() => router.push("/workspace/agents")}
-                  disabled={updateAgent.isPending}
-                >
-                  {t.common.cancel}
-                </Button>
-                <Button onClick={() => void handleSubmit()} disabled={submitDisabled}>
-                  {updateAgent.isPending
-                    ? t.agents.updateButtonPending
-                    : t.agents.updateButton}
-                </Button>
-              </div>
+              {activeSection !== "name" && (
+                <div className="flex items-center justify-end gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={() => router.push("/workspace/agents")}
+                    disabled={updateAgent.isPending}
+                  >
+                    {t.common.cancel}
+                  </Button>
+                  <Button onClick={() => void handleSubmit()} disabled={submitDisabled}>
+                    {updateAgent.isPending
+                      ? t.agents.updateButtonPending
+                      : t.agents.updateButton}
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
         </ScrollArea>
