@@ -1,9 +1,6 @@
 "use client";
 
-import {
-  MoreVerticalIcon,
-  UploadIcon,
-} from "lucide-react";
+import { MoreVerticalIcon, UploadIcon } from "lucide-react";
 import { type ChangeEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -22,10 +19,16 @@ import {
   ItemTitle,
 } from "@/components/ui/item";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { checkSkillDownload, checkSkillUpload } from "@/core/skills";
-import { useDeleteSkill, useDownloadSkill, usePublishSkill, useSkills, useUploadSkills } from "@/core/skills";
-import type { Skill } from "@/core/skills/type";
 import { useI18n } from "@/core/i18n/hooks";
+import { checkSkillDownload, checkSkillUpload } from "@/core/skills";
+import {
+  useDeleteSkill,
+  useDownloadSkill,
+  usePublishSkill,
+  useSkills,
+  useUploadSkills,
+} from "@/core/skills";
+import type { Skill } from "@/core/skills/type";
 
 export function SkillsGallery() {
   const { t } = useI18n();
@@ -54,7 +57,7 @@ export function SkillsGallery() {
       toast.success(`${skill.name} ${t.common.delete}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const match = message.match(/agent '([^']+)'/);
+      const match = /agent '([^']+)'/.exec(message);
       if (match?.[1]) {
         toast.error(t.settings.skills.deleteBlocked(match[1]));
         return;
@@ -83,7 +86,9 @@ export function SkillsGallery() {
       });
       toast.success(t.settings.skills.downloadSuccess(skill.name));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t.settings.skills.uploadError);
+      toast.error(
+        error instanceof Error ? error.message : t.settings.skills.uploadError,
+      );
     }
   }
 
@@ -92,7 +97,9 @@ export function SkillsGallery() {
       await publishSkill.mutateAsync(skill.name);
       toast.success(t.settings.skills.publishSuccess(skill.name));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t.settings.skills.uploadError);
+      toast.error(
+        error instanceof Error ? error.message : t.settings.skills.uploadError,
+      );
     }
   }
 
@@ -120,7 +127,11 @@ export function SkillsGallery() {
         }
         filesToUpload.push(file);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : t.settings.skills.uploadError);
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : t.settings.skills.uploadError,
+        );
       }
     }
 
@@ -144,7 +155,9 @@ export function SkillsGallery() {
         toast.error(`${result.filename}: ${result.message}`);
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t.settings.skills.uploadError);
+      toast.error(
+        error instanceof Error ? error.message : t.settings.skills.uploadError,
+      );
     } finally {
       event.target.value = "";
     }
@@ -188,7 +201,9 @@ export function SkillsGallery() {
         </div>
 
         {isLoading ? (
-          <div className="text-muted-foreground text-sm">{t.common.loading}</div>
+          <div className="text-muted-foreground text-sm">
+            {t.common.loading}
+          </div>
         ) : error ? (
           <div className="text-destructive text-sm">{error.message}</div>
         ) : filteredSkills.length === 0 ? (
