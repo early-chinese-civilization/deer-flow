@@ -12,7 +12,8 @@ from fastapi import HTTPException, Request
 from langchain_core.messages import convert_to_messages
 
 from app.gateway.db.engine import get_db_session
-from app.gateway.db.repository import ThreadRepository
+from app.gateway.db.models import User
+from app.gateway.db.repository import AgentRepository, ThreadRepository
 from app.gateway.deps import get_checkpointer, get_run_manager, get_store, get_stream_bridge
 from app.gateway.services.ownership import ThreadAccessRecord
 from app.gateway.services.thread_store import upsert_thread_record
@@ -41,6 +42,49 @@ _CONTEXT_CONFIGURABLE_KEYS = {
     "subagent_enabled",
     "max_concurrent_subagents",
 }
+
+
+def _resolve_requested_agent_name(body: Any) -> str | None:
+    """Resolve the effective agent_name from request context/configurable payloads."""
+    context = getattr(body, "context", None)
+    if isinstance(context, dict):
+        raw_agent_name = context.get("agent_name")
+        if isinstance(raw_agent_name, str) and raw_agent_name.strip():
+            return raw_agent_name.strip().lower()
+
+    request_config = getattr(body, "config", None)
+    if isinstance(request_config, dict):
+        configurable = request_config.get("configurable", {})
+        if isinstance(configurable, dict):
+            raw_agent_name = configurable.get("agent_name")
+            if isinstance(raw_agent_name, str) and raw_agent_name.strip():
+                return raw_agent_name.strip().lower()
+
+    return None
+
+
+async def _load_runtime_agent_payload(*, user_id: int, agent_name: str | None) -> dict[str, Any]:
+    """Load the runtime agent payload injected into config.context."""
+    async with get_db_session() as db:
+        bundle = await AgentRepository.get_runtime_agent_bundle(
+            db,
+            user_id=user_id,
+            agent_name=agent_name,
+        )
+
+    return {
+        "user_id": bundle.user_id,
+        "agent_name": bundle.agent_name,
+        "memory": bundle.memory_json,
+        "soul": bundle.soul,
+        "skills": [
+            {
+                "name": skill.name,
+                "description": skill.description,
+            }
+            for skill in bundle.skills
+        ],
+    }
 
 
 def _get_thread_workspace_id(thread_record: Any | None) -> str | None:
@@ -239,6 +283,7 @@ async def start_run(
     thread_id: str,
     request: Request,
     *,
+    current_user: User,
     thread_record: Any | None = None,
 ) -> RunRecord:
     """Create a RunRecord and launch the background agent task."""
@@ -314,6 +359,18 @@ async def start_run(
         for key in _CONTEXT_CONFIGURABLE_KEYS:
             if key in context:
                 configurable.setdefault(key, context[key])
+
+    resolved_agent_name = _resolve_requested_agent_name(body)
+    configurable = config.setdefault("configurable", {})
+    if resolved_agent_name:
+        configurable.setdefault("agent_name", resolved_agent_name)
+
+    runtime_context = config.setdefault("context", {})
+    runtime_context.setdefault("thread_id", thread_id)
+    runtime_context["runtime_agent"] = await _load_runtime_agent_payload(
+        user_id=current_user.id,
+        agent_name=resolved_agent_name,
+    )
 
     stream_modes = normalize_stream_modes(body.stream_mode)
 

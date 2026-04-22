@@ -24,7 +24,7 @@ class MemoryConfig(BaseModel):
         ),
     )
     storage_class: str = Field(
-        default="deerflow.agents.memory.storage.FileMemoryStorage",
+        default="deerflow.agents.memory.storage.DatabaseMemoryStorage",
         description="The class path for memory storage provider",
     )
     debounce_seconds: int = Field(

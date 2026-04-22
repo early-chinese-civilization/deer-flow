@@ -1,11 +1,49 @@
 import logging
 from datetime import datetime
 
-from deerflow.config.agents_config import load_agent_soul
-from deerflow.skills import load_skills
+from langgraph.config import get_config
+
 from deerflow.subagents import get_available_subagent_names
 
 logger = logging.getLogger(__name__)
+
+
+def _get_runtime_agent_context(runtime_agent_context: dict | None = None) -> dict:
+    """Return the injected runtime-agent context from args or runnable config."""
+    if isinstance(runtime_agent_context, dict):
+        return runtime_agent_context
+
+    try:
+        config = get_config()
+    except RuntimeError:
+        return {}
+
+    context = config.get("context", {})
+    if not isinstance(context, dict):
+        return {}
+    runtime_agent = context.get("runtime_agent", {})
+    return runtime_agent if isinstance(runtime_agent, dict) else {}
+
+
+def build_runtime_skill_descriptors(skills: list[dict] | None, *, container_base_path: str) -> list[dict[str, str]]:
+    """Build prompt-facing skill descriptors with a swappable location strategy."""
+    if not skills:
+        return []
+
+    descriptors: list[dict[str, str]] = []
+    for skill in skills:
+        name = skill.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        normalized_name = name.strip()
+        descriptors.append(
+            {
+                "name": normalized_name,
+                "description": str(skill.get("description") or ""),
+                "location": f"{container_base_path}/runtime/{normalized_name}/SKILL.md",
+            }
+        )
+    return descriptors
 
 
 def _build_subagent_section(max_concurrent: int) -> str:
@@ -348,7 +386,7 @@ combined with a FastAPI gateway for REST API access [citation:FastAPI](https://f
 """
 
 
-def _get_memory_context(agent_name: str | None = None) -> str:
+def _get_memory_context(agent_name: str | None = None, runtime_agent_context: dict | None = None) -> str:
     """Get memory context for injection into system prompt.
 
     Args:
@@ -365,12 +403,15 @@ def _get_memory_context(agent_name: str | None = None) -> str:
         if not config.enabled or not config.injection_enabled:
             return ""
 
-        memory_data = get_memory_data(agent_name)
+        runtime_agent = _get_runtime_agent_context(runtime_agent_context)
+        memory_data = runtime_agent.get("memory")
+        if not isinstance(memory_data, dict):
+            user_id = runtime_agent.get("user_id")
+            memory_data = get_memory_data(user_id=user_id if isinstance(user_id, int) else None, agent_name=agent_name)
         memory_content = format_memory_for_injection(memory_data, max_tokens=config.max_injection_tokens)
 
         if not memory_content.strip():
             return ""
-
         return f"""<memory>
 {memory_content}
 </memory>
@@ -380,14 +421,15 @@ def _get_memory_context(agent_name: str | None = None) -> str:
         return ""
 
 
-def get_skills_prompt_section(available_skills: set[str] | None = None) -> str:
+def get_skills_prompt_section(
+    available_skills: set[str] | None = None,
+    runtime_agent_context: dict | None = None,
+) -> str:
     """Generate the skills prompt section with available skills list.
 
     Returns the <skill_system>...</skill_system> block listing all enabled skills,
     suitable for injection into any agent's system prompt.
     """
-    skills = load_skills(enabled_only=True)
-
     try:
         from deerflow.config import get_app_config
 
@@ -396,18 +438,25 @@ def get_skills_prompt_section(available_skills: set[str] | None = None) -> str:
     except Exception:
         container_base_path = "/mnt/skills"
 
+    runtime_agent = _get_runtime_agent_context(runtime_agent_context)
+    runtime_skills = runtime_agent.get("skills")
+    if not isinstance(runtime_skills, list):
+        runtime_skills = []
+
+    skills = build_runtime_skill_descriptors(runtime_skills, container_base_path=container_base_path)
     if not skills:
         return ""
 
     if available_skills is not None:
-        skills = [skill for skill in skills if skill.name in available_skills]
+        skills = [skill for skill in skills if skill["name"] in available_skills]
 
     # Check again after filtering
     if not skills:
         return ""
 
     skill_items = "\n".join(
-        f"    <skill>\n        <name>{skill.name}</name>\n        <description>{skill.description}</description>\n        <location>{skill.get_container_file_path(container_base_path)}</location>\n    </skill>" for skill in skills
+        f"    <skill>\n        <name>{skill['name']}</name>\n        <description>{skill['description']}</description>\n        <location>{skill['location']}</location>\n    </skill>"
+        for skill in skills
     )
     skills_list = f"<available_skills>\n{skill_items}\n</available_skills>"
 
@@ -428,9 +477,9 @@ You have access to skills that provide optimized workflows for specific tasks. E
 </skill_system>"""
 
 
-def get_agent_soul(agent_name: str | None) -> str:
-    # Append SOUL.md (agent personality) if present
-    soul = load_agent_soul(agent_name)
+def get_agent_soul(agent_name: str | None, runtime_agent_context: dict | None = None) -> str:
+    runtime_agent = _get_runtime_agent_context(runtime_agent_context)
+    soul = runtime_agent.get("soul")
     if soul:
         return f"<soul>\n{soul}\n</soul>\n" if soul else ""
     return ""
@@ -503,9 +552,16 @@ def _build_custom_mounts_section() -> str:
     return f"\n**Custom Mounted Directories:**\n{mounts_list}\n- If the user needs files outside `/mnt/user-data`, use these absolute container paths directly when they match the requested directory"
 
 
-def apply_prompt_template(subagent_enabled: bool = False, max_concurrent_subagents: int = 3, *, agent_name: str | None = None, available_skills: set[str] | None = None) -> str:
+def apply_prompt_template(
+    subagent_enabled: bool = False,
+    max_concurrent_subagents: int = 3,
+    *,
+    agent_name: str | None = None,
+    available_skills: set[str] | None = None,
+    runtime_agent_context: dict | None = None,
+) -> str:
     # Get memory context
-    memory_context = _get_memory_context(agent_name)
+    memory_context = _get_memory_context(agent_name, runtime_agent_context)
 
     # Include subagent section only if enabled (from runtime parameter)
     n = max_concurrent_subagents
@@ -530,7 +586,7 @@ def apply_prompt_template(subagent_enabled: bool = False, max_concurrent_subagen
     )
 
     # Get skills section
-    skills_section = get_skills_prompt_section(available_skills)
+    skills_section = get_skills_prompt_section(available_skills, runtime_agent_context)
 
     # Get deferred tools section (tool_search)
     deferred_tools_section = get_deferred_tools_prompt_section()
@@ -543,7 +599,7 @@ def apply_prompt_template(subagent_enabled: bool = False, max_concurrent_subagen
     # Format the prompt with dynamic skills and memory
     prompt = SYSTEM_PROMPT_TEMPLATE.format(
         agent_name=agent_name or "DeerFlow 2.0",
-        soul=get_agent_soul(agent_name),
+        soul=get_agent_soul(agent_name, runtime_agent_context),
         skills_section=skills_section,
         deferred_tools_section=deferred_tools_section,
         memory_context=memory_context,
@@ -552,5 +608,4 @@ def apply_prompt_template(subagent_enabled: bool = False, max_concurrent_subagen
         subagent_thinking=subagent_thinking,
         acp_section=acp_and_mounts_section,
     )
-
     return prompt + f"\n<current_date>{datetime.now().strftime('%Y-%m-%d, %A')}</current_date>"
