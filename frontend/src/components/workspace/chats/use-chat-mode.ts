@@ -7,7 +7,7 @@ import { useI18n } from "@/core/i18n/hooks";
 /**
  * Hook to determine if the chat is in a specific mode based on URL parameters, and to set an initial prompt input value accordingly.
  */
-export function useSpecificChatMode() {
+export function useSpecificChatMode(resetKey?: string) {
   const { t } = useI18n();
   const { thread_id: threadIdFromPath } = useParams<{ thread_id: string }>();
   const searchParams = useSearchParams();
@@ -21,12 +21,16 @@ export function useSpecificChatMode() {
   const lastInitialValueRef = useRef<string | undefined>(undefined);
   const setInputRef = useRef(promptInputController.textInput.setInput);
   setInputRef.current = promptInputController.textInput.setInput;
+  const inputResetKey = useMemo(() => {
+    if (!inputInitialValue) {
+      return undefined;
+    }
+    return `${inputInitialValue}:${resetKey ?? ""}`;
+  }, [inputInitialValue, resetKey]);
+
   useEffect(() => {
-    if (
-      inputInitialValue &&
-      inputInitialValue !== lastInitialValueRef.current
-    ) {
-      lastInitialValueRef.current = inputInitialValue;
+    if (inputInitialValue && inputResetKey !== lastInitialValueRef.current) {
+      lastInitialValueRef.current = inputResetKey;
       setTimeout(() => {
         setInputRef.current(inputInitialValue);
         const textarea = document.querySelector("textarea");
@@ -37,5 +41,5 @@ export function useSpecificChatMode() {
         }
       }, 100);
     }
-  }, [inputInitialValue]);
+  }, [inputInitialValue, inputResetKey]);
 }
