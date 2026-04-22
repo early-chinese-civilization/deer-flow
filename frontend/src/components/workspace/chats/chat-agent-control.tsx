@@ -41,7 +41,7 @@ export function DraftAgentControl({
           className="text-muted-foreground min-w-28 w-fit justify-between gap-2 rounded-full px-4 text-xs font-normal transition-colors hover:bg-accent hover:text-accent-foreground"
         >
           <BotIcon className="size-4" />
-          <span className="truncate">{agentName ?? t.agents.selectAgent}</span>
+          <span className="truncate">{agentName ?? t.agents.noAgent}</span>
           <ChevronDownIcon className="size-4" />
         </Button>
       </DropdownMenuTrigger>

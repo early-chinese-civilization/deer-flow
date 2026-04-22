@@ -181,7 +181,7 @@ export const zhCN: Translations = {
     deleteConfirm: "确定要删除该智能体吗？此操作不可撤销。",
     deleteSuccess: "智能体已删除",
     newChat: "新对话",
-    noAgent: "无智能体",
+    noAgent: "默认智能体",
     selectAgent: "选择智能体",
     loadingAgent: "正在解析智能体...",
     createPageTitle: "设计你的智能体",
