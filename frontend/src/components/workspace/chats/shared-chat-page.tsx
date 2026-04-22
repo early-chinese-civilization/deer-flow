@@ -84,7 +84,7 @@ export function SharedChatPage({
     hasMounted ? draftNonceQuery : draftNonceQuery ?? initialDraftNonce ?? null,
   );
 
-  const { threadId, isNewThread, setIsNewThread, isMock } = useThreadChat({
+  const { threadId, isNewThread, commitThreadId, isMock } = useThreadChat({
     draftAgentName,
     draftResetKey: draftNonce,
   });
@@ -127,12 +127,12 @@ export function SharedChatPage({
     threadId: isNewThread ? undefined : threadId,
     context: submitContext,
     isMock,
-    onStart: () => {
-      setIsNewThread(false);
+    onStart: (resolvedThreadId) => {
+      commitThreadId(resolvedThreadId);
       history.replaceState(
         null,
         "",
-        pathOfThread(threadId, {
+        pathOfThread(resolvedThreadId, {
           currentPath: pathname,
           currentSearch: searchParamsString,
           agentName: effectiveAgentName ?? null,
@@ -269,7 +269,11 @@ export function SharedChatPage({
                 )}
               >
                 <div className="flex w-full items-center text-sm font-medium">
-                  <ThreadTitle threadId={threadId} thread={thread} />
+                  <ThreadTitle
+                    threadId={threadId}
+                    thread={thread}
+                    isNewThread={isNewThread}
+                  />
                 </div>
                 <div className="flex items-center gap-2">
                   <ExportTrigger threadId={threadId} />

@@ -5,6 +5,11 @@ import { useEffect, useState } from "react";
 
 import { uuid } from "@/core/utils/uuid";
 
+import {
+  promoteThreadChatState,
+  resolveThreadChatState,
+} from "./thread-chat-state";
+
 export function useThreadChat(options?: {
   draftAgentName?: string | null;
   draftResetKey?: string | null;
@@ -13,24 +18,24 @@ export function useThreadChat(options?: {
   const searchParams = useSearchParams();
   const draftAgentName = options?.draftAgentName ?? searchParams.get("agent");
   const draftResetKey = options?.draftResetKey ?? searchParams.get("draft");
-  const [threadId, setThreadId] = useState(() => {
-    return threadIdFromPath === "new" ? uuid() : threadIdFromPath;
-  });
-
-  const [isNewThread, setIsNewThread] = useState(
-    () => threadIdFromPath === "new",
+  const [threadState, setThreadState] = useState(() =>
+    resolveThreadChatState(threadIdFromPath, uuid),
   );
 
-  useEffect(() => {
-    if (threadIdFromPath === "new") {
-      setIsNewThread(true);
-      setThreadId(uuid());
-      return;
-    }
+  const commitThreadId = (nextThreadId: string) => {
+    setThreadState(promoteThreadChatState(nextThreadId));
+  };
 
-    setIsNewThread(false);
-    setThreadId(threadIdFromPath);
+  useEffect(() => {
+    setThreadState(resolveThreadChatState(threadIdFromPath, uuid));
   }, [draftAgentName, draftResetKey, threadIdFromPath]);
   const isMock = searchParams.get("mock") === "true";
-  return { threadId, isNewThread, setIsNewThread, isMock };
+  return {
+    threadId: threadState.threadId,
+    isNewThread: threadState.isNewThread,
+    setIsNewThread: (value: boolean) =>
+      setThreadState((current) => ({ ...current, isNewThread: value })),
+    commitThreadId,
+    isMock,
+  };
 }

@@ -58,6 +58,17 @@ void test("normalizes mismatched existing-thread agent queries while preserving 
   );
 });
 
+void test("promotes a draft route to the persisted thread id without carrying the draft nonce", () => {
+  assert.equal(
+    pathOfThread("persisted-thread-id", {
+      currentPath: "/workspace/chats/new",
+      currentSearch: "draft=temp-thread-id&agent=hudi",
+      agentName: "hudi",
+    }),
+    "/workspace/chats/persisted-thread-id?agent=hudi",
+  );
+});
+
 void test("falls back to values.agent_name for legacy existing threads", () => {
   assert.equal(
     getThreadAgentName({
