@@ -202,6 +202,7 @@ async def stateless_stream(
         body,
         resolution.thread_id,
         request,
+        current_user=current_user,
         thread_record=resolution.access_record,
     )
 
@@ -250,6 +251,7 @@ async def stateless_wait(
         body,
         resolution.thread_id,
         request,
+        current_user=current_user,
         thread_record=resolution.access_record,
     )
 
