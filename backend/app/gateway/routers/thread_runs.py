@@ -122,8 +122,8 @@ async def create_run(
         body,
         thread_id,
         request,
-        current_user=current_user,
         thread_record=thread_record,
+        current_user=current_user,
     )
     return _record_to_response(record)
 
@@ -149,8 +149,8 @@ async def stream_run(
         body,
         thread_id,
         request,
-        current_user=current_user,
         thread_record=thread_record,
+        current_user=current_user,
     )
 
     return StreamingResponse(
@@ -184,8 +184,8 @@ async def wait_run(
         body,
         thread_id,
         request,
-        current_user=current_user,
         thread_record=thread_record,
+        current_user=current_user,
     )
 
     if record.task is not None:

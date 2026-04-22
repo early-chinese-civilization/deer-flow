@@ -34,3 +34,4 @@ members = ["packages/harness"]
 
 [tool.uv.sources]
 deerflow-harness = { workspace = true }
+ecc-auth = { path = "../../ecc_auth/packages/python", editable = true }

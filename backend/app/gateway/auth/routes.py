@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import os
 
-from ecc_auth import init_dependencies
+from ecc_auth import create_auth_router, init_dependencies
 from ecc_auth.config import KeycloakConfig
 from ecc_auth.identity import AuthIdentity
-from ecc_auth.routes import create_auth_router as create_shared_auth_router
 from fastapi import APIRouter
 
 from app.gateway.auth.service import build_current_user_payload, sync_local_user_from_identity
@@ -23,12 +22,19 @@ def _is_tls_insecure() -> bool:
     }
 
 
+def _get_required_env(name: str) -> str:
+    value = os.environ[name].strip()
+    if not value:
+        raise RuntimeError(f"{name} must not be empty")
+    return value
+
+
 def _build_keycloak_config() -> KeycloakConfig:
-    """Build ecc-auth config without forcing a confidential-client secret."""
+    """Build ecc-auth config and fail fast when required env is missing."""
     return KeycloakConfig(
-        url=os.getenv("KEYCLOAK_URL", ""),
-        realm=os.getenv("KEYCLOAK_REALM", ""),
-        client_id=os.getenv("KEYCLOAK_CLIENT_ID", ""),
+        url=_get_required_env("KEYCLOAK_URL"),
+        realm=_get_required_env("KEYCLOAK_REALM"),
+        client_id=_get_required_env("KEYCLOAK_CLIENT_ID"),
         client_secret=os.getenv("KEYCLOAK_CLIENT_SECRET", ""),
         tls_insecure=_is_tls_insecure(),
     )
@@ -53,7 +59,7 @@ def create_gateway_auth_router(config: KeycloakConfig | None = None) -> APIRoute
 
     router = APIRouter(prefix="/api/auth", tags=["auth"])
     router.include_router(
-        create_shared_auth_router(
+        create_auth_router(
             resolved_config,
             on_user_authenticated=_on_user_authenticated,
             load_current_user=_load_current_user,

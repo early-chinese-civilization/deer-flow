@@ -2,6 +2,7 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+from ecc_auth import AuthSessionMiddleware
 from fastapi import FastAPI
 
 from app.gateway.auth import routes as auth_routes
@@ -182,6 +183,7 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
             },
         ],
     )
+    app.add_middleware(AuthSessionMiddleware)
 
     # CORS is handled by nginx - no need for FastAPI middleware
 

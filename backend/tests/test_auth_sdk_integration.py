@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import jwt
 import pytest
+from ecc_auth import AuthSessionMiddleware
 from ecc_auth.config import KeycloakConfig
 from ecc_auth.identity import AuthIdentity
 from ecc_auth.routes import _decode_auth_state
@@ -38,10 +39,16 @@ def _make_config() -> KeycloakConfig:
     )
 
 
-def _make_client() -> TestClient:
+def _cookie_headers(response) -> list[str]:
+    get_cookies = getattr(response.headers, "get_list", None) or response.headers.getlist
+    return list(get_cookies("set-cookie"))
+
+
+def _make_client(*, raise_server_exceptions: bool = True) -> TestClient:
     app = FastAPI()
+    app.add_middleware(AuthSessionMiddleware)
     app.include_router(auth_routes.create_gateway_auth_router(_make_config()))
-    return TestClient(app)
+    return TestClient(app, raise_server_exceptions=raise_server_exceptions)
 
 
 def _cookie_value(response, name: str) -> str:
@@ -115,8 +122,8 @@ def test_me_hydrates_deerflow_payload_via_shared_refresh_flow() -> None:
     )
 
     with (
-        patch("ecc_auth.routes.verify_access_token", verify_mock),
-        patch("ecc_auth.routes.refresh_token_request", refresh_mock),
+        patch("ecc_auth.session.verify_access_token", verify_mock),
+        patch("ecc_auth.session.refresh_token_request", refresh_mock),
         patch("app.gateway.auth.routes.get_db_session", return_value=_SessionContext(object())),
         patch("app.gateway.auth.routes.build_current_user_payload", payload_mock),
     ):
@@ -130,6 +137,47 @@ def test_me_hydrates_deerflow_payload_via_shared_refresh_flow() -> None:
     payload_mock.assert_awaited_once()
 
 
+def test_me_persists_rotated_cookies_when_payload_hydration_fails() -> None:
+    client = _make_client(raise_server_exceptions=False)
+    verify_mock = AsyncMock(
+        side_effect=[
+            jwt.ExpiredSignatureError("expired"),
+            {
+                "sub": "kc-sub",
+                "name": "Alice",
+                "preferred_username": "alice",
+                "email": "alice@example.com",
+                "email_verified": True,
+            },
+        ]
+    )
+    refresh_mock = AsyncMock(
+        return_value={
+            "access_token": "new-access-token",
+            "refresh_token": "new-refresh-token",
+            "id_token": "id-token",
+            "expires_in": 300,
+            "refresh_expires_in": 1800,
+        }
+    )
+    payload_mock = AsyncMock(side_effect=RuntimeError("db down after refresh"))
+
+    with (
+        patch("ecc_auth.session.verify_access_token", verify_mock),
+        patch("ecc_auth.session.refresh_token_request", refresh_mock),
+        patch("app.gateway.auth.routes.get_db_session", return_value=_SessionContext(object())),
+        patch("app.gateway.auth.routes.build_current_user_payload", payload_mock),
+    ):
+        client.cookies.set("kc_access_token", "expired-access-token")
+        client.cookies.set("kc_refresh_token", "refresh-token")
+        response = client.get("/api/auth/me")
+
+    assert response.status_code == 500
+    cookie_headers = _cookie_headers(response)
+    assert any(header.startswith("kc_access_token=new-access-token") for header in cookie_headers)
+    assert any(header.startswith("kc_refresh_token=new-refresh-token") for header in cookie_headers)
+
+
 def test_logout_sets_explicit_logout_marker() -> None:
     client = _make_client()
     client.cookies.set("kc_id_token", "id-token")
@@ -138,9 +186,7 @@ def test_logout_sets_explicit_logout_marker() -> None:
 
     assert response.status_code == 200
     assert _cookie_value(response, "kc_logout_marker") == "1"
-    assert response.json()["logoutUrl"].startswith(
-        "https://keycloak.example.com/realms/ecc/protocol/openid-connect/logout"
-    )
+    assert response.json()["logoutUrl"].startswith("https://keycloak.example.com/realms/ecc/protocol/openid-connect/logout")
 
 
 def test_create_app_builds_auth_router_after_loading_config() -> None:
@@ -162,6 +208,28 @@ def test_create_app_builds_auth_router_after_loading_config() -> None:
         gateway_app_module.create_app()
 
     assert call_order[:2] == ["config", "router"]
+
+
+def test_create_gateway_auth_router_fails_fast_without_required_keycloak_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("KEYCLOAK_URL", raising=False)
+    monkeypatch.setenv("KEYCLOAK_REALM", "ecc")
+    monkeypatch.setenv("KEYCLOAK_CLIENT_ID", "client-id")
+
+    with pytest.raises(KeyError):
+        auth_routes.create_gateway_auth_router()
+
+
+def test_create_gateway_auth_router_rejects_empty_required_keycloak_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KEYCLOAK_URL", " ")
+    monkeypatch.setenv("KEYCLOAK_REALM", "ecc")
+    monkeypatch.setenv("KEYCLOAK_CLIENT_ID", "client-id")
+
+    with pytest.raises(RuntimeError, match="KEYCLOAK_URL must not be empty"):
+        auth_routes.create_gateway_auth_router()
 
 
 @pytest.mark.anyio
