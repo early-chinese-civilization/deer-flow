@@ -42,6 +42,8 @@ export const zhCN: Translations = {
     preview: "预览",
     cancel: "取消",
     save: "保存",
+    previous: "上一步",
+    next: "下一步",
     install: "安装",
     create: "创建",
     import: "导入",
@@ -209,7 +211,8 @@ export const zhCN: Translations = {
     createNameTitle: "设置智能体名称",
     createNameHint: "只允许字母、数字和连字符，最终会以小写保存。",
     createDescriptionTitle: "补充一句简介",
-    createDescriptionHint: "该描述会展示在智能体列表中，帮助用户快速理解它的用途。",
+    createDescriptionHint:
+      "该描述会展示在智能体列表中，帮助用户快速理解它的用途。",
     createSoulTitle: "编写 SOUL 提示词",
     createSoulHint: "在这里定义智能体的角色、边界和协作风格。",
     createSkillsTitle: "绑定可见技能",
@@ -312,7 +315,8 @@ export const zhCN: Translations = {
     searchPlaceholder: "搜索文件",
     loadFailed: "加载文件失败",
     noWorkspace: "当前没有工作区",
-    noWorkspaceDescription: "该会话还没有绑定 workspace_id，暂时无法读取 OSS 文件列表。",
+    noWorkspaceDescription:
+      "该会话还没有绑定 workspace_id，暂时无法读取 OSS 文件列表。",
     noFiles: "工作区中还没有文件",
     noFilesDescription: "上传文件后会在这里显示。",
     noMatches: "没有匹配的文件",

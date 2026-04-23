@@ -1,4 +1,8 @@
-import type { AgentDraftMode, AgentDraftPatchRequest, AgentDraftPayload } from "./types";
+import type {
+  AgentDraftMode,
+  AgentDraftPatchRequest,
+  AgentDraftPayload,
+} from "./types";
 
 export const AGENT_DRAFT_TABS = [
   "name",
@@ -9,6 +13,7 @@ export const AGENT_DRAFT_TABS = [
 ] as const;
 
 export type AgentDraftTab = (typeof AGENT_DRAFT_TABS)[number];
+export type AgentDraftInputTab = Exclude<AgentDraftTab, "confirm">;
 
 export interface AgentDraftFormState {
   name: string;
@@ -17,7 +22,9 @@ export interface AgentDraftFormState {
   skills: string[];
 }
 
-function orderedUniqueSkillNames(skillNames: string[] | null | undefined): string[] {
+function orderedUniqueSkillNames(
+  skillNames: string[] | null | undefined,
+): string[] {
   if (!skillNames?.length) {
     return [];
   }
@@ -69,4 +76,20 @@ export function canFinalizeAgentDraft(
     return true;
   }
   return form.name.trim().length > 0;
+}
+
+export function isAgentDraftInputComplete(
+  tab: AgentDraftInputTab,
+  form: AgentDraftFormState,
+): boolean {
+  switch (tab) {
+    case "name":
+      return form.name.trim().length > 0;
+    case "description":
+      return form.description.trim().length > 0;
+    case "soul":
+      return form.soul.trim().length > 0;
+    case "skills":
+      return form.skills.length > 0;
+  }
 }

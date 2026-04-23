@@ -31,6 +31,8 @@ export interface Translations {
     preview: string;
     cancel: string;
     save: string;
+    previous: string;
+    next: string;
     install: string;
     create: string;
     import: string;
