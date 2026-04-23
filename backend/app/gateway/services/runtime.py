@@ -420,6 +420,10 @@ async def start_run(
     )
     _apply_trusted_run_context(config, trusted_context)
     public_config = build_public_run_config(config)
+    resolved_agent_name = config.get("configurable", {}).get("agent_name")
+    thread_metadata = dict(body.metadata or {})
+    if isinstance(resolved_agent_name, str) and resolved_agent_name.strip():
+        thread_metadata.setdefault("agent_name", resolved_agent_name)
 
     try:
         record = await run_mgr.create_or_reject(
@@ -442,19 +446,36 @@ async def start_run(
                     store=store,
                     thread_id=thread_id,
                     status="busy",
-                    metadata=body.metadata,
+                    metadata=thread_metadata or None,
                 )
             except Exception:
                 logger.warning("Failed to mark Store thread %s busy", thread_id, exc_info=True)
         try:
             async with get_db_session() as db:
+                resolved_agent_id: int | None = None
+                if (
+                    isinstance(resolved_agent_name, str)
+                    and resolved_agent_name.strip()
+                    and current_user is not None
+                    and getattr(current_user, "id", None) is not None
+                ):
+                    agent = await AgentRepository.get_agent_by_name(
+                        db,
+                        user_id=current_user.id,
+                        name=resolved_agent_name,
+                    )
+                    if agent is not None:
+                        resolved_agent_id = agent.id
+
                 update_kwargs: dict[str, Any] = {
                     "db": db,
                     "thread_id": thread_id,
                     "status": "busy",
                 }
-                if body.metadata is not None:
-                    update_kwargs["metadata"] = body.metadata
+                if resolved_agent_id is not None:
+                    update_kwargs["agent_id"] = resolved_agent_id
+                if thread_metadata:
+                    update_kwargs["metadata"] = thread_metadata
                 await ThreadRepository.update_thread(**update_kwargs)
         except Exception:
             logger.warning("Failed to mark DB thread %s busy", thread_id, exc_info=True)
