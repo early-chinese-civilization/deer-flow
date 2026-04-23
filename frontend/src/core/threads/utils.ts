@@ -2,29 +2,40 @@ import type { Message } from "@langchain/langgraph-sdk";
 
 import type { AgentThread } from "./types";
 
-type ThreadRouteRef = Pick<AgentThread, "thread_id" | "metadata" | "values">;
+type ThreadRouteRef = {
+  thread_id: string;
+  metadata?: Record<string, unknown> | null;
+  values?: Record<string, unknown> | null;
+};
+type SearchParamsInput = string | URLSearchParams | null | undefined;
 
-function getThreadAgentName(thread: ThreadRouteRef): string | undefined {
-  const metadataAgentName = thread.metadata?.agent_name;
-  if (
-    typeof metadataAgentName === "string" &&
-    metadataAgentName.trim().length > 0
-  ) {
-    return metadataAgentName;
+const CHAT_AGENT_QUERY_KEY = "agent";
+const CHAT_DRAFT_QUERY_KEY = "draft";
+
+function normalizeAgentName(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
   }
-
-  const valuesAgentName = thread.values?.agent_name;
-  if (
-    typeof valuesAgentName === "string" &&
-    valuesAgentName.trim().length > 0
-  ) {
-    return valuesAgentName;
-  }
-
-  return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function getAgentNameFromCurrentPath(
+function toSearchParams(search: SearchParamsInput): URLSearchParams {
+  if (search instanceof URLSearchParams) {
+    return new URLSearchParams(search);
+  }
+  if (typeof search === "string") {
+    return new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  }
+  return new URLSearchParams();
+}
+
+function buildRoute(pathname: string, searchParams: URLSearchParams): string {
+  const query = searchParams.toString();
+  return query ? `${pathname}?${query}` : pathname;
+}
+
+function getAgentNameFromLegacyThreadPath(
   currentPath: string | undefined,
   threadId: string,
 ): string | undefined {
@@ -39,44 +50,127 @@ function getAgentNameFromCurrentPath(
     return undefined;
   }
 
-  return decodeURIComponent(match[1]!);
+  return normalizeAgentName(decodeURIComponent(match[1]!));
 }
 
-function getAgentNameFromChatNamespace(
+function getAgentNameFromCurrentChatRoute(
   currentPath: string | undefined,
+  currentSearch: SearchParamsInput,
+  threadId: string,
 ): string | undefined {
   if (currentPath == null) {
     return undefined;
   }
 
-  const match = /^\/workspace\/agents\/([^/]+)\/chats(?:\/[^/]+)?$/.exec(
-    currentPath,
-  );
-  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+  const match = /^\/workspace\/chats\/([^/]+)$/.exec(currentPath);
+  if (match?.[1] !== threadId) {
+    return undefined;
+  }
+
+  return normalizeAgentName(toSearchParams(currentSearch).get(CHAT_AGENT_QUERY_KEY));
+}
+
+export function getThreadAgentName(
+  thread: Pick<ThreadRouteRef, "metadata" | "values">,
+): string | undefined {
+  const metadataAgentName = normalizeAgentName(thread.metadata?.agent_name);
+  if (metadataAgentName) {
+    return metadataAgentName;
+  }
+
+  return normalizeAgentName(thread.values?.agent_name);
+}
+
+function buildChatSearchParams(
+  currentSearch: SearchParamsInput,
+  options: {
+    agentName?: string | null;
+    hasExplicitAgentName: boolean;
+    draftNonce?: string | null;
+    hasExplicitDraftNonce: boolean;
+  },
+): URLSearchParams {
+  const params = toSearchParams(currentSearch);
+
+  if (options.hasExplicitAgentName) {
+    const agentName = normalizeAgentName(options.agentName);
+    if (agentName) {
+      params.set(CHAT_AGENT_QUERY_KEY, agentName);
+    } else {
+      params.delete(CHAT_AGENT_QUERY_KEY);
+    }
+  }
+
+  if (options.hasExplicitDraftNonce) {
+    const draftNonce =
+      typeof options.draftNonce === "string" && options.draftNonce.trim()
+        ? options.draftNonce.trim()
+        : undefined;
+    if (draftNonce) {
+      params.set(CHAT_DRAFT_QUERY_KEY, draftNonce);
+    } else {
+      params.delete(CHAT_DRAFT_QUERY_KEY);
+    }
+  }
+
+  return params;
+}
+
+export function currentRouteOf(
+  pathname: string,
+  currentSearch?: SearchParamsInput,
+): string {
+  return buildRoute(pathname, toSearchParams(currentSearch));
 }
 
 export function pathOfThread(
   thread: ThreadRouteRef | string,
-  options?: { currentPath?: string },
+  options?: {
+    currentPath?: string;
+    currentSearch?: SearchParamsInput;
+    agentName?: string | null;
+  },
 ) {
   const threadId = typeof thread === "string" ? thread : thread.thread_id;
-  const agentName =
+  const hasExplicitAgentName = options != null && "agentName" in options;
+  const inferredAgentName =
     typeof thread === "string" ? undefined : getThreadAgentName(thread);
-  const resolvedAgentName =
-    agentName ?? getAgentNameFromCurrentPath(options?.currentPath, threadId);
+  const fallbackAgentName =
+    getAgentNameFromLegacyThreadPath(options?.currentPath, threadId) ??
+    getAgentNameFromCurrentChatRoute(
+      options?.currentPath,
+      options?.currentSearch,
+      threadId,
+    );
+  const resolvedAgentName = hasExplicitAgentName
+    ? normalizeAgentName(options?.agentName)
+    : inferredAgentName ?? fallbackAgentName;
 
-  if (resolvedAgentName) {
-    return `/workspace/agents/${encodeURIComponent(resolvedAgentName)}/chats/${threadId}`;
-  }
-  return `/workspace/chats/${threadId}`;
+  const searchParams = buildChatSearchParams(options?.currentSearch, {
+    agentName: resolvedAgentName ?? null,
+    hasExplicitAgentName: true,
+    draftNonce: null,
+    hasExplicitDraftNonce: true,
+  });
+
+  return buildRoute(`/workspace/chats/${threadId}`, searchParams);
 }
 
-export function pathOfNewThread(currentPath?: string) {
-  const agentName = getAgentNameFromChatNamespace(currentPath);
-  if (agentName) {
-    return `/workspace/agents/${encodeURIComponent(agentName)}/chats/new`;
-  }
-  return "/workspace/chats/new";
+export function pathOfNewThread(options?: {
+  currentSearch?: SearchParamsInput;
+  agentName?: string | null;
+  draftNonce?: string | null;
+}) {
+  const hasExplicitAgentName = options != null && "agentName" in options;
+  const hasExplicitDraftNonce = options != null && "draftNonce" in options;
+  const searchParams = buildChatSearchParams(options?.currentSearch, {
+    agentName: options?.agentName ?? null,
+    hasExplicitAgentName,
+    draftNonce: options?.draftNonce ?? null,
+    hasExplicitDraftNonce,
+  });
+
+  return buildRoute("/workspace/chats/new", searchParams);
 }
 
 export function textOfMessage(message: Message) {

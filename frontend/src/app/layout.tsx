@@ -2,6 +2,7 @@ import "@/styles/globals.css";
 import "katex/dist/katex.min.css";
 
 import { type Metadata } from "next";
+import { NuqsAdapter } from "nuqs/adapters/next/app";
 
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/core/auth";
@@ -22,7 +23,9 @@ export default async function RootLayout({
       <body>
         <ThemeProvider attribute="class" enableSystem disableTransitionOnChange>
           <I18nProvider initialLocale={locale}>
-            <AuthProvider>{children}</AuthProvider>
+            <NuqsAdapter>
+              <AuthProvider>{children}</AuthProvider>
+            </NuqsAdapter>
           </I18nProvider>
         </ThemeProvider>
       </body>

@@ -5,7 +5,7 @@ import {
   MessageSquarePlusIcon,
   SettingsIcon,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
@@ -25,6 +25,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useI18n } from "@/core/i18n/hooks";
+import { pathOfNewThread } from "@/core/threads/utils";
+import { uuid } from "@/core/utils/uuid";
 import { useGlobalShortcuts } from "@/hooks/use-global-shortcuts";
 
 import { SettingsDialog } from "./settings";
@@ -32,6 +34,7 @@ import { SettingsDialog } from "./settings";
 export function CommandPalette() {
   const { t } = useI18n();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -39,9 +42,15 @@ export function CommandPalette() {
   const [isMac, setIsMac] = useState(false);
 
   const handleNewChat = useCallback(() => {
-    router.push("/workspace/chats/new");
+    router.push(
+      pathOfNewThread({
+        currentSearch: searchParams.toString(),
+        agentName: null,
+        draftNonce: uuid(),
+      }),
+    );
     setOpen(false);
-  }, [router]);
+  }, [router, searchParams]);
 
   const handleOpenSettings = useCallback(() => {
     setOpen(false);

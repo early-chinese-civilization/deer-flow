@@ -66,6 +66,7 @@ export function InputBox({
   autoFocus,
   status = "ready",
   extraHeader,
+  agentControl,
   isNewThread,
   threadId,
   initialValue,
@@ -77,6 +78,7 @@ export function InputBox({
   status?: ChatStatus;
   disabled?: boolean;
   extraHeader?: React.ReactNode;
+  agentControl?: React.ReactNode;
   isNewThread?: boolean;
   threadId: string;
   initialValue?: string;
@@ -85,6 +87,7 @@ export function InputBox({
 }) {
   const { t } = useI18n();
   const searchParams = useSearchParams();
+  const mode = searchParams.get("mode");
   const [mounted, setMounted] = useState(false);
   const { thread, isMock } = useThread();
   const { textInput } = usePromptInputController();
@@ -257,6 +260,9 @@ export function InputBox({
     );
   }
 
+  const showSuggestionList = isNewThread && mode !== "skill";
+  const showNewThreadFooter = isNewThread && (agentControl != null || showSuggestionList);
+
   return (
     <div ref={promptRootRef} className="relative">
       <PromptInput
@@ -273,7 +279,9 @@ export function InputBox({
         {extraHeader && (
           <div className="absolute top-0 right-0 left-0 z-10">
             <div className="absolute right-0 bottom-0 left-0 flex items-center justify-center">
-              {extraHeader}
+              <div className="flex h-40 w-full items-center justify-center">
+                {extraHeader}
+              </div>
             </div>
           </div>
         )}
@@ -290,16 +298,8 @@ export function InputBox({
           />
         </PromptInputBody>
         <PromptInputFooter className="flex justify-between">
-          <PromptInputTools>
-            {/* TODO: Add more connectors here
-          <PromptInputActionMenu>
-            <PromptInputActionMenuTrigger className="px-2!" />
-            <PromptInputActionMenuContent>
-              <PromptInputActionAddAttachments
-                label={t.inputBox.addAttachments}
-              />
-            </PromptInputActionMenuContent>
-          </PromptInputActionMenu> */}
+          <PromptInputTools className="flex items-center gap-2">
+            {agentControl}
             <AddAttachmentsButton className="px-2!" />
           </PromptInputTools>
           <PromptInputTools>
@@ -311,12 +311,19 @@ export function InputBox({
             />
           </PromptInputTools>
         </PromptInputFooter>
-        {isNewThread && searchParams.get("mode") !== "skill" && (
-          <div className="absolute right-0 -bottom-20 left-0 z-0 flex items-center justify-center">
-            <SuggestionList />
+        {showNewThreadFooter && (
+          <div className="absolute right-0 -bottom-28 left-0 z-0 flex items-center justify-center px-4">
+            <div className="flex w-full max-w-full justify-center">
+              {showSuggestionList && <SuggestionList />}
+            </div>
           </div>
         )}
-        {!isNewThread && (
+        {!isNewThread && agentControl && (
+          <div className="absolute right-0 -bottom-20 left-0 z-0 flex items-center justify-center">
+            {agentControl}
+          </div>
+        )}
+        {!isNewThread && !agentControl && (
           <div className="bg-background absolute right-0 -bottom-[17px] left-0 z-0 h-4"></div>
         )}
       </PromptInput>

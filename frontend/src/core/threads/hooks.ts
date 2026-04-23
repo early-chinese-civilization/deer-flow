@@ -570,7 +570,7 @@ export function useThreads(
     limit: 50,
     sortBy: "updated_at",
     sortOrder: "desc",
-    select: ["thread_id", "updated_at", "values"],
+    select: ["thread_id", "updated_at", "values", "metadata"],
   },
 ) {
   const apiClient = getAPIClient();

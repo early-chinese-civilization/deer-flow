@@ -196,10 +196,11 @@ class ThreadRepository:
         thread_id: str,
         title: str | None = None,
         status: str | None = None,
+        agent_id: int | None = None,
         metadata: dict[str, Any] | None = None,
         commit: bool = True,
     ) -> Thread | None:
-        """Patch title, status, and metadata for an existing thread."""
+        """Patch title, status, agent binding, and metadata for an existing thread."""
         thread = await ThreadRepository.get_thread_by_id(db, thread_id)
         if thread is None:
             return None
@@ -208,6 +209,8 @@ class ThreadRepository:
             thread.title = title
         if status is not None:
             thread.status = status
+        if agent_id is not None:
+            thread.agent_id = agent_id
         if metadata:
             merged_metadata = dict(thread.thread_metadata or {})
             merged_metadata.update(metadata)

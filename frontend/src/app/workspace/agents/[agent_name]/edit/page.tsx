@@ -151,7 +151,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
     });
   }
 
-  async function handleSubmit() {
+  async function handleSubmit(options?: { silent?: boolean; navigateBack?: boolean }) {
     if (!agentName) {
       return;
     }
@@ -166,8 +166,12 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
           skills: form.skills,
         },
       });
-      toast.success(t.agents.updateSuccess);
-      router.push("/workspace/agents");
+      if (!options?.silent) {
+        toast.success(t.agents.updateSuccess);
+      }
+      if (options?.navigateBack) {
+        router.push("/workspace/agents");
+      }
     } catch (error) {
       const message =
         error instanceof Error && error.message ? error.message : t.agents.updateError;
@@ -176,8 +180,22 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
     }
   }
 
+  const isDirty = useMemo(() => {
+    if (!agent || !isInitialized) return false;
+    return (
+      form.description.trim() !== (agent.description ?? "").trim() ||
+      form.soul.trim() !== (agent.soul ?? "").trim() ||
+      JSON.stringify(form.skills.sort()) !== JSON.stringify((agent.skills ?? []).sort())
+    );
+  }, [agent, isInitialized, form]);
+
   const submitDisabled =
-    updateAgent.isPending || agentLoading || !!agentError || !agentName || !isInitialized;
+    updateAgent.isPending ||
+    agentLoading ||
+    !!agentError ||
+    !agentName ||
+    !isInitialized ||
+    !isDirty;
 
   const currentPanel = (() => {
     if (activeSection === "name") {
@@ -320,9 +338,6 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
             </p>
           </div>
         </div>
-        <Button onClick={() => void handleSubmit()} disabled={submitDisabled}>
-          {updateAgent.isPending ? t.agents.updateButtonPending : t.agents.updateButton}
-        </Button>
       </header>
 
       <main className="grid min-h-0 flex-1 gap-4 p-4 md:grid-cols-[220px_1fr]">
@@ -364,20 +379,22 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                 <p className="text-destructive text-sm">{submitError}</p>
               )}
 
-              <div className="flex items-center justify-end gap-3 border-t pt-4">
-                <Button
-                  variant="outline"
-                  onClick={() => router.push("/workspace/agents")}
-                  disabled={updateAgent.isPending}
-                >
-                  {t.common.cancel}
-                </Button>
-                <Button onClick={() => void handleSubmit()} disabled={submitDisabled}>
-                  {updateAgent.isPending
-                    ? t.agents.updateButtonPending
-                    : t.agents.updateButton}
-                </Button>
-              </div>
+              {activeSection !== "name" && (
+                <div className="flex items-center justify-end gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={() => router.push("/workspace/agents")}
+                    disabled={updateAgent.isPending}
+                  >
+                    {t.common.cancel}
+                  </Button>
+                  <Button onClick={() => void handleSubmit()} disabled={submitDisabled}>
+                    {updateAgent.isPending
+                      ? t.agents.updateButtonPending
+                      : t.agents.updateButton}
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
         </ScrollArea>

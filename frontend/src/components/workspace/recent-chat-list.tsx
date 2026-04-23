@@ -10,7 +10,7 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useParams, usePathname, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
@@ -55,6 +55,7 @@ import {
 } from "@/core/threads/hooks";
 import type { AgentThread, AgentThreadState } from "@/core/threads/types";
 import {
+  currentRouteOf,
   pathOfNewThread,
   pathOfThread,
   titleOfThread,
@@ -66,6 +67,9 @@ export function RecentChatList() {
   const { t } = useI18n();
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const currentSearch = searchParams.toString();
+  const currentRoute = currentRouteOf(pathname, currentSearch);
   const { thread_id: threadIdFromPath } = useParams<{ thread_id: string }>();
   const { data: threads = [] } = useThreads();
   const { mutate: deleteThread } = useDeleteThread();
@@ -81,22 +85,27 @@ export function RecentChatList() {
       deleteThread({ threadId });
       if (threadId === threadIdFromPath) {
         const threadIndex = threads.findIndex((t) => t.thread_id === threadId);
-        let nextThreadPath = pathOfNewThread(pathname);
+        let nextThreadPath = pathOfNewThread({
+          currentSearch,
+          agentName: null,
+        });
         if (threadIndex > -1) {
           if (threads[threadIndex + 1]) {
             nextThreadPath = pathOfThread(threads[threadIndex + 1]!, {
               currentPath: pathname,
+              currentSearch,
             });
           } else if (threads[threadIndex - 1]) {
             nextThreadPath = pathOfThread(threads[threadIndex - 1]!, {
               currentPath: pathname,
+              currentSearch,
             });
           }
         }
         void router.push(nextThreadPath);
       }
     },
-    [deleteThread, pathname, router, threadIdFromPath, threads],
+    [currentSearch, deleteThread, pathname, router, threadIdFromPath, threads],
   );
 
   const handleRenameClick = useCallback(
@@ -122,6 +131,7 @@ export function RecentChatList() {
       const shareUrl = new URL(
         pathOfThread(thread, {
           currentPath: pathname,
+          currentSearch,
         }),
         window.location.origin,
       ).toString();
@@ -132,7 +142,7 @@ export function RecentChatList() {
         toast.error(t.clipboard.failedToCopyToClipboard);
       }
     },
-    [pathname, t],
+    [currentSearch, pathname, t],
   );
 
   const handleExport = useCallback(
@@ -177,8 +187,9 @@ export function RecentChatList() {
               {threads.map((thread) => {
                 const threadPath = pathOfThread(thread, {
                   currentPath: pathname,
+                  currentSearch,
                 });
-                const isActive = threadPath === pathname;
+                const isActive = threadPath === currentRoute;
                 return (
                   <SidebarMenuItem
                     key={thread.thread_id}

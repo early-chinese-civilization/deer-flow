@@ -595,6 +595,87 @@ async def test_start_run_marks_store_busy_before_db_mirror(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_start_run_binds_thread_agent_id_from_resolved_agent_name(monkeypatch):
+    from app.gateway.services.runtime import start_run
+    from deerflow.runtime import DisconnectMode, RunStatus
+
+    thread = SimpleNamespace(
+        thread_id="thread-1",
+        workspace_id=uuid4(),
+    )
+    body = SimpleNamespace(
+        on_disconnect="cancel",
+        assistant_id="lead_agent",
+        metadata=None,
+        input={"messages": [{"role": "user", "content": "hi"}]},
+        config=None,
+        context={"agent_name": "shiz"},
+        multitask_strategy="reject",
+        stream_mode=None,
+        stream_subgraphs=False,
+        interrupt_before=None,
+        interrupt_after=None,
+    )
+    bridge = SimpleNamespace()
+    checkpointer = SimpleNamespace()
+    store = SimpleNamespace()
+    record = SimpleNamespace(
+        run_id="run-1",
+        thread_id="thread-1",
+        assistant_id=None,
+        status=RunStatus.pending,
+        metadata={},
+        kwargs={},
+        multitask_strategy="reject",
+        created_at="",
+        updated_at="",
+        on_disconnect=DisconnectMode.cancel,
+        task=None,
+    )
+    run_mgr = SimpleNamespace(create_or_reject=AsyncMock(return_value=record))
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                stream_bridge=bridge,
+                run_manager=run_mgr,
+                checkpointer=checkpointer,
+                store=store,
+            )
+        )
+    )
+
+    async def _run_agent(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("app.gateway.services.runtime.run_agent", _run_agent)
+    monkeypatch.setattr("app.gateway.services.runtime._sync_thread_product_state_after_run", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.gateway.services.runtime._sync_bound_workspace_to_thread", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.gateway.services.runtime._load_runtime_agent_payload", AsyncMock(return_value={}))
+    monkeypatch.setattr("app.gateway.services.runtime.upsert_thread_record", AsyncMock(return_value=None))
+    update_thread_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr("app.gateway.services.runtime.ThreadRepository.update_thread", update_thread_mock)
+    get_agent_by_name_mock = AsyncMock(return_value=SimpleNamespace(id=42, name="shiz"))
+    monkeypatch.setattr("app.gateway.services.runtime.AgentRepository.get_agent_by_name", get_agent_by_name_mock)
+
+    await start_run(
+        body,
+        "thread-1",
+        request,
+        thread_record=thread,
+        current_user=SimpleNamespace(id=7),
+    )
+    await asyncio.sleep(0)
+
+    get_agent_by_name_mock.assert_awaited_once()
+    assert get_agent_by_name_mock.await_args.kwargs["user_id"] == 7
+    assert get_agent_by_name_mock.await_args.kwargs["name"] == "shiz"
+    assert update_thread_mock.await_args.kwargs["thread_id"] == "thread-1"
+    assert update_thread_mock.await_args.kwargs["status"] == "busy"
+    assert update_thread_mock.await_args.kwargs["agent_id"] == 42
+    assert update_thread_mock.await_args.kwargs["metadata"] == {"agent_name": "shiz"}
+
+
+@pytest.mark.anyio
 async def test_start_run_overwrites_client_identity_context(monkeypatch):
     from app.gateway.services.runtime import start_run
     from deerflow.runtime import DisconnectMode, RunStatus
