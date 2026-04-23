@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from deerflow.config.paths import get_paths
 from deerflow.skills.loader import get_skills_root_path, load_skills
 
 
@@ -12,20 +13,19 @@ def _write_skill(skill_dir: Path, name: str, description: str) -> None:
     (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
 
 
-def test_get_skills_root_path_points_to_project_root_skills():
-    """get_skills_root_path() should point to deer-flow/skills (sibling of backend/), not backend/packages/skills."""
+def test_get_skills_root_path_points_to_shared_fs_skills():
+    """get_skills_root_path() should point to the shared `.deer-flow/skills` root."""
     path = get_skills_root_path()
-    assert path.name == "skills", f"Expected 'skills', got '{path.name}'"
-    assert (path.parent / "backend").is_dir(), f"Expected skills path's parent to be project root containing 'backend/', but got {path}"
+    assert path == get_paths().shared_fs_root / "skills"
 
 
-def test_load_skills_discovers_nested_skills_and_sets_container_paths(tmp_path: Path):
-    """Nested skills should be discovered recursively with correct container paths."""
+def test_load_skills_discovers_public_and_user_scoped_skills_with_virtual_paths(tmp_path: Path):
+    """Nested public and per-user skills should be discovered with unified virtual paths."""
     skills_root = tmp_path / "skills"
 
     _write_skill(skills_root / "public" / "root-skill", "root-skill", "Root skill")
     _write_skill(skills_root / "public" / "parent" / "child-skill", "child-skill", "Child skill")
-    _write_skill(skills_root / "custom" / "team" / "helper", "team-helper", "Team helper")
+    _write_skill(skills_root / "7" / "team-helper", "team-helper", "Team helper")
 
     skills = load_skills(skills_path=skills_root, use_config=False, enabled_only=False)
     by_name = {skill.name: skill for skill in skills}
@@ -36,14 +36,14 @@ def test_load_skills_discovers_nested_skills_and_sets_container_paths(tmp_path: 
     child_skill = by_name["child-skill"]
     team_skill = by_name["team-helper"]
 
-    assert root_skill.skill_path == "root-skill"
-    assert root_skill.get_container_file_path() == "/mnt/skills/public/root-skill/SKILL.md"
+    assert root_skill.skill_path == "public/root-skill"
+    assert root_skill.get_container_file_path() == "/mnt/skills/root-skill/SKILL.md"
 
-    assert child_skill.skill_path == "parent/child-skill"
-    assert child_skill.get_container_file_path() == "/mnt/skills/public/parent/child-skill/SKILL.md"
+    assert child_skill.skill_path == "public/parent/child-skill"
+    assert child_skill.get_container_file_path() == "/mnt/skills/child-skill/SKILL.md"
 
-    assert team_skill.skill_path == "team/helper"
-    assert team_skill.get_container_file_path() == "/mnt/skills/custom/team/helper/SKILL.md"
+    assert team_skill.skill_path == "7/team-helper"
+    assert team_skill.get_container_file_path() == "/mnt/skills/team-helper/SKILL.md"
 
 
 def test_load_skills_skips_hidden_directories(tmp_path: Path):
@@ -62,3 +62,15 @@ def test_load_skills_skips_hidden_directories(tmp_path: Path):
 
     assert "ok-skill" in names
     assert "secret-skill" not in names
+
+
+def test_load_skills_keeps_legacy_custom_directory_compatibility(tmp_path: Path):
+    """Legacy `custom/` skills should still load for standalone/local callers."""
+    skills_root = tmp_path / "skills"
+    _write_skill(skills_root / "custom" / "legacy-tool", "legacy-tool", "Legacy custom skill")
+
+    skills = load_skills(skills_path=skills_root, use_config=False, enabled_only=False)
+
+    assert [skill.name for skill in skills] == ["legacy-tool"]
+    assert skills[0].category == "custom"
+    assert skills[0].skill_path == "custom/legacy-tool"

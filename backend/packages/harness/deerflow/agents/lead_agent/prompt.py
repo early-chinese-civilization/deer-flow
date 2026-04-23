@@ -3,6 +3,7 @@ from datetime import datetime
 
 from langgraph.config import get_config
 
+from deerflow.skills.path_utils import build_skill_virtual_path
 from deerflow.subagents import get_available_subagent_names
 
 logger = logging.getLogger(__name__)
@@ -36,11 +37,14 @@ def build_runtime_skill_descriptors(skills: list[dict] | None, *, container_base
         if not isinstance(name, str) or not name.strip():
             continue
         normalized_name = name.strip()
+        virtual_path = skill.get("virtual_path")
+        if not isinstance(virtual_path, str) or not virtual_path.strip():
+            virtual_path = build_skill_virtual_path(normalized_name, container_base_path=container_base_path)
         descriptors.append(
             {
                 "name": normalized_name,
                 "description": str(skill.get("description") or ""),
-                "location": f"{container_base_path}/runtime/{normalized_name}/SKILL.md",
+                "location": virtual_path,
             }
         )
     return descriptors
@@ -464,7 +468,7 @@ def get_skills_prompt_section(
 You have access to skills that provide optimized workflows for specific tasks. Each skill contains best practices, frameworks, and references to additional resources.
 
 **Progressive Loading Pattern:**
-1. When a user query matches a skill's use case, immediately call `read_file` on the skill's main file using the path attribute provided in the skill tag below
+1. When a user query matches a skill's use case, immediately call `skill_load` on the skill's main file using the path attribute provided in the skill tag below
 2. Read and understand the skill's workflow and instructions
 3. The skill file contains references to external resources under the same folder
 4. Load referenced resources only when needed during execution

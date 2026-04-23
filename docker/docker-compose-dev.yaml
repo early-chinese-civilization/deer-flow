@@ -32,17 +32,17 @@ services:
     environment:
       - K8S_NAMESPACE=deer-flow
       - SANDBOX_IMAGE=enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest
-      # Host paths for K8s HostPath volumes (must be absolute paths accessible by K8s node)
-      # On Docker Desktop/OrbStack, use your actual host paths like /Users/username/...
-      # Set these in your shell before running docker-compose:
-      #   export DEER_FLOW_ROOT=/absolute/path/to/deer-flow
-      - SKILLS_HOST_PATH=${DEER_FLOW_ROOT}/skills
-      - THREADS_HOST_PATH=${DEER_FLOW_ROOT}/backend/.deer-flow/threads
+      # Host paths for K8s hostPath volumes.
+      # For Docker Desktop Kubernetes hostPath mounts, use Linux-side paths that
+      # are visible from the Docker Desktop VM / K8s node, not raw Windows paths.
+      - SKILLS_HOST_PATH=${K8S_SKILLS_HOST_PATH}
+      - SHARED_FS_HOST_PATH=${K8S_SHARED_FS_HOST_PATH}
+      - WORKSPACES_HOST_PATH=${K8S_WORKSPACES_HOST_PATH}
       - KUBECONFIG_PATH=/root/.kube/config
       - NODE_HOST=host.docker.internal
       # Override K8S API server URL since kubeconfig uses 127.0.0.1
       # which is unreachable from inside the container
-      - K8S_API_SERVER=https://host.docker.internal:26443
+      - K8S_API_SERVER=${K8S_API_SERVER:-https://kubernetes.docker.internal:6443}
     env_file:
       - ../.env
     extra_hosts:
@@ -149,12 +149,16 @@ services:
     working_dir: /app
     environment:
       - CI=true
+      - DATABASE_URL=${DOCKER_DATABASE_URL:-postgresql://deerflow:123456@host.docker.internal:5432/flow}
+      - DEER_FLOW_CHECKPOINTER_DATABASE_URL=${DOCKER_CHECKPOINTER_DATABASE_URL:-postgresql://deerflow:123456@host.docker.internal:5432/check_point}
       - DEER_FLOW_HOME=/app/backend/.deer-flow
+      - DEER_FLOW_SHARED_FS_ROOT=/app/backend/.deer-flow
+      - DEER_FLOW_HOST_SHARED_FS_ROOT=${DEER_FLOW_ROOT}/backend/.deer-flow
       - DEER_FLOW_CHANNELS_LANGGRAPH_URL=${DEER_FLOW_CHANNELS_LANGGRAPH_URL:-http://langgraph:2024}
       - DEER_FLOW_CHANNELS_GATEWAY_URL=${DEER_FLOW_CHANNELS_GATEWAY_URL:-http://gateway:8001}
       - DEER_FLOW_SANDBOX_PROVISIONER_URL=http://provisioner:8002
       - DEER_FLOW_HOST_BASE_DIR=${DEER_FLOW_ROOT}/backend/.deer-flow
-      - DEER_FLOW_HOST_SKILLS_PATH=${DEER_FLOW_ROOT}/skills
+      - DEER_FLOW_HOST_SKILLS_PATH=${DEER_FLOW_ROOT}/backend/.deer-flow/skills
       - DEER_FLOW_SANDBOX_HOST=host.docker.internal
     env_file:
       - ../.env
@@ -206,10 +210,14 @@ services:
     working_dir: /app
     environment:
       - CI=true
+      - DATABASE_URL=${DOCKER_DATABASE_URL:-postgresql://deerflow:123456@host.docker.internal:5432/flow}
+      - DEER_FLOW_CHECKPOINTER_DATABASE_URL=${DOCKER_CHECKPOINTER_DATABASE_URL:-postgresql://deerflow:123456@host.docker.internal:5432/check_point}
       - DEER_FLOW_HOME=/app/backend/.deer-flow
+      - DEER_FLOW_SHARED_FS_ROOT=/app/backend/.deer-flow
+      - DEER_FLOW_HOST_SHARED_FS_ROOT=${DEER_FLOW_ROOT}/backend/.deer-flow
       - DEER_FLOW_SANDBOX_PROVISIONER_URL=http://provisioner:8002
       - DEER_FLOW_HOST_BASE_DIR=${DEER_FLOW_ROOT}/backend/.deer-flow
-      - DEER_FLOW_HOST_SKILLS_PATH=${DEER_FLOW_ROOT}/skills
+      - DEER_FLOW_HOST_SKILLS_PATH=${DEER_FLOW_ROOT}/backend/.deer-flow/skills
       - DEER_FLOW_SANDBOX_HOST=host.docker.internal
     env_file:
       - ../.env

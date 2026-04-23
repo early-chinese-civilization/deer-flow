@@ -7,6 +7,7 @@ from typing import NotRequired, override
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
+from langgraph.config import get_config
 from langgraph.runtime import Runtime
 
 from deerflow.config.paths import Paths, get_paths
@@ -130,7 +131,7 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
 
         Args:
             state: Current agent state.
-            runtime: Runtime context containing thread_id.
+            runtime: Runtime context containing workspace_id.
 
         Returns:
             State updates including uploaded files list.
@@ -146,8 +147,13 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
             return None
 
         # Resolve uploads directory for existence checks
-        thread_id = (runtime.context or {}).get("thread_id")
-        uploads_dir = self._paths.sandbox_uploads_dir(thread_id) if thread_id else None
+        workspace_id = (runtime.context or {}).get("workspace_id")
+        if workspace_id is None:
+            configurable = get_config().get("configurable", {})
+            workspace_id = configurable.get("workspace_id") or configurable.get("thread_id")
+        if workspace_id is None:
+            workspace_id = (runtime.context or {}).get("thread_id")
+        uploads_dir = self._paths.workspace_uploads_dir(str(workspace_id)) if workspace_id else None
 
         # Get newly uploaded files from the current message's additional_kwargs.files
         new_files = self._files_from_kwargs(last_message, uploads_dir) or []

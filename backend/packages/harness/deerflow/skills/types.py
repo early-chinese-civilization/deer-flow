@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from .path_utils import build_skill_virtual_root
+
 
 @dataclass
 class Skill:
@@ -11,13 +13,13 @@ class Skill:
     license: str | None
     skill_dir: Path
     skill_file: Path
-    relative_path: Path  # Relative path from category root to skill directory
+    relative_path: Path  # Relative path from the shared skills root to this skill directory
     category: str  # 'public' or 'custom'
     enabled: bool = False  # Whether this skill is enabled
 
     @property
     def skill_path(self) -> str:
-        """Returns the relative path from the category root (skills/{category}) to this skill's directory"""
+        """Return the relative path from the shared skills root to this skill's directory."""
         path = self.relative_path.as_posix()
         return "" if path == "." else path
 
@@ -31,11 +33,7 @@ class Skill:
         Returns:
             Full container path to the skill directory
         """
-        category_base = f"{container_base_path}/{self.category}"
-        skill_path = self.skill_path
-        if skill_path:
-            return f"{category_base}/{skill_path}"
-        return category_base
+        return build_skill_virtual_root(self.name, container_base_path=container_base_path)
 
     def get_container_file_path(self, container_base_path: str = "/mnt/skills") -> str:
         """

@@ -86,6 +86,7 @@ async def task_tool(
     sandbox_state = None
     thread_data = None
     thread_id = None
+    workspace_id = None
     parent_model = None
     trace_id = None
 
@@ -95,6 +96,9 @@ async def task_tool(
         thread_id = runtime.context.get("thread_id") if runtime.context else None
         if thread_id is None:
             thread_id = runtime.config.get("configurable", {}).get("thread_id")
+        workspace_id = runtime.context.get("workspace_id") if runtime.context else None
+        if workspace_id is None:
+            workspace_id = runtime.config.get("configurable", {}).get("workspace_id")
 
         # Try to get parent model from configurable
         metadata = runtime.config.get("metadata", {})
@@ -118,6 +122,7 @@ async def task_tool(
         sandbox_state=sandbox_state,
         thread_data=thread_data,
         thread_id=thread_id,
+        workspace_id=workspace_id,
         trace_id=trace_id,
     )
 

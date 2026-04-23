@@ -117,3 +117,47 @@ def test_init_k8s_client_falls_back_to_incluster_when_missing(tmp_path, monkeypa
 
     assert calls["incluster"] == 1
     assert result == "core-v1"
+
+
+def test_join_host_path_preserves_windows_style_paths():
+    """Windows host paths should stay in Windows form when segments are joined."""
+    provisioner_module = _load_provisioner_module()
+
+    result = provisioner_module.join_host_path(
+        r"C:\shared-root",
+        "workspaces",
+        "workspace-1",
+        "user-data",
+    )
+
+    assert result == r"C:\shared-root\workspaces\workspace-1\user-data"
+
+
+def test_build_pod_mounts_workspace_backed_user_data():
+    """Sandbox pod should mount the shared workspace user-data directory."""
+    provisioner_module = _load_provisioner_module()
+    provisioner_module.WORKSPACES_HOST_PATH = "/shared-root/workspaces"
+    provisioner_module.SKILLS_HOST_PATH = "/shared-root/skills"
+
+    pod = provisioner_module._build_pod("sandbox-1", "thread_1", "workspace.1")
+
+    volumes = {volume.name: volume for volume in pod.spec.volumes}
+    mounts = {mount.name: mount for mount in pod.spec.containers[0].volume_mounts}
+
+    assert volumes["skills"].host_path.path == "/shared-root/skills"
+    assert volumes["user-data"].host_path.path.replace("\\", "/") == "/shared-root/workspaces/workspace.1/user-data"
+    assert mounts["skills"].mount_path == "/mnt/skills"
+    assert mounts["user-data"].mount_path == "/mnt/user-data"
+    assert mounts["skills"].read_only is True
+    assert mounts["user-data"].read_only is False
+
+
+def test_build_pod_rejects_invalid_workspace_id():
+    """Unsafe workspace IDs should be rejected before building hostPath mounts."""
+    provisioner_module = _load_provisioner_module()
+
+    try:
+        provisioner_module._build_pod("sandbox-1", "thread_1", "../escape")
+        raise AssertionError("Expected ValueError for invalid workspace_id")
+    except ValueError as exc:
+        assert "workspace_id" in str(exc)

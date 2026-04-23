@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.gateway.db.models import Agent, AgentSkill, Memory, Skill, Thread, User, Workspace
+from deerflow.skills.path_utils import build_skill_virtual_path, normalize_skill_file_path
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,8 @@ class RuntimeSkillDescriptor:
 
     name: str
     description: str
+    file_path: str
+    virtual_path: str
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,16 @@ def _as_optional_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
     if value is None or isinstance(value, uuid.UUID):
         return value
     return uuid.UUID(value)
+
+
+def _get_skills_container_path() -> str:
+    """Return the configured skills container path with a stable fallback."""
+    try:
+        from deerflow.config import get_app_config
+
+        return get_app_config().skills.container_path
+    except Exception:
+        return "/mnt/skills"
 
 
 class UserRepository:
@@ -382,6 +395,21 @@ class AgentRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    def _build_runtime_skill_descriptor(skill: Skill) -> RuntimeSkillDescriptor:
+        """Project a DB skill row into the runtime prompt metadata."""
+        file_path = normalize_skill_file_path(
+            skill.file_path,
+            user_id=skill.user_id,
+            skill_name=skill.name,
+        )
+        return RuntimeSkillDescriptor(
+            name=skill.name,
+            description=skill.description or "",
+            file_path=file_path,
+            virtual_path=build_skill_virtual_path(skill.name, container_base_path=_get_skills_container_path()),
+        )
+
+    @staticmethod
     def _active_runtime_skills(agent: Agent) -> list[RuntimeSkillDescriptor]:
         """Return ordered active skill descriptors for an agent."""
         active_associations = [
@@ -394,10 +422,7 @@ class AgentRepository:
         ]
         active_associations.sort(key=lambda association: (association.display_order, association.id))
         return [
-            RuntimeSkillDescriptor(
-                name=association.skill.name,
-                description=association.skill.description or "",
-            )
+            AgentRepository._build_runtime_skill_descriptor(association.skill)
             for association in active_associations
         ]
 
@@ -410,15 +435,16 @@ class AgentRepository:
                 Skill.user_id.is_(None),
                 Skill.deleted_at.is_(None),
             )
-            .order_by(Skill.name.asc(), Skill.owner_user_id.asc().nullsfirst(), Skill.created_at.desc())
+            .order_by(Skill.name.asc(), Skill.updated_at.desc(), Skill.created_at.desc())
         )
-        return [
-            RuntimeSkillDescriptor(
-                name=skill.name,
-                description=skill.description or "",
-            )
-            for skill in result.scalars().all()
-        ]
+        seen_names: set[str] = set()
+        descriptors: list[RuntimeSkillDescriptor] = []
+        for skill in result.scalars().all():
+            if skill.name in seen_names:
+                continue
+            seen_names.add(skill.name)
+            descriptors.append(AgentRepository._build_runtime_skill_descriptor(skill))
+        return descriptors
 
     @staticmethod
     async def get_runtime_agent_bundle(
@@ -554,6 +580,21 @@ class SkillRepository:
         return stmt.options(selectinload(Skill.owner_user))
 
     @staticmethod
+    def _dedupe_public_skills(skills: list[Skill]) -> list[Skill]:
+        """Collapse legacy duplicate public rows down to the preferred row per name."""
+        deduped: list[Skill] = []
+        seen_public_names: set[str] = set()
+        for skill in skills:
+            if skill.user_id is not None:
+                deduped.append(skill)
+                continue
+            if skill.name in seen_public_names:
+                continue
+            seen_public_names.add(skill.name)
+            deduped.append(skill)
+        return deduped
+
+    @staticmethod
     async def create_skill(
         db: AsyncSession,
         *,
@@ -611,23 +652,23 @@ class SkillRepository:
             .order_by(
                 Skill.user_id.is_(None).desc(),
                 Skill.name.asc(),
-                Skill.owner_user_id.asc().nullsfirst(),
+                Skill.updated_at.desc(),
                 Skill.created_at.desc(),
             )
         )
         result = await db.execute(stmt)
-        return result.scalars().all()
+        return SkillRepository._dedupe_public_skills(list(result.scalars().all()))
 
     @staticmethod
     async def list_public_skills(db: AsyncSession) -> list[Skill]:
-        """List all active public skills, including seeded and user-published entries."""
+        """List all active public skills, preferring the newest row per name."""
         stmt = SkillRepository._with_owner_user(
             SkillRepository._active_skill_stmt()
             .where(Skill.user_id.is_(None))
-            .order_by(Skill.name.asc(), Skill.owner_user_id.asc().nullsfirst(), Skill.created_at.desc())
+            .order_by(Skill.name.asc(), Skill.updated_at.desc(), Skill.created_at.desc())
         )
         result = await db.execute(stmt)
-        return result.scalars().all()
+        return SkillRepository._dedupe_public_skills(list(result.scalars().all()))
 
     @staticmethod
     async def list_custom_skills(db: AsyncSession, *, user_id: int) -> list[Skill]:
@@ -658,43 +699,47 @@ class SkillRepository:
         name: str,
         owner_user_id: int | None,
     ) -> Skill | None:
-        """Load an active public skill by name and publisher."""
-        stmt = SkillRepository._with_owner_user(
-            SkillRepository._active_skill_stmt().where(
-                Skill.user_id.is_(None),
-                Skill.name == name,
-                Skill.owner_user_id.is_(owner_user_id) if owner_user_id is None else Skill.owner_user_id == owner_user_id,
-            )
-        )
-        result = await db.execute(
-            stmt
-        )
-        return result.scalar_one_or_none()
+        """Load an active public skill by name.
+
+        ``owner_user_id`` is ignored for business logic compatibility.
+        """
+        del owner_user_id
+        return await SkillRepository.get_public_skill_by_name(db, name=name)
 
     @staticmethod
     async def get_system_public_skill_by_name(db: AsyncSession, *, name: str) -> Skill | None:
-        """Load an active seeded public skill by name."""
-        return await SkillRepository.get_public_skill_by_name_and_owner(db, name=name, owner_user_id=None)
+        """Load an active public skill by name."""
+        return await SkillRepository.get_public_skill_by_name(db, name=name)
 
     @staticmethod
     async def get_public_skill_by_name(db: AsyncSession, *, name: str) -> Skill | None:
-        """Load any active public skill by name, preferring seeded public entries."""
-        system_skill = await SkillRepository.get_system_public_skill_by_name(db, name=name)
-        if system_skill is not None:
-            return system_skill
-
+        """Load the active public skill for ``name``, preferring the newest row."""
         result = await db.execute(
             SkillRepository._with_owner_user(
                 SkillRepository._active_skill_stmt()
-            .where(
-                Skill.user_id.is_(None),
-                Skill.name == name,
-                Skill.owner_user_id.is_not(None),
-            )
-            .order_by(Skill.created_at.desc())
+                .where(
+                    Skill.user_id.is_(None),
+                    Skill.name == name,
+                )
+                .order_by(Skill.updated_at.desc(), Skill.created_at.desc())
             )
         )
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def list_public_skills_by_name(db: AsyncSession, *, name: str) -> list[Skill]:
+        """List all active public rows for a given skill name."""
+        result = await db.execute(
+            SkillRepository._with_owner_user(
+                SkillRepository._active_skill_stmt()
+                .where(
+                    Skill.user_id.is_(None),
+                    Skill.name == name,
+                )
+                .order_by(Skill.updated_at.desc(), Skill.created_at.desc())
+            )
+        )
+        return list(result.scalars().all())
 
     @staticmethod
     async def get_visible_skill_by_name(db: AsyncSession, *, user_id: int, name: str) -> Skill | None:

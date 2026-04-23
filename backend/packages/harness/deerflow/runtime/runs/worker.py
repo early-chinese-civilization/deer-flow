@@ -87,16 +87,21 @@ async def run_agent(
         from langchain_core.runnables import RunnableConfig
         from langgraph.runtime import Runtime
 
-        # Inject runtime context so middlewares/tools can access server-owned
-        # thread and user bindings. langgraph-cli does this automatically; the
-        # Gateway-backed runner must construct it explicitly.
-        runtime_context = {"thread_id": thread_id}
+        # Inject runtime context so middlewares can access thread_id/workspace_id.
+        # langgraph-cli does this automatically; we must do it manually.
+        runtime_context = {}
         if "context" in config and isinstance(config["context"], dict):
             runtime_context.update(config["context"])
-        runtime_context["thread_id"] = thread_id
-        runtime = Runtime(context=runtime_context, store=store)
+        runtime_context.setdefault("thread_id", thread_id)
+
+        configurable = config.setdefault("configurable", {})
+        workspace_id = configurable.get("workspace_id")
+        if workspace_id is not None:
+            runtime_context.setdefault("workspace_id", workspace_id)
+
         config["context"] = runtime_context
-        config.setdefault("configurable", {})["__pregel_runtime"] = runtime
+        runtime = Runtime(context=runtime_context, store=store)
+        configurable["__pregel_runtime"] = runtime
 
         runnable_config = RunnableConfig(**config)
         agent = agent_factory(config=runnable_config)

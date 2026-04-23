@@ -10,14 +10,17 @@ from deerflow.sandbox.tools import (
     _apply_cwd_prefix,
     _is_acp_workspace_path,
     _is_skills_path,
+    _replace_runtime_skill_paths_in_command,
     _reject_path_traversal,
     _resolve_acp_workspace_path,
     _resolve_and_validate_user_data_path,
     _resolve_skills_path,
     bash_tool,
+    ls_tool,
     mask_local_paths_in_output,
     replace_virtual_path,
     replace_virtual_paths_in_command,
+    skill_load_tool,
     str_replace_tool,
     validate_local_bash_command_paths,
     validate_local_tool_path,
@@ -324,6 +327,198 @@ def test_validate_local_bash_command_paths_allows_skills_path() -> None:
         )
 
 
+def test_skill_load_uses_runtime_virtual_mapping_for_public_skill(tmp_path: Path) -> None:
+    skills_root = tmp_path / "skills"
+    skill_dir = skills_root / "public" / "sql-review"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("review sql", encoding="utf-8")
+
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "skills": [
+                    {
+                        "name": "sql-review",
+                        "file_path": "public/sql-review",
+                        "virtual_path": "/mnt/skills/sql-review/SKILL.md",
+                    }
+                ]
+            }
+        },
+        config={},
+    )
+
+    with (
+        patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"),
+        patch("deerflow.sandbox.tools._get_skills_host_path", return_value=str(skills_root)),
+    ):
+        result = skill_load_tool.func(
+            runtime=runtime,
+            description="load skill",
+            path="/mnt/skills/sql-review/SKILL.md",
+        )
+
+    assert result == "review sql"
+
+
+def test_skill_load_rejects_paths_not_in_runtime_allowlist(tmp_path: Path) -> None:
+    skills_root = tmp_path / "skills"
+    skill_dir = skills_root / "public" / "sql-review"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("review sql", encoding="utf-8")
+
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "skills": [
+                    {
+                        "name": "sql-review",
+                        "file_path": "public/sql-review",
+                        "virtual_path": "/mnt/skills/sql-review/SKILL.md",
+                    }
+                ]
+            }
+        },
+        config={},
+    )
+
+    with (
+        patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"),
+        patch("deerflow.sandbox.tools._get_skills_host_path", return_value=str(skills_root)),
+    ):
+        result = skill_load_tool.func(
+            runtime=runtime,
+            description="load missing skill",
+            path="/mnt/skills/other-skill/SKILL.md",
+        )
+
+    assert "Permission denied" in result
+
+
+def test_ls_uses_runtime_virtual_mapping_for_skill_directories(tmp_path: Path) -> None:
+    skills_root = tmp_path / "skills"
+    skill_dir = skills_root / "7" / "table-tools"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("table skill", encoding="utf-8")
+    (skill_dir / "notes.md").write_text("notes", encoding="utf-8")
+
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "skills": [
+                    {
+                        "name": "table-tools",
+                        "file_path": "7/table-tools",
+                        "virtual_path": "/mnt/skills/table-tools/SKILL.md",
+                    }
+                ]
+            }
+        },
+        config={},
+    )
+
+    with (
+        patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"),
+        patch("deerflow.sandbox.tools._get_skills_host_path", return_value=str(skills_root)),
+    ):
+        result = ls_tool.func(
+            runtime=runtime,
+            description="list skill files",
+            path="/mnt/skills/table-tools",
+        )
+
+    assert "/mnt/skills/table-tools/SKILL.md" in result
+    assert "/mnt/skills/table-tools/notes.md" in result
+
+
+def test_ls_skills_root_lists_runtime_skill_directories() -> None:
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "skills": [
+                    {
+                        "name": "chart-visualization",
+                        "file_path": "public/chart-visualization",
+                        "virtual_path": "/mnt/skills/chart-visualization/SKILL.md",
+                    },
+                    {
+                        "name": "table-tools",
+                        "file_path": "7/table-tools",
+                        "virtual_path": "/mnt/skills/table-tools/SKILL.md",
+                    },
+                ]
+            }
+        },
+        config={},
+    )
+
+    with patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"):
+        result = ls_tool.func(
+            runtime=runtime,
+            description="list skill roots",
+            path="/mnt/skills",
+        )
+
+    assert "/mnt/skills/chart-visualization/" in result
+    assert "/mnt/skills/table-tools/" in result
+
+
+def test_replace_runtime_skill_paths_in_command_maps_virtual_root() -> None:
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "skills": [
+                    {
+                        "name": "chart-visualization",
+                        "file_path": "public/chart-visualization",
+                        "virtual_path": "/mnt/skills/chart-visualization/SKILL.md",
+                    }
+                ]
+            }
+        },
+        config={},
+    )
+
+    with patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"):
+        result = _replace_runtime_skill_paths_in_command(
+            'cd /mnt/skills/chart-visualization && node ./scripts/generate.js "$(cat /mnt/user-data/workspace/data.json)"',
+            runtime,
+        )
+
+    assert "cd /mnt/skills/public/chart-visualization" in result
+    assert 'cat /mnt/user-data/workspace/data.json' in result
+
+
+def test_replace_runtime_skill_paths_in_command_rejects_unmapped_skill_paths() -> None:
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "skills": [
+                    {
+                        "name": "chart-visualization",
+                        "file_path": "public/chart-visualization",
+                        "virtual_path": "/mnt/skills/chart-visualization/SKILL.md",
+                    }
+                ]
+            }
+        },
+        config={},
+    )
+
+    with patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"):
+        with pytest.raises(PermissionError, match="not available in this runtime"):
+            _replace_runtime_skill_paths_in_command(
+                "cat /mnt/skills/other-skill/SKILL.md",
+                runtime,
+            )
+
+
 def test_validate_local_bash_command_paths_allows_urls() -> None:
     """URLs in bash commands should not be mistaken for absolute paths (issue #1385)."""
     # HTTPS URLs
@@ -567,41 +762,36 @@ def test_validate_local_bash_command_paths_allows_mcp_filesystem_paths() -> None
                 validate_local_bash_command_paths("ls /mnt/d/workspace", _THREAD_DATA)
 
 
-def test_str_replace_parallel_updates_should_preserve_both_edits(monkeypatch) -> None:
-    class SharedSandbox:
-        def __init__(self) -> None:
-            self.content = "alpha\nbeta\n"
-            self._active_reads = 0
-            self._state_lock = threading.Lock()
-            self._overlap_detected = threading.Event()
+def _thread_runtime_with_paths(base_dir: Path, thread_id: str = "thread-1") -> SimpleNamespace:
+    workspace_dir = base_dir / "workspace"
+    uploads_dir = base_dir / "uploads"
+    outputs_dir = base_dir / "outputs"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    return SimpleNamespace(
+        state={
+            "thread_data": {
+                "thread_id": thread_id,
+                "workspace_id": thread_id,
+                "workspace_path": str(workspace_dir),
+                "uploads_path": str(uploads_dir),
+                "outputs_path": str(outputs_dir),
+            }
+        },
+        context={"thread_id": thread_id, "workspace_id": thread_id},
+        config={},
+    )
 
-        def read_file(self, path: str) -> str:
-            with self._state_lock:
-                self._active_reads += 1
-                snapshot = self.content
-                if self._active_reads == 2:
-                    self._overlap_detected.set()
 
-            self._overlap_detected.wait(0.05)
-
-            with self._state_lock:
-                self._active_reads -= 1
-
-            return snapshot
-
-        def write_file(self, path: str, content: str, append: bool = False) -> None:
-            self.content = content
-
-    sandbox = SharedSandbox()
+def test_str_replace_parallel_updates_should_preserve_both_edits(tmp_path: Path) -> None:
     runtimes = [
-        SimpleNamespace(state={}, context={"thread_id": "thread-1"}, config={}),
-        SimpleNamespace(state={}, context={"thread_id": "thread-1"}, config={}),
+        _thread_runtime_with_paths(tmp_path / "shared", "thread-1"),
+        _thread_runtime_with_paths(tmp_path / "shared", "thread-1"),
     ]
+    shared_file = tmp_path / "shared" / "workspace" / "shared.txt"
+    shared_file.write_text("alpha\nbeta\n", encoding="utf-8")
     failures: list[BaseException] = []
-
-    monkeypatch.setattr("deerflow.sandbox.tools.ensure_sandbox_initialized", lambda runtime: sandbox)
-    monkeypatch.setattr("deerflow.sandbox.tools.ensure_thread_directories_exist", lambda runtime: None)
-    monkeypatch.setattr("deerflow.sandbox.tools.is_local_sandbox", lambda runtime: False)
 
     def worker(runtime: SimpleNamespace, old_str: str, new_str: str) -> None:
         try:
@@ -627,66 +817,25 @@ def test_str_replace_parallel_updates_should_preserve_both_edits(monkeypatch) ->
         thread.join()
 
     assert failures == []
-    assert "ALPHA" in sandbox.content
-    assert "BETA" in sandbox.content
+    content = shared_file.read_text(encoding="utf-8")
+    assert "ALPHA" in content
+    assert "BETA" in content
 
 
-def test_str_replace_parallel_updates_in_isolated_sandboxes_should_not_share_path_lock(monkeypatch) -> None:
-    class IsolatedSandbox:
-        def __init__(self, sandbox_id: str, shared_state: dict[str, object]) -> None:
-            self.id = sandbox_id
-            self.content = "alpha\nbeta\n"
-            self._shared_state = shared_state
-
-        def read_file(self, path: str) -> str:
-            state_lock = self._shared_state["state_lock"]
-            with state_lock:
-                active_reads = self._shared_state["active_reads"]
-                self._shared_state["active_reads"] = active_reads + 1
-                snapshot = self.content
-                if self._shared_state["active_reads"] == 2:
-                    overlap_detected = self._shared_state["overlap_detected"]
-                    overlap_detected.set()
-
-            overlap_detected = self._shared_state["overlap_detected"]
-            overlap_detected.wait(0.05)
-
-            with state_lock:
-                active_reads = self._shared_state["active_reads"]
-                self._shared_state["active_reads"] = active_reads - 1
-
-            return snapshot
-
-        def write_file(self, path: str, content: str, append: bool = False) -> None:
-            self.content = content
-
-    shared_state: dict[str, object] = {
-        "active_reads": 0,
-        "state_lock": threading.Lock(),
-        "overlap_detected": threading.Event(),
-    }
-    sandboxes = {
-        "sandbox-a": IsolatedSandbox("sandbox-a", shared_state),
-        "sandbox-b": IsolatedSandbox("sandbox-b", shared_state),
-    }
+def test_str_replace_parallel_updates_across_runtimes_should_share_path_lock(tmp_path: Path) -> None:
     runtimes = [
-        SimpleNamespace(state={}, context={"thread_id": "thread-1", "sandbox_key": "sandbox-a"}, config={}),
-        SimpleNamespace(state={}, context={"thread_id": "thread-2", "sandbox_key": "sandbox-b"}, config={}),
+        _thread_runtime_with_paths(tmp_path / "shared", "thread-1"),
+        _thread_runtime_with_paths(tmp_path / "shared", "thread-2"),
     ]
+    shared_file = tmp_path / "shared" / "workspace" / "shared.txt"
+    shared_file.write_text("alpha\nbeta\n", encoding="utf-8")
     failures: list[BaseException] = []
-
-    monkeypatch.setattr(
-        "deerflow.sandbox.tools.ensure_sandbox_initialized",
-        lambda runtime: sandboxes[runtime.context["sandbox_key"]],
-    )
-    monkeypatch.setattr("deerflow.sandbox.tools.ensure_thread_directories_exist", lambda runtime: None)
-    monkeypatch.setattr("deerflow.sandbox.tools.is_local_sandbox", lambda runtime: False)
 
     def worker(runtime: SimpleNamespace, old_str: str, new_str: str) -> None:
         try:
             result = str_replace_tool.func(
                 runtime=runtime,
-                description="隔离 sandbox 并发替换同一路径",
+                description="跨运行时并发替换同一路径",
                 path="/mnt/user-data/workspace/shared.txt",
                 old_str=old_str,
                 new_str=new_str,
@@ -706,45 +855,19 @@ def test_str_replace_parallel_updates_in_isolated_sandboxes_should_not_share_pat
         thread.join()
 
     assert failures == []
-    assert sandboxes["sandbox-a"].content == "ALPHA\nbeta\n"
-    assert sandboxes["sandbox-b"].content == "alpha\nBETA\n"
-    assert shared_state["overlap_detected"].is_set()
+    content = shared_file.read_text(encoding="utf-8")
+    assert "ALPHA" in content
+    assert "BETA" in content
 
 
-def test_str_replace_and_append_on_same_path_should_preserve_both_updates(monkeypatch) -> None:
-    class SharedSandbox:
-        def __init__(self) -> None:
-            self.id = "sandbox-1"
-            self.content = "alpha\n"
-            self.state_lock = threading.Lock()
-            self.str_replace_has_snapshot = threading.Event()
-            self.append_finished = threading.Event()
-
-        def read_file(self, path: str) -> str:
-            with self.state_lock:
-                snapshot = self.content
-            self.str_replace_has_snapshot.set()
-            self.append_finished.wait(0.05)
-            return snapshot
-
-        def write_file(self, path: str, content: str, append: bool = False) -> None:
-            with self.state_lock:
-                if append:
-                    self.content += content
-                    self.append_finished.set()
-                else:
-                    self.content = content
-
-    sandbox = SharedSandbox()
+def test_str_replace_and_append_on_same_path_should_preserve_both_updates(tmp_path: Path) -> None:
     runtimes = [
-        SimpleNamespace(state={}, context={"thread_id": "thread-1"}, config={}),
-        SimpleNamespace(state={}, context={"thread_id": "thread-1"}, config={}),
+        _thread_runtime_with_paths(tmp_path / "shared", "thread-1"),
+        _thread_runtime_with_paths(tmp_path / "shared", "thread-1"),
     ]
+    shared_file = tmp_path / "shared" / "workspace" / "shared.txt"
+    shared_file.write_text("alpha\n", encoding="utf-8")
     failures: list[BaseException] = []
-
-    monkeypatch.setattr("deerflow.sandbox.tools.ensure_sandbox_initialized", lambda runtime: sandbox)
-    monkeypatch.setattr("deerflow.sandbox.tools.ensure_thread_directories_exist", lambda runtime: None)
-    monkeypatch.setattr("deerflow.sandbox.tools.is_local_sandbox", lambda runtime: False)
 
     def replace_worker() -> None:
         try:
@@ -761,7 +884,6 @@ def test_str_replace_and_append_on_same_path_should_preserve_both_updates(monkey
 
     def append_worker() -> None:
         try:
-            sandbox.str_replace_has_snapshot.wait(0.05)
             result = write_file_tool.func(
                 runtime=runtimes[1],
                 description="追加新内容",
@@ -782,4 +904,4 @@ def test_str_replace_and_append_on_same_path_should_preserve_both_updates(monkey
     append_thread.join()
 
     assert failures == []
-    assert sandbox.content == "ALPHA\ntail\n"
+    assert shared_file.read_text(encoding="utf-8") == "ALPHA\ntail\n"

@@ -9,7 +9,7 @@ class SandboxProvider(ABC):
     """Abstract base class for sandbox providers"""
 
     @abstractmethod
-    def acquire(self, thread_id: str | None = None) -> str:
+    def acquire(self, thread_id: str | None = None, workspace_id: str | None = None) -> str:
         """Acquire a sandbox environment and return its ID.
 
         Returns:

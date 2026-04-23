@@ -110,13 +110,20 @@ class LocalContainerBackend(SandboxBackend):
 
     # ── SandboxBackend interface ──────────────────────────────────────────
 
-    def create(self, thread_id: str, sandbox_id: str, extra_mounts: list[tuple[str, str, bool]] | None = None) -> SandboxInfo:
+    def create(
+        self,
+        thread_id: str,
+        sandbox_id: str,
+        extra_mounts: list[tuple[str, str, bool]] | None = None,
+        workspace_id: str | None = None,
+    ) -> SandboxInfo:
         """Start a new container and return its connection info.
 
         Args:
             thread_id: Thread ID for which the sandbox is being created. Useful for backends that want to organize sandboxes by thread.
             sandbox_id: Deterministic sandbox identifier (used in container name).
             extra_mounts: Additional volume mounts as (host_path, container_path, read_only) tuples.
+            workspace_id: Workspace ID mounted via extra_mounts when provided by the caller.
 
         Returns:
             SandboxInfo with container details.

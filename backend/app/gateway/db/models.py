@@ -223,12 +223,12 @@ class Skill(Base):
         BigInteger,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
-        comment="Publisher user ID for public skills",
+        comment="Publisher user ID for display/audit only",
     )
     name = Column(String(255), nullable=False, comment="Skill name")
     display_name = Column(String(255), nullable=True, comment="Display name")
     description = Column(Text, nullable=True, comment="Skill description")
-    file_path = Column(String(500), nullable=False, comment="OSS file path")
+    file_path = Column(String(500), nullable=False, comment="Shared skills filesystem path")
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,

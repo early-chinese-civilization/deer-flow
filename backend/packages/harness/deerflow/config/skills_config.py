@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -8,7 +9,7 @@ class SkillsConfig(BaseModel):
 
     path: str | None = Field(
         default=None,
-        description="Path to skills directory. If not specified, defaults to ../skills relative to backend directory",
+        description="Path to the shared skills directory. If omitted, defaults to DEER_FLOW_SHARED_FS_ROOT/skills.",
     )
     container_path: str = Field(
         default="/mnt/skills",
@@ -29,21 +30,24 @@ class SkillsConfig(BaseModel):
                 # If relative, resolve from current working directory
                 path = Path.cwd() / path
             return path.resolve()
+        if shared_root := os.getenv("DEER_FLOW_SHARED_FS_ROOT"):
+            return (Path(shared_root) / "skills").resolve()
         else:
-            # Default: ../skills relative to backend directory
+            # Default: shared-fs root + /skills
             from deerflow.skills.loader import get_skills_root_path
 
             return get_skills_root_path()
 
     def get_skill_container_path(self, skill_name: str, category: str = "public") -> str:
         """
-        Get the full container path for a specific skill.
+        Get the stable virtual container path for a specific skill.
 
         Args:
             skill_name: Name of the skill (directory name)
-            category: Category of the skill (public or custom)
+            category: Deprecated. Runtime virtual paths are category-agnostic.
 
         Returns:
             Full path to the skill in the container
         """
-        return f"{self.container_path}/{category}/{skill_name}"
+        del category
+        return f"{self.container_path.rstrip('/')}/{skill_name}"

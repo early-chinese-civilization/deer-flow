@@ -60,13 +60,14 @@ class RemoteSandboxBackend(SandboxBackend):
         thread_id: str,
         sandbox_id: str,
         extra_mounts: list[tuple[str, str, bool]] | None = None,
+        workspace_id: str | None = None,
     ) -> SandboxInfo:
         """Create a sandbox Pod + Service via the provisioner.
 
         Calls ``POST /api/sandboxes`` which creates a dedicated Pod +
         NodePort Service in k3s.
         """
-        return self._provisioner_create(thread_id, sandbox_id, extra_mounts)
+        return self._provisioner_create(thread_id, sandbox_id, extra_mounts, workspace_id=workspace_id)
 
     def destroy(self, info: SandboxInfo) -> None:
         """Destroy a sandbox Pod + Service via the provisioner."""
@@ -86,15 +87,23 @@ class RemoteSandboxBackend(SandboxBackend):
 
     # ── Provisioner API calls ─────────────────────────────────────────────
 
-    def _provisioner_create(self, thread_id: str, sandbox_id: str, extra_mounts: list[tuple[str, str, bool]] | None = None) -> SandboxInfo:
+    def _provisioner_create(
+        self,
+        thread_id: str,
+        sandbox_id: str,
+        extra_mounts: list[tuple[str, str, bool]] | None = None,
+        workspace_id: str | None = None,
+    ) -> SandboxInfo:
         """POST /api/sandboxes → create Pod + Service."""
         try:
+            payload = {
+                "sandbox_id": sandbox_id,
+                "thread_id": thread_id,
+                "workspace_id": workspace_id or thread_id,
+            }
             resp = requests.post(
                 f"{self._provisioner_url}/api/sandboxes",
-                json={
-                    "sandbox_id": sandbox_id,
-                    "thread_id": thread_id,
-                },
+                json=payload,
                 timeout=30,
             )
             resp.raise_for_status()

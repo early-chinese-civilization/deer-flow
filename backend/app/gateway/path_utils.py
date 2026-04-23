@@ -26,3 +26,12 @@ def resolve_thread_virtual_path(thread_id: str, virtual_path: str) -> Path:
     except ValueError as e:
         status = 403 if "traversal" in str(e) else 400
         raise HTTPException(status_code=status, detail=str(e))
+
+
+def resolve_workspace_virtual_path(workspace_id: str, virtual_path: str) -> Path:
+    """Resolve a virtual path to the actual filesystem path under workspace user-data."""
+    try:
+        return get_paths().resolve_workspace_virtual_path(workspace_id, virtual_path)
+    except ValueError as e:
+        status = 403 if "traversal" in str(e) else 400
+        raise HTTPException(status_code=status, detail=str(e))

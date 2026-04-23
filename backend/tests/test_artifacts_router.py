@@ -181,3 +181,71 @@ def test_get_artifact_requires_owned_thread(monkeypatch, tmp_path) -> None:
         response = client.get("/api/threads/thread-1/artifacts/mnt/user-data/outputs/note.txt")
 
     assert response.status_code == 403
+
+
+def test_get_artifact_prefers_workspace_resolution_for_user_data_paths(tmp_path, monkeypatch) -> None:
+    artifact_path = tmp_path / "note.txt"
+    artifact_path.write_text("hello", encoding="utf-8")
+
+    monkeypatch.setattr(
+        artifacts_router,
+        "resolve_workspace_virtual_path",
+        lambda _workspace_id, _path: artifact_path,
+    )
+
+    def fail_thread_resolution(_thread_id: str, _path: str):
+        raise AssertionError("thread-scoped resolver should not be used for workspace-backed user-data")
+
+    monkeypatch.setattr(artifacts_router, "resolve_thread_virtual_path", fail_thread_resolution)
+
+    thread_access = SimpleNamespace(
+        thread=SimpleNamespace(workspace_id="workspace-1"),
+    )
+
+    with patch("app.gateway.routers.artifacts.require_thread_access", AsyncMock(return_value=thread_access)):
+        response = asyncio.run(
+            artifacts_router.get_artifact(
+                "thread-1",
+                "mnt/user-data/outputs/note.txt",
+                _make_request(),
+                current_user=SimpleNamespace(id=7),
+                db=object(),
+            )
+        )
+
+    assert bytes(response.body).decode("utf-8") == "hello"
+    assert response.media_type == "text/plain"
+
+
+def test_get_artifact_prefers_workspace_resolution_for_skill_archive(tmp_path, monkeypatch) -> None:
+    skill_path = tmp_path / "sample.skill"
+    with zipfile.ZipFile(skill_path, "w") as zip_ref:
+        zip_ref.writestr("notes.txt", "hello")
+
+    monkeypatch.setattr(
+        artifacts_router,
+        "resolve_workspace_virtual_path",
+        lambda _workspace_id, _path: skill_path,
+    )
+
+    def fail_thread_resolution(_thread_id: str, _path: str):
+        raise AssertionError("thread-scoped resolver should not be used for workspace-backed user-data")
+
+    monkeypatch.setattr(artifacts_router, "resolve_thread_virtual_path", fail_thread_resolution)
+
+    thread_access = SimpleNamespace(
+        thread=SimpleNamespace(workspace_id="workspace-1"),
+    )
+
+    with patch("app.gateway.routers.artifacts.require_thread_access", AsyncMock(return_value=thread_access)):
+        response = asyncio.run(
+            artifacts_router.get_artifact(
+                "thread-1",
+                "mnt/user-data/outputs/sample.skill/notes.txt",
+                _make_request(),
+                current_user=SimpleNamespace(id=7),
+                db=object(),
+            )
+        )
+
+    assert bytes(response.body) == b"hello"

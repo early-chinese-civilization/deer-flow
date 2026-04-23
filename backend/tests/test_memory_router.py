@@ -3,6 +3,7 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.gateway.deps import get_current_user
 from app.gateway.routers import memory
 
 
@@ -24,9 +25,14 @@ def _sample_memory(facts: list[dict] | None = None) -> dict:
     }
 
 
-def test_export_memory_route_returns_current_memory() -> None:
+def _build_client() -> TestClient:
     app = FastAPI()
     app.include_router(memory.router)
+    app.dependency_overrides[get_current_user] = lambda: type("User", (), {"id": 99})()
+    return TestClient(app)
+
+
+def test_export_memory_route_returns_current_memory() -> None:
     exported_memory = _sample_memory(
         facts=[
             {
@@ -41,7 +47,7 @@ def test_export_memory_route_returns_current_memory() -> None:
     )
 
     with patch("app.gateway.routers.memory.get_memory_data", return_value=exported_memory):
-        with TestClient(app) as client:
+        with _build_client() as client:
             response = client.get("/api/memory/export")
 
     assert response.status_code == 200
@@ -49,8 +55,6 @@ def test_export_memory_route_returns_current_memory() -> None:
 
 
 def test_import_memory_route_returns_imported_memory() -> None:
-    app = FastAPI()
-    app.include_router(memory.router)
     imported_memory = _sample_memory(
         facts=[
             {
@@ -65,7 +69,7 @@ def test_import_memory_route_returns_imported_memory() -> None:
     )
 
     with patch("app.gateway.routers.memory.import_memory_data", return_value=imported_memory):
-        with TestClient(app) as client:
+        with _build_client() as client:
             response = client.post("/api/memory/import", json=imported_memory)
 
     assert response.status_code == 200
@@ -73,8 +77,6 @@ def test_import_memory_route_returns_imported_memory() -> None:
 
 
 def test_export_memory_route_preserves_source_error() -> None:
-    app = FastAPI()
-    app.include_router(memory.router)
     exported_memory = _sample_memory(
         facts=[
             {
@@ -90,7 +92,7 @@ def test_export_memory_route_preserves_source_error() -> None:
     )
 
     with patch("app.gateway.routers.memory.get_memory_data", return_value=exported_memory):
-        with TestClient(app) as client:
+        with _build_client() as client:
             response = client.get("/api/memory/export")
 
     assert response.status_code == 200
@@ -98,8 +100,6 @@ def test_export_memory_route_preserves_source_error() -> None:
 
 
 def test_import_memory_route_preserves_source_error() -> None:
-    app = FastAPI()
-    app.include_router(memory.router)
     imported_memory = _sample_memory(
         facts=[
             {
@@ -115,7 +115,7 @@ def test_import_memory_route_preserves_source_error() -> None:
     )
 
     with patch("app.gateway.routers.memory.import_memory_data", return_value=imported_memory):
-        with TestClient(app) as client:
+        with _build_client() as client:
             response = client.post("/api/memory/import", json=imported_memory)
 
     assert response.status_code == 200
@@ -123,11 +123,8 @@ def test_import_memory_route_preserves_source_error() -> None:
 
 
 def test_clear_memory_route_returns_cleared_memory() -> None:
-    app = FastAPI()
-    app.include_router(memory.router)
-
     with patch("app.gateway.routers.memory.clear_memory_data", return_value=_sample_memory()):
-        with TestClient(app) as client:
+        with _build_client() as client:
             response = client.delete("/api/memory")
 
     assert response.status_code == 200
@@ -135,8 +132,6 @@ def test_clear_memory_route_returns_cleared_memory() -> None:
 
 
 def test_create_memory_fact_route_returns_updated_memory() -> None:
-    app = FastAPI()
-    app.include_router(memory.router)
     updated_memory = _sample_memory(
         facts=[
             {
@@ -151,7 +146,7 @@ def test_create_memory_fact_route_returns_updated_memory() -> None:
     )
 
     with patch("app.gateway.routers.memory.create_memory_fact", return_value=updated_memory):
-        with TestClient(app) as client:
+        with _build_client() as client:
             response = client.post(
                 "/api/memory/facts",
                 json={
@@ -166,8 +161,6 @@ def test_create_memory_fact_route_returns_updated_memory() -> None:
 
 
 def test_delete_memory_fact_route_returns_updated_memory() -> None:
-    app = FastAPI()
-    app.include_router(memory.router)
     updated_memory = _sample_memory(
         facts=[
             {
@@ -182,7 +175,7 @@ def test_delete_memory_fact_route_returns_updated_memory() -> None:
     )
 
     with patch("app.gateway.routers.memory.delete_memory_fact", return_value=updated_memory):
-        with TestClient(app) as client:
+        with _build_client() as client:
             response = client.delete("/api/memory/facts/fact_delete")
 
     assert response.status_code == 200
@@ -190,11 +183,8 @@ def test_delete_memory_fact_route_returns_updated_memory() -> None:
 
 
 def test_delete_memory_fact_route_returns_404_for_missing_fact() -> None:
-    app = FastAPI()
-    app.include_router(memory.router)
-
     with patch("app.gateway.routers.memory.delete_memory_fact", side_effect=KeyError("fact_missing")):
-        with TestClient(app) as client:
+        with _build_client() as client:
             response = client.delete("/api/memory/facts/fact_missing")
 
     assert response.status_code == 404
@@ -202,8 +192,6 @@ def test_delete_memory_fact_route_returns_404_for_missing_fact() -> None:
 
 
 def test_update_memory_fact_route_returns_updated_memory() -> None:
-    app = FastAPI()
-    app.include_router(memory.router)
     updated_memory = _sample_memory(
         facts=[
             {
@@ -218,7 +206,7 @@ def test_update_memory_fact_route_returns_updated_memory() -> None:
     )
 
     with patch("app.gateway.routers.memory.update_memory_fact", return_value=updated_memory):
-        with TestClient(app) as client:
+        with _build_client() as client:
             response = client.patch(
                 "/api/memory/facts/fact_edit",
                 json={
@@ -233,8 +221,6 @@ def test_update_memory_fact_route_returns_updated_memory() -> None:
 
 
 def test_update_memory_fact_route_preserves_omitted_fields() -> None:
-    app = FastAPI()
-    app.include_router(memory.router)
     updated_memory = _sample_memory(
         facts=[
             {
@@ -249,7 +235,7 @@ def test_update_memory_fact_route_preserves_omitted_fields() -> None:
     )
 
     with patch("app.gateway.routers.memory.update_memory_fact", return_value=updated_memory) as update_fact:
-        with TestClient(app) as client:
+        with _build_client() as client:
             response = client.patch(
                 "/api/memory/facts/fact_edit",
                 json={
@@ -263,16 +249,14 @@ def test_update_memory_fact_route_preserves_omitted_fields() -> None:
         content="User prefers spaces",
         category=None,
         confidence=None,
+        user_id=99,
     )
     assert response.json()["facts"] == updated_memory["facts"]
 
 
 def test_update_memory_fact_route_returns_404_for_missing_fact() -> None:
-    app = FastAPI()
-    app.include_router(memory.router)
-
     with patch("app.gateway.routers.memory.update_memory_fact", side_effect=KeyError("fact_missing")):
-        with TestClient(app) as client:
+        with _build_client() as client:
             response = client.patch(
                 "/api/memory/facts/fact_missing",
                 json={
@@ -287,11 +271,8 @@ def test_update_memory_fact_route_returns_404_for_missing_fact() -> None:
 
 
 def test_update_memory_fact_route_returns_specific_error_for_invalid_confidence() -> None:
-    app = FastAPI()
-    app.include_router(memory.router)
-
     with patch("app.gateway.routers.memory.update_memory_fact", side_effect=ValueError("confidence")):
-        with TestClient(app) as client:
+        with _build_client() as client:
             response = client.patch(
                 "/api/memory/facts/fact_edit",
                 json={

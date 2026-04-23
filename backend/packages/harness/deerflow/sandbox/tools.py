@@ -1,13 +1,15 @@
 import posixpath
 import re
 import shlex
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 
 from langchain.tools import ToolRuntime, tool
 from langgraph.typing import ContextT
 
 from deerflow.agents.thread_state import ThreadDataState, ThreadState
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX
+from deerflow.sandbox.local.list_dir import list_dir as local_list_dir
 from deerflow.sandbox.exceptions import (
     SandboxError,
     SandboxNotFoundError,
@@ -17,6 +19,7 @@ from deerflow.sandbox.file_operation_lock import get_file_operation_lock
 from deerflow.sandbox.sandbox import Sandbox
 from deerflow.sandbox.sandbox_provider import get_sandbox_provider
 from deerflow.sandbox.security import LOCAL_HOST_BASH_DISABLED_MESSAGE, is_host_bash_allowed
+from deerflow.skills.path_utils import resolve_skill_storage_dir
 
 _ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![:\w])(?<!:/)/(?:[^\s\"'`;&|<>()]+)")
 _FILE_URL_PATTERN = re.compile(r"\bfile://\S+", re.IGNORECASE)
@@ -31,6 +34,7 @@ _LOCAL_BASH_SYSTEM_PATH_PREFIXES = (
 
 _DEFAULT_SKILLS_CONTAINER_PATH = "/mnt/skills"
 _ACP_WORKSPACE_VIRTUAL_PATH = "/mnt/acp-workspace"
+_DIRECT_FS_LOCK_OWNER = SimpleNamespace(id="shared-fs")
 
 
 def _get_skills_container_path() -> str:
@@ -108,20 +112,188 @@ def _resolve_skills_path(path: str) -> str:
     return _join_path_preserving_style(skills_host, relative)
 
 
+def _get_runtime_agent_context(runtime: "ToolRuntime[ContextT, ThreadState] | None") -> dict:
+    """Return runtime_agent metadata injected into the active tool runtime."""
+    if runtime is None:
+        return {}
+    if runtime.context:
+        runtime_agent = runtime.context.get("runtime_agent")
+        if isinstance(runtime_agent, dict):
+            return runtime_agent
+    if runtime.config:
+        context = runtime.config.get("context", {})
+        if isinstance(context, dict):
+            runtime_agent = context.get("runtime_agent")
+            if isinstance(runtime_agent, dict):
+                return runtime_agent
+    return {}
+
+
+def _get_runtime_skill_root_map(runtime: "ToolRuntime[ContextT, ThreadState] | None") -> dict[str, str]:
+    """Map runtime-exposed virtual skill roots to their backing filesystem paths."""
+    runtime_agent = _get_runtime_agent_context(runtime)
+    raw_skills = runtime_agent.get("skills")
+    if not isinstance(raw_skills, list):
+        return {}
+
+    root_map: dict[str, str] = {}
+    for skill in raw_skills:
+        if not isinstance(skill, dict):
+            continue
+        virtual_path = skill.get("virtual_path")
+        file_path = skill.get("file_path")
+        if not isinstance(virtual_path, str) or not virtual_path.strip():
+            continue
+        if not isinstance(file_path, str) or not file_path.strip():
+            continue
+        virtual_root = str(PurePosixPath(virtual_path.strip()).parent)
+        if not _is_skills_path(virtual_root):
+            continue
+        root_map[virtual_root] = file_path.strip()
+    return root_map
+
+
+def _list_runtime_skill_roots(runtime: "ToolRuntime[ContextT, ThreadState] | None") -> list[str]:
+    """Return the virtual skill directories exposed to the current runtime."""
+    return sorted(f"{virtual_root}/" for virtual_root in _get_runtime_skill_root_map(runtime))
+
+
+def _resolve_runtime_skill_container_path(
+    path: str,
+    runtime: "ToolRuntime[ContextT, ThreadState] | None",
+) -> str:
+    """Resolve a virtual runtime skill path to its actual in-sandbox container path."""
+    if not _is_skills_path(path):
+        return path
+
+    allowed_roots = _get_runtime_skill_root_map(runtime)
+    if not allowed_roots:
+        raise PermissionError(f"Skill path is not available in this runtime: {path}")
+
+    skills_container = _get_skills_container_path().rstrip("/")
+    for virtual_root, file_path in sorted(allowed_roots.items(), key=lambda item: len(item[0]), reverse=True):
+        if path != virtual_root and not path.startswith(f"{virtual_root}/"):
+            continue
+
+        suffix = path[len(virtual_root) :].lstrip("/")
+        actual_root = f"{skills_container}/{file_path.strip('/').replace('\\', '/')}"
+        return f"{actual_root}/{suffix}" if suffix else actual_root
+
+    raise PermissionError(f"Skill path is not available in this runtime: {path}")
+
+
+def _replace_runtime_skill_paths_in_command(
+    command: str,
+    runtime: "ToolRuntime[ContextT, ThreadState] | None",
+) -> str:
+    """Rewrite virtual runtime skill paths in bash commands to real mounted container paths."""
+    if _get_runtime_skill_root_map(runtime) == {}:
+        return command
+
+    def replace_match(match: re.Match) -> str:
+        path = match.group(0)
+        if not _is_skills_path(path):
+            return path
+        return _resolve_runtime_skill_container_path(path, runtime)
+
+    return _ABSOLUTE_PATH_PATTERN.sub(replace_match, command)
+
+
+def _get_runtime_skill_actual_to_virtual_map(runtime: "ToolRuntime[ContextT, ThreadState] | None") -> dict[str, str]:
+    """Map resolved skill host directories back to their runtime virtual roots."""
+    skills_host = _get_skills_host_path()
+    if skills_host is None:
+        return {}
+
+    mappings: dict[str, str] = {}
+    skills_root = Path(skills_host)
+    for virtual_root, file_path in _get_runtime_skill_root_map(runtime).items():
+        try:
+            actual_root = resolve_skill_storage_dir(skills_root, file_path).resolve()
+        except Exception:
+            continue
+        mappings[str(actual_root)] = virtual_root
+    return mappings
+
+
+def _mask_runtime_skill_paths_in_output(
+    output: str,
+    runtime: "ToolRuntime[ContextT, ThreadState] | None",
+) -> str:
+    """Rewrite resolved runtime skill paths back to the stable virtual skill paths."""
+    result = output
+    mappings = _get_runtime_skill_actual_to_virtual_map(runtime)
+    if not mappings:
+        return result
+
+    for actual_base, virtual_base in sorted(mappings.items(), key=lambda item: len(item[0]), reverse=True):
+        raw_base = str(Path(actual_base))
+        resolved_base = str(Path(actual_base).resolve())
+        for base in _path_variants(raw_base) | _path_variants(resolved_base):
+            escaped_actual = re.escape(base).replace(r"\\", r"[/\\]")
+            pattern = re.compile(escaped_actual + r"(?:[/\\][^\s\"';&|<>()]*)?")
+
+            def replace_match(match: re.Match, _base: str = base, _virtual: str = virtual_base) -> str:
+                matched_path = match.group(0)
+                if matched_path == _base:
+                    return _virtual
+                relative = matched_path[len(_base) :].lstrip("/\\").replace("\\", "/")
+                return f"{_virtual}/{relative}" if relative else _virtual
+
+            result = pattern.sub(replace_match, result)
+
+    return result
+
+
+def _resolve_runtime_skill_path(
+    path: str,
+    runtime: "ToolRuntime[ContextT, ThreadState] | None",
+) -> tuple[str, ThreadDataState | None]:
+    """Resolve a virtual runtime skill path using the injected allowlist."""
+    thread_data = get_thread_data(runtime)
+    validate_local_tool_path(path, thread_data, read_only=True)
+
+    if not _is_skills_path(path):
+        raise PermissionError(f"Only skills paths are allowed: {path}")
+
+    skills_host = _get_skills_host_path()
+    if skills_host is None:
+        raise FileNotFoundError(f"Skills directory not available for path: {path}")
+
+    allowed_roots = _get_runtime_skill_root_map(runtime)
+    if not allowed_roots:
+        raise PermissionError(f"Skill path is not available in this runtime: {path}")
+
+    for virtual_root, file_path in sorted(allowed_roots.items(), key=lambda item: len(item[0]), reverse=True):
+        if path != virtual_root and not path.startswith(f"{virtual_root}/"):
+            continue
+
+        resolved_root = resolve_skill_storage_dir(Path(skills_host), file_path).resolve()
+        suffix = path[len(virtual_root) :].lstrip("/")
+        resolved = resolved_root if not suffix else (resolved_root / Path(PurePosixPath(suffix))).resolve()
+        resolved.relative_to(resolved_root)
+        return str(resolved), thread_data
+
+    raise PermissionError(f"Skill path is not available in this runtime: {path}")
+
+
 def _is_acp_workspace_path(path: str) -> bool:
     """Check if a path is under the ACP workspace virtual path."""
     return path == _ACP_WORKSPACE_VIRTUAL_PATH or path.startswith(f"{_ACP_WORKSPACE_VIRTUAL_PATH}/")
 
 
 def _extract_thread_id_from_thread_data(thread_data: "ThreadDataState | None") -> str | None:
-    """Extract thread_id from thread_data by inspecting workspace_path.
+    """Extract thread_id from thread_data.
 
-    The workspace_path has the form
-    ``{base_dir}/threads/{thread_id}/user-data/workspace``, so
-    ``Path(workspace_path).parent.parent.name`` yields the thread_id.
+    Prefers the explicit ``thread_id`` field populated by middleware. Falls
+    back to deriving the closest identifier from ``workspace_path`` for
+    backwards compatibility with older state payloads.
     """
     if thread_data is None:
         return None
+    thread_id = thread_data.get("thread_id")
+    if thread_id:
+        return thread_id
     workspace_path = thread_data.get("workspace_path")
     if not workspace_path:
         return None
@@ -626,6 +798,44 @@ def get_thread_data(runtime: ToolRuntime[ContextT, ThreadState] | None) -> Threa
     return runtime.state.get("thread_data")
 
 
+def _get_runtime_context_value(runtime: ToolRuntime[ContextT, ThreadState] | None, key: str) -> str | None:
+    """Read a context/configurable value from the active tool runtime."""
+    if runtime is None:
+        return None
+    if runtime.context and runtime.context.get(key) is not None:
+        return str(runtime.context.get(key))
+    if runtime.config:
+        configurable = runtime.config.get("configurable", {})
+        if configurable.get(key) is not None:
+            return str(configurable.get(key))
+    return None
+
+
+def _resolve_direct_user_data_path(path: str, runtime: ToolRuntime[ContextT, ThreadState] | None) -> tuple[str, ThreadDataState]:
+    """Resolve a user-data virtual path to the workspace-backed filesystem path."""
+    thread_data = get_thread_data(runtime)
+    validate_local_tool_path(path, thread_data)
+    return _resolve_and_validate_user_data_path(path, thread_data), thread_data
+
+
+def _resolve_direct_read_path(
+    path: str,
+    runtime: ToolRuntime[ContextT, ThreadState] | None,
+    *,
+    allow_skills: bool,
+    allow_acp_workspace: bool = True,
+) -> tuple[str, ThreadDataState | None]:
+    """Resolve a read-only virtual path to the backing filesystem path."""
+    thread_data = get_thread_data(runtime)
+    validate_local_tool_path(path, thread_data, read_only=True)
+    if allow_skills and _is_skills_path(path):
+        return _resolve_skills_path(path), thread_data
+    if allow_acp_workspace and _is_acp_workspace_path(path):
+        thread_id = _get_runtime_context_value(runtime, "thread_id") or _extract_thread_id_from_thread_data(thread_data)
+        return _resolve_acp_workspace_path(path, thread_id), thread_data
+    return _resolve_and_validate_user_data_path(path, thread_data), thread_data
+
+
 def is_local_sandbox(runtime: ToolRuntime[ContextT, ThreadState] | None) -> bool:
     """Check if the current sandbox is a local sandbox.
 
@@ -701,6 +911,8 @@ def ensure_sandbox_initialized(runtime: ToolRuntime[ContextT, ThreadState] | Non
         if sandbox_id is not None:
             sandbox = get_sandbox_provider().get(sandbox_id)
             if sandbox is not None:
+                if runtime.context is None:
+                    runtime.context = {}
                 runtime.context["sandbox_id"] = sandbox_id  # Ensure sandbox_id is in context for releasing in after_agent
                 return sandbox
             # Sandbox was released, fall through to acquire new one
@@ -712,8 +924,13 @@ def ensure_sandbox_initialized(runtime: ToolRuntime[ContextT, ThreadState] | Non
     if thread_id is None:
         raise SandboxRuntimeError("Thread ID not available in runtime context")
 
+    workspace_id = _get_runtime_context_value(runtime, "workspace_id")
+    thread_data = get_thread_data(runtime)
+    if workspace_id is None and thread_data is not None and thread_data.get("workspace_id") is not None:
+        workspace_id = str(thread_data.get("workspace_id"))
+
     provider = get_sandbox_provider()
-    sandbox_id = provider.acquire(thread_id)
+    sandbox_id = provider.acquire(thread_id, workspace_id=workspace_id)
 
     # Update runtime state - this persists across tool calls
     runtime.state["sandbox"] = {"sandbox_id": sandbox_id}
@@ -723,8 +940,48 @@ def ensure_sandbox_initialized(runtime: ToolRuntime[ContextT, ThreadState] | Non
     if sandbox is None:
         raise SandboxNotFoundError("Sandbox not found after acquisition", sandbox_id=sandbox_id)
 
+    if runtime.context is None:
+        runtime.context = {}
     runtime.context["sandbox_id"] = sandbox_id  # Ensure sandbox_id is in context for releasing in after_agent
     return sandbox
+
+
+def _get_bash_output_max_chars() -> int:
+    try:
+        from deerflow.config.app_config import get_app_config
+
+        sandbox_cfg = get_app_config().sandbox
+        return sandbox_cfg.bash_output_max_chars if sandbox_cfg else 20000
+    except Exception:
+        return 20000
+
+
+def _execute_bash_in_ephemeral_sandbox(runtime: ToolRuntime[ContextT, ThreadState], command: str) -> str:
+    """Run a bash command in a fresh remote sandbox when the provider supports it."""
+    provider = get_sandbox_provider()
+    acquire_ephemeral = getattr(provider, "acquire_ephemeral", None)
+    destroy = getattr(provider, "destroy", None)
+    if not callable(acquire_ephemeral) or not callable(destroy):
+        sandbox = ensure_sandbox_initialized(runtime)
+        return sandbox.execute_command(command)
+
+    thread_id = _get_runtime_context_value(runtime, "thread_id")
+    if thread_id is None:
+        raise SandboxRuntimeError("Thread ID not available in runtime context")
+
+    workspace_id = _get_runtime_context_value(runtime, "workspace_id")
+    thread_data = get_thread_data(runtime)
+    if workspace_id is None and thread_data is not None and thread_data.get("workspace_id") is not None:
+        workspace_id = str(thread_data.get("workspace_id"))
+
+    sandbox_id = acquire_ephemeral(thread_id=thread_id, workspace_id=workspace_id)
+    try:
+        sandbox = provider.get(sandbox_id)
+        if sandbox is None:
+            raise SandboxNotFoundError("Sandbox not found after ephemeral acquisition", sandbox_id=sandbox_id)
+        return sandbox.execute_command(command)
+    finally:
+        destroy(sandbox_id)
 
 
 def ensure_thread_directories_exist(runtime: ToolRuntime[ContextT, ThreadState] | None) -> None:
@@ -817,6 +1074,14 @@ def _truncate_read_file_output(output: str, max_chars: int) -> str:
     return f"{output[:kept]}{marker}"
 
 
+def _read_text_file(path: str, *, start_line: int | None = None, end_line: int | None = None) -> str:
+    """Read a UTF-8 text file from the shared filesystem."""
+    content = Path(path).read_text(encoding="utf-8")
+    if start_line is not None and end_line is not None:
+        content = "\n".join(content.splitlines()[start_line - 1 : end_line])
+    return content
+
+
 @tool("bash", parse_docstring=True)
 def bash_tool(runtime: ToolRuntime[ContextT, ThreadState], description: str, command: str) -> str:
     """Execute a bash command in a Linux environment.
@@ -831,8 +1096,9 @@ def bash_tool(runtime: ToolRuntime[ContextT, ThreadState], description: str, com
         command: The bash command to execute. Always use absolute paths for files and directories.
     """
     try:
-        sandbox = ensure_sandbox_initialized(runtime)
+        command = _replace_runtime_skill_paths_in_command(command, runtime)
         if is_local_sandbox(runtime):
+            sandbox = ensure_sandbox_initialized(runtime)
             if not is_host_bash_allowed():
                 return f"Error: {LOCAL_HOST_BASH_DISABLED_MESSAGE}"
             ensure_thread_directories_exist(runtime)
@@ -841,23 +1107,10 @@ def bash_tool(runtime: ToolRuntime[ContextT, ThreadState], description: str, com
             command = replace_virtual_paths_in_command(command, thread_data)
             command = _apply_cwd_prefix(command, thread_data)
             output = sandbox.execute_command(command)
-            try:
-                from deerflow.config.app_config import get_app_config
-
-                sandbox_cfg = get_app_config().sandbox
-                max_chars = sandbox_cfg.bash_output_max_chars if sandbox_cfg else 20000
-            except Exception:
-                max_chars = 20000
+            max_chars = _get_bash_output_max_chars()
             return _truncate_bash_output(mask_local_paths_in_output(output, thread_data), max_chars)
-        ensure_thread_directories_exist(runtime)
-        try:
-            from deerflow.config.app_config import get_app_config
-
-            sandbox_cfg = get_app_config().sandbox
-            max_chars = sandbox_cfg.bash_output_max_chars if sandbox_cfg else 20000
-        except Exception:
-            max_chars = 20000
-        return _truncate_bash_output(sandbox.execute_command(command), max_chars)
+        output = _execute_bash_in_ephemeral_sandbox(runtime, command)
+        return _truncate_bash_output(output, _get_bash_output_max_chars())
     except SandboxError as e:
         return f"Error: {e}"
     except PermissionError as e:
@@ -875,24 +1128,23 @@ def ls_tool(runtime: ToolRuntime[ContextT, ThreadState], description: str, path:
         path: The **absolute** path to the directory to list.
     """
     try:
-        sandbox = ensure_sandbox_initialized(runtime)
-        ensure_thread_directories_exist(runtime)
         requested_path = path
-        if is_local_sandbox(runtime):
-            thread_data = get_thread_data(runtime)
-            validate_local_tool_path(path, thread_data, read_only=True)
-            if _is_skills_path(path):
-                path = _resolve_skills_path(path)
-            elif _is_acp_workspace_path(path):
-                path = _resolve_acp_workspace_path(path, _extract_thread_id_from_thread_data(thread_data))
-            else:
-                path = _resolve_and_validate_user_data_path(path, thread_data)
-        children = sandbox.list_dir(path)
+        if _is_skills_path(path):
+            if path.rstrip("/") == _get_skills_container_path().rstrip("/"):
+                skill_roots = _list_runtime_skill_roots(runtime)
+                if not skill_roots:
+                    return "(empty)"
+                return "\n".join(skill_roots)
+            path, thread_data = _resolve_runtime_skill_path(path, runtime)
+        else:
+            path, thread_data = _resolve_direct_read_path(path, runtime, allow_skills=True)
+        children = local_list_dir(path, max_depth=2)
         if not children:
             return "(empty)"
-        return "\n".join(children)
-    except SandboxError as e:
-        return f"Error: {e}"
+        output = "\n".join(children)
+        if _is_skills_path(requested_path):
+            output = _mask_runtime_skill_paths_in_output(output, runtime)
+        return mask_local_paths_in_output(output, thread_data)
     except FileNotFoundError:
         return f"Error: Directory not found: {requested_path}"
     except PermissionError:
@@ -918,23 +1170,13 @@ def read_file_tool(
         end_line: Optional ending line number (1-indexed, inclusive). Use with start_line to read a specific range.
     """
     try:
-        sandbox = ensure_sandbox_initialized(runtime)
-        ensure_thread_directories_exist(runtime)
         requested_path = path
-        if is_local_sandbox(runtime):
-            thread_data = get_thread_data(runtime)
-            validate_local_tool_path(path, thread_data, read_only=True)
-            if _is_skills_path(path):
-                path = _resolve_skills_path(path)
-            elif _is_acp_workspace_path(path):
-                path = _resolve_acp_workspace_path(path, _extract_thread_id_from_thread_data(thread_data))
-            else:
-                path = _resolve_and_validate_user_data_path(path, thread_data)
-        content = sandbox.read_file(path)
+        if _is_skills_path(path):
+            return f"Error: Use `skill_load` for skill files: {requested_path}"
+        path, thread_data = _resolve_direct_read_path(path, runtime, allow_skills=False)
+        content = _read_text_file(path, start_line=start_line, end_line=end_line)
         if not content:
             return "(empty)"
-        if start_line is not None and end_line is not None:
-            content = "\n".join(content.splitlines()[start_line - 1 : end_line])
         try:
             from deerflow.config.app_config import get_app_config
 
@@ -942,17 +1184,61 @@ def read_file_tool(
             max_chars = sandbox_cfg.read_file_output_max_chars if sandbox_cfg else 50000
         except Exception:
             max_chars = 50000
-        return _truncate_read_file_output(content, max_chars)
-    except SandboxError as e:
-        return f"Error: {e}"
+        return _truncate_read_file_output(mask_local_paths_in_output(content, thread_data), max_chars)
     except FileNotFoundError:
         return f"Error: File not found: {requested_path}"
     except PermissionError:
         return f"Error: Permission denied reading file: {requested_path}"
     except IsADirectoryError:
         return f"Error: Path is a directory, not a file: {requested_path}"
+    except UnicodeDecodeError:
+        return f"Error: File is not valid UTF-8 text: {requested_path}"
     except Exception as e:
         return f"Error: Unexpected error reading file: {_sanitize_error(e, runtime)}"
+
+
+@tool("skill_load", parse_docstring=True)
+def skill_load_tool(
+    runtime: ToolRuntime[ContextT, ThreadState],
+    description: str,
+    path: str,
+    start_line: int | None = None,
+    end_line: int | None = None,
+) -> str:
+    """Read the contents of a skill file mounted under `/mnt/skills`.
+
+    Args:
+        description: Explain why you are reading this skill file in short words. ALWAYS PROVIDE THIS PARAMETER FIRST.
+        path: The **absolute** `/mnt/skills/...` path to the file to read.
+        start_line: Optional starting line number (1-indexed, inclusive). Use with end_line to read a specific range.
+        end_line: Optional ending line number (1-indexed, inclusive). Use with start_line to read a specific range.
+    """
+    requested_path = path
+    try:
+        if not _is_skills_path(path):
+            return f"Error: skill_load only supports /mnt/skills paths: {requested_path}"
+        path, thread_data = _resolve_runtime_skill_path(path, runtime)
+        content = _read_text_file(path, start_line=start_line, end_line=end_line)
+        if not content:
+            return "(empty)"
+        try:
+            from deerflow.config.app_config import get_app_config
+
+            sandbox_cfg = get_app_config().sandbox
+            max_chars = sandbox_cfg.read_file_output_max_chars if sandbox_cfg else 50000
+        except Exception:
+            max_chars = 50000
+        return _truncate_read_file_output(mask_local_paths_in_output(content, thread_data), max_chars)
+    except FileNotFoundError:
+        return f"Error: File not found: {requested_path}"
+    except PermissionError:
+        return f"Error: Permission denied reading file: {requested_path}"
+    except IsADirectoryError:
+        return f"Error: Path is a directory, not a file: {requested_path}"
+    except UnicodeDecodeError:
+        return f"Error: File is not valid UTF-8 text: {requested_path}"
+    except Exception as e:
+        return f"Error: Unexpected error reading skill file: {_sanitize_error(e, runtime)}"
 
 
 @tool("write_file", parse_docstring=True)
@@ -971,18 +1257,15 @@ def write_file_tool(
         content: The content to write to the file. ALWAYS PROVIDE THIS PARAMETER THIRD.
     """
     try:
-        sandbox = ensure_sandbox_initialized(runtime)
-        ensure_thread_directories_exist(runtime)
         requested_path = path
-        if is_local_sandbox(runtime):
-            thread_data = get_thread_data(runtime)
-            validate_local_tool_path(path, thread_data)
-            path = _resolve_and_validate_user_data_path(path, thread_data)
-        with get_file_operation_lock(sandbox, path):
-            sandbox.write_file(path, content, append)
+        path, _thread_data = _resolve_direct_user_data_path(path, runtime)
+        with get_file_operation_lock(_DIRECT_FS_LOCK_OWNER, path):
+            path_obj = Path(path)
+            path_obj.parent.mkdir(parents=True, exist_ok=True)
+            mode = "a" if append else "w"
+            with path_obj.open(mode, encoding="utf-8") as handle:
+                handle.write(content)
         return "OK"
-    except SandboxError as e:
-        return f"Error: {e}"
     except PermissionError:
         return f"Error: Permission denied writing to file: {requested_path}"
     except IsADirectoryError:
@@ -1013,15 +1296,10 @@ def str_replace_tool(
         replace_all: Whether to replace all occurrences of the substring. If False, only the first occurrence will be replaced. Default is False.
     """
     try:
-        sandbox = ensure_sandbox_initialized(runtime)
-        ensure_thread_directories_exist(runtime)
         requested_path = path
-        if is_local_sandbox(runtime):
-            thread_data = get_thread_data(runtime)
-            validate_local_tool_path(path, thread_data)
-            path = _resolve_and_validate_user_data_path(path, thread_data)
-        with get_file_operation_lock(sandbox, path):
-            content = sandbox.read_file(path)
+        path, _thread_data = _resolve_direct_user_data_path(path, runtime)
+        with get_file_operation_lock(_DIRECT_FS_LOCK_OWNER, path):
+            content = Path(path).read_text(encoding="utf-8")
             if not content:
                 return "OK"
             if old_str not in content:
@@ -1030,13 +1308,13 @@ def str_replace_tool(
                 content = content.replace(old_str, new_str)
             else:
                 content = content.replace(old_str, new_str, 1)
-            sandbox.write_file(path, content)
+            Path(path).write_text(content, encoding="utf-8")
         return "OK"
-    except SandboxError as e:
-        return f"Error: {e}"
     except FileNotFoundError:
         return f"Error: File not found: {requested_path}"
     except PermissionError:
         return f"Error: Permission denied accessing file: {requested_path}"
+    except UnicodeDecodeError:
+        return f"Error: File is not valid UTF-8 text: {requested_path}"
     except Exception as e:
         return f"Error: Unexpected error replacing string: {_sanitize_error(e, runtime)}"
