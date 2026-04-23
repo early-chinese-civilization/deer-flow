@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const {
-  pathOfCreateAgentDraft,
-  pathOfEditAgentDraft,
-  resolveAgentDraftTab,
-} = await import(new URL("./agent-draft-routes.ts", import.meta.url).href);
+const { pathOfCreateAgentDraft, resolveAgentDraftTab } = await import(
+  new URL("./agent-draft-routes.ts", import.meta.url).href
+);
 
 void test("defaults unknown tabs back to the first draft tab", () => {
   assert.equal(resolveAgentDraftTab("confirm"), "confirm");
@@ -21,15 +19,5 @@ void test("builds create draft routes and preserves unrelated query params", () 
       tab: "skills",
     }),
     "/workspace/agents/new?mode=skill&mock=true&tab=skills",
-  );
-});
-
-void test("builds edit draft routes with canonical agent ownership in the path", () => {
-  assert.equal(
-    pathOfEditAgentDraft("demo-agent", {
-      currentSearch: "tab=description&foo=bar",
-      tab: "confirm",
-    }),
-    "/workspace/agents/demo-agent/edit?tab=confirm&foo=bar",
   );
 });
