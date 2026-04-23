@@ -31,6 +31,8 @@ export interface Translations {
     preview: string;
     cancel: string;
     save: string;
+    previous: string;
+    next: string;
     install: string;
     create: string;
     import: string;
@@ -153,6 +155,7 @@ export interface Translations {
     createSectionDescription: string;
     createSectionSoul: string;
     createSectionSkills: string;
+    confirmSection: string;
     createNameTitle: string;
     createNameHint: string;
     createDescriptionTitle: string;
@@ -168,6 +171,12 @@ export interface Translations {
     createSuccess: string;
     createError: string;
     createNameRequiredError: string;
+    confirmTitle: string;
+    confirmHint: string;
+    confirmSubmitHint: string;
+    confirmEmptyValue: string;
+    draftSaved: string;
+    resumeDraftError: string;
     editPageTitle: string;
     editPageDescription: string;
     editNameHint: string;

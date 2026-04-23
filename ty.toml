@@ -1,0 +1,6 @@
+[environment]
+# DeerFlow backend virtual environment (contains ecc_auth)
+python = "./backend/.venv"
+# Make backend/ the first-party module root so `from app...` resolves correctly
+root = ["./backend"]
+python-version = "3.12"

@@ -42,6 +42,8 @@ export const enUS: Translations = {
     preview: "Preview",
     cancel: "Cancel",
     save: "Save",
+    previous: "Previous",
+    next: "Next",
     install: "Install",
     create: "Create",
     import: "Import",
@@ -218,6 +220,7 @@ export const enUS: Translations = {
     createSectionDescription: "Description",
     createSectionSoul: "SOUL",
     createSectionSkills: "Skills",
+    confirmSection: "Confirm",
     createNameTitle: "Choose an agent name",
     createNameHint:
       "Letters, digits, and hyphens only. The final name is stored in lowercase.",
@@ -237,8 +240,16 @@ export const enUS: Translations = {
     createSuccess: "Agent created successfully.",
     createError: "Failed to create agent.",
     createNameRequiredError: "Agent name is required.",
+    confirmTitle: "Review before submitting",
+    confirmHint:
+      "Draft changes stay local until you submit from this final tab.",
+    confirmSubmitHint: "Only this tab publishes the final agent.",
+    confirmEmptyValue: "Not provided yet",
+    draftSaved: "Draft saved locally",
+    resumeDraftError: "Could not restore this draft right now.",
     editPageTitle: "Edit agent",
-    editPageDescription: "Update the core information and skill bindings for an existing agent.",
+    editPageDescription:
+      "Update the core information and skill bindings for an existing agent.",
     editNameHint: "The agent name cannot be changed after creation.",
     updateButton: "Save changes",
     updateButtonPending: "Saving...",
@@ -475,9 +486,12 @@ export const enUS: Translations = {
       uploadError: "Failed to upload skills.",
       publishSkill: "Publish",
       downloadSkill: "Download",
-      downloadSuccess: (skillName: string) => `Skill "${skillName}" downloaded successfully.`,
-      publishSuccess: (skillName: string) => `Skill "${skillName}" published successfully.`,
-      publishedBy: (ownerDisplayName: string) => `Published by ${ownerDisplayName}`,
+      downloadSuccess: (skillName: string) =>
+        `Skill "${skillName}" downloaded successfully.`,
+      publishSuccess: (skillName: string) =>
+        `Skill "${skillName}" published successfully.`,
+      publishedBy: (ownerDisplayName: string) =>
+        `Published by ${ownerDisplayName}`,
       deleteBlocked: (agentName: string) =>
         `This skill is bound to agent "${agentName}" and cannot be deleted.`,
       conflictConfirm: (skillName: string) =>
