@@ -34,7 +34,16 @@ def _normalize_presented_filepath(
     virtual_prefix = VIRTUAL_PATH_PREFIX.lstrip("/")
 
     if stripped == virtual_prefix or stripped.startswith(virtual_prefix + "/"):
-        actual_path = get_paths().resolve_virtual_path(thread_id, filepath)
+        workspace_id = thread_data.get("workspace_id")
+        if not workspace_id and runtime.context:
+            raw_workspace_id = runtime.context.get("workspace_id")
+            if raw_workspace_id is not None:
+                workspace_id = str(raw_workspace_id)
+
+        if workspace_id:
+            actual_path = get_paths().resolve_workspace_virtual_path(str(workspace_id), filepath)
+        else:
+            actual_path = get_paths().resolve_virtual_path(thread_id, filepath)
     else:
         actual_path = Path(filepath).expanduser().resolve()
 

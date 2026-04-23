@@ -34,13 +34,73 @@ def test_apply_prompt_template_includes_custom_mounts(monkeypatch):
         skills=SimpleNamespace(container_path="/mnt/skills"),
     )
     monkeypatch.setattr("deerflow.config.get_app_config", lambda: config)
-    monkeypatch.setattr(prompt_module, "load_skills", lambda enabled_only=True: [])
+    monkeypatch.setattr(prompt_module, "get_config", lambda: {"context": {}})
     monkeypatch.setattr(prompt_module, "get_deferred_tools_prompt_section", lambda: "")
     monkeypatch.setattr(prompt_module, "_build_acp_section", lambda: "")
-    monkeypatch.setattr(prompt_module, "_get_memory_context", lambda agent_name=None: "")
-    monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None: "")
+    monkeypatch.setattr(prompt_module, "_get_memory_context", lambda agent_name=None, runtime_agent_context=None: "")
+    monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None, runtime_agent_context=None: "")
 
     prompt = prompt_module.apply_prompt_template()
 
     assert "`/home/user/shared`" in prompt
     assert "Custom Mounted Directories" in prompt
+
+
+def test_get_agent_soul_uses_runtime_context(monkeypatch):
+    monkeypatch.setattr(
+        prompt_module,
+        "get_config",
+        lambda: {"context": {"runtime_agent": {"soul": "You are calm and precise."}}},
+    )
+
+    soul = prompt_module.get_agent_soul("ignored-agent")
+
+    assert "<soul>" in soul
+    assert "You are calm and precise." in soul
+
+
+def test_runtime_agent_context_is_empty_outside_runnable_context(monkeypatch):
+    monkeypatch.setattr(
+        prompt_module,
+        "get_config",
+        lambda: (_ for _ in ()).throw(RuntimeError("Called get_config outside of a runnable context")),
+    )
+
+    assert prompt_module._get_runtime_agent_context() == {}
+
+
+def test_get_skills_prompt_section_uses_runtime_context(monkeypatch):
+    config = SimpleNamespace(skills=SimpleNamespace(container_path="/mnt/skills"))
+    monkeypatch.setattr("deerflow.config.get_app_config", lambda: config)
+    monkeypatch.setattr(
+        prompt_module,
+        "get_config",
+        lambda: {
+            "context": {
+                "runtime_agent": {
+                    "skills": [
+                        {
+                            "name": "sql-review",
+                            "description": "Review SQL changes.",
+                            "file_path": "public/sql-review",
+                            "virtual_path": "/mnt/skills/sql-review/SKILL.md",
+                        },
+                        {
+                            "name": "api-design",
+                            "description": "Design API contracts.",
+                            "file_path": "9/api-design",
+                            "virtual_path": "/mnt/skills/api-design/SKILL.md",
+                        },
+                    ]
+                }
+            }
+        },
+    )
+
+    section = prompt_module.get_skills_prompt_section()
+
+    assert "sql-review" in section
+    assert "Review SQL changes." in section
+    assert "/mnt/skills/sql-review/SKILL.md" in section
+    assert "api-design" in section
+    assert "skill_load" in section

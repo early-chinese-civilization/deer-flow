@@ -13,6 +13,7 @@ import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from deerflow.skills.loader import get_skills_root_path
+from deerflow.skills.path_utils import LEGACY_CUSTOM_SKILLS_DIR, build_private_skill_file_path
 from deerflow.skills.validation import _validate_skill_frontmatter
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,7 @@ def install_skill_from_archive(
     zip_path: str | Path,
     *,
     skills_root: Path | None = None,
+    user_id: int | str | None = None,
 ) -> dict:
     """Install a skill from a .skill archive (ZIP).
 
@@ -125,6 +127,10 @@ def install_skill_from_archive(
         zip_path: Path to the .skill file.
         skills_root: Override the skills root directory. If None, uses
             the default from config.
+        user_id: Optional user ID. When provided, install into the
+            shared-filesystem private directory ``<user_id>/<skill_name>``.
+            When omitted, falls back to the legacy ``custom/<skill_name>``
+            location for standalone/local client compatibility.
 
     Returns:
         Dict with success, skill_name, message.
@@ -145,8 +151,6 @@ def install_skill_from_archive(
 
     if skills_root is None:
         skills_root = get_skills_root_path()
-    custom_dir = skills_root / "custom"
-    custom_dir.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -169,7 +173,11 @@ def install_skill_from_archive(
         if not skill_name or "/" in skill_name or "\\" in skill_name or ".." in skill_name:
             raise ValueError(f"Invalid skill name: {skill_name}")
 
-        target = custom_dir / skill_name
+        if user_id is None:
+            target = skills_root / LEGACY_CUSTOM_SKILLS_DIR / skill_name
+        else:
+            target = skills_root / build_private_skill_file_path(user_id, skill_name)
+        target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
             raise SkillAlreadyExistsError(f"Skill '{skill_name}' already exists")
 

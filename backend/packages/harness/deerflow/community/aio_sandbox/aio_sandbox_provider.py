@@ -101,6 +101,7 @@ class AioSandboxProvider(SandboxProvider):
         # Containers here can be reclaimed quickly (no cold-start) or destroyed
         # when replicas capacity is exhausted.
         self._warm_pool: dict[str, tuple[SandboxInfo, float]] = {}
+        self._ephemeral_sandboxes: set[str] = set()
         self._shutdown_called = False
         self._idle_checker_stop = threading.Event()
         self._idle_checker_thread: threading.Thread | None = None
@@ -188,11 +189,18 @@ class AioSandboxProvider(SandboxProvider):
 
     # ── Mount helpers ────────────────────────────────────────────────────
 
-    def _get_extra_mounts(self, thread_id: str | None) -> list[tuple[str, str, bool]]:
-        """Collect all extra mounts for a sandbox (thread-specific + skills)."""
+    def _get_extra_mounts(
+        self,
+        thread_id: str | None,
+        workspace_id: str | None = None,
+    ) -> list[tuple[str, str, bool]]:
+        """Collect all extra mounts for a sandbox (workspace/thread-specific + skills)."""
         mounts: list[tuple[str, str, bool]] = []
 
-        if thread_id:
+        if workspace_id:
+            mounts.extend(self._get_workspace_mounts(workspace_id, thread_id))
+            logger.info(f"Adding workspace mounts for workspace {workspace_id}: {mounts}")
+        elif thread_id:
             mounts.extend(self._get_thread_mounts(thread_id))
             logger.info(f"Adding thread mounts for thread {thread_id}: {mounts}")
 
@@ -201,6 +209,21 @@ class AioSandboxProvider(SandboxProvider):
             mounts.append(skills_mount)
             logger.info(f"Adding skills mount: {skills_mount}")
 
+        return mounts
+
+    @staticmethod
+    def _get_workspace_mounts(workspace_id: str, thread_id: str | None = None) -> list[tuple[str, str, bool]]:
+        """Get volume mounts for a workspace's shared user-data directories."""
+        paths = get_paths()
+        paths.ensure_workspace_dirs(workspace_id)
+
+        mounts = [
+            (paths.host_workspace_work_dir(workspace_id), f"{VIRTUAL_PATH_PREFIX}/workspace", False),
+            (paths.host_workspace_uploads_dir(workspace_id), f"{VIRTUAL_PATH_PREFIX}/uploads", False),
+            (paths.host_workspace_outputs_dir(workspace_id), f"{VIRTUAL_PATH_PREFIX}/outputs", False),
+        ]
+        if thread_id:
+            mounts.append((paths.host_acp_workspace_dir(thread_id), "/mnt/acp-workspace", True))
         return mounts
 
     @staticmethod
@@ -236,8 +259,13 @@ class AioSandboxProvider(SandboxProvider):
             container_path = config.skills.container_path
 
             if skills_path.exists():
-                # When running inside Docker with DooD, use host-side skills path.
-                host_skills = os.environ.get("DEER_FLOW_HOST_SKILLS_PATH") or str(skills_path)
+                # Prefer the shared filesystem contract so runtime skill loading
+                # and sandbox mounts resolve to the same host path.
+                host_skills = (
+                    get_paths()._host_shared_fs_root_str() + os.sep + "skills"
+                    if os.environ.get("DEER_FLOW_HOST_SHARED_FS_ROOT")
+                    else os.environ.get("DEER_FLOW_HOST_SKILLS_PATH") or str(skills_path)
+                )
                 return (host_skills, container_path, True)  # Read-only for security
         except Exception as e:
             logger.warning(f"Could not setup skills mount: {e}")
@@ -346,7 +374,7 @@ class AioSandboxProvider(SandboxProvider):
 
     # ── Core: acquire / get / release / shutdown ─────────────────────────
 
-    def acquire(self, thread_id: str | None = None) -> str:
+    def acquire(self, thread_id: str | None = None, workspace_id: str | None = None) -> str:
         """Acquire a sandbox environment and return its ID.
 
         For the same thread_id, this method will return the same sandbox_id
@@ -364,11 +392,22 @@ class AioSandboxProvider(SandboxProvider):
         if thread_id:
             thread_lock = self._get_thread_lock(thread_id)
             with thread_lock:
-                return self._acquire_internal(thread_id)
+                return self._acquire_internal(thread_id, workspace_id)
         else:
-            return self._acquire_internal(thread_id)
+            return self._acquire_internal(thread_id, workspace_id)
 
-    def _acquire_internal(self, thread_id: str | None) -> str:
+    def acquire_ephemeral(self, thread_id: str | None = None, workspace_id: str | None = None) -> str:
+        """Create a fresh sandbox for a single bash invocation."""
+        sandbox_id = str(uuid.uuid4())[:8]
+        return self._create_sandbox(
+            thread_id,
+            sandbox_id,
+            workspace_id=workspace_id,
+            track_thread=False,
+            ephemeral=True,
+        )
+
+    def _acquire_internal(self, thread_id: str | None, workspace_id: str | None = None) -> str:
         """Internal sandbox acquisition with two-layer consistency.
 
         Layer 1: In-process cache (fastest, covers same-process repeated access)
@@ -409,11 +448,16 @@ class AioSandboxProvider(SandboxProvider):
         # for the same thread_id serialize here: the second process will discover
         # the container started by the first instead of hitting a name-conflict.
         if thread_id:
-            return self._discover_or_create_with_lock(thread_id, sandbox_id)
+            return self._discover_or_create_with_lock(thread_id, sandbox_id, workspace_id=workspace_id)
 
-        return self._create_sandbox(thread_id, sandbox_id)
+        return self._create_sandbox(thread_id, sandbox_id, workspace_id=workspace_id)
 
-    def _discover_or_create_with_lock(self, thread_id: str, sandbox_id: str) -> str:
+    def _discover_or_create_with_lock(
+        self,
+        thread_id: str,
+        sandbox_id: str,
+        workspace_id: str | None = None,
+    ) -> str:
         """Discover an existing sandbox or create a new one under a cross-process file lock.
 
         The file lock serializes concurrent sandbox creation for the same thread_id
@@ -459,7 +503,7 @@ class AioSandboxProvider(SandboxProvider):
                     logger.info(f"Discovered existing sandbox {discovered.sandbox_id} for thread {thread_id} at {discovered.sandbox_url}")
                     return discovered.sandbox_id
 
-                return self._create_sandbox(thread_id, sandbox_id)
+                return self._create_sandbox(thread_id, sandbox_id, workspace_id=workspace_id)
             finally:
                 if locked:
                     _unlock_file(lock_file)
@@ -484,7 +528,15 @@ class AioSandboxProvider(SandboxProvider):
             return None
         return oldest_id
 
-    def _create_sandbox(self, thread_id: str | None, sandbox_id: str) -> str:
+    def _create_sandbox(
+        self,
+        thread_id: str | None,
+        sandbox_id: str,
+        *,
+        workspace_id: str | None = None,
+        track_thread: bool = True,
+        ephemeral: bool = False,
+    ) -> str:
         """Create a new sandbox via the backend.
 
         Args:
@@ -497,7 +549,7 @@ class AioSandboxProvider(SandboxProvider):
         Raises:
             RuntimeError: If sandbox creation or readiness check fails.
         """
-        extra_mounts = self._get_extra_mounts(thread_id)
+        extra_mounts = self._get_extra_mounts(thread_id, workspace_id)
 
         # Enforce replicas: only warm-pool containers count toward eviction budget.
         # Active sandboxes are in use by live threads and must not be forcibly stopped.
@@ -514,7 +566,12 @@ class AioSandboxProvider(SandboxProvider):
                 # that is actively serving a thread.
                 logger.warning(f"All {replicas} replica slots are in active use; creating sandbox {sandbox_id} beyond the soft limit")
 
-        info = self._backend.create(thread_id, sandbox_id, extra_mounts=extra_mounts or None)
+        info = self._backend.create(
+            thread_id,
+            sandbox_id,
+            extra_mounts=extra_mounts or None,
+            workspace_id=workspace_id,
+        )
 
         # Wait for sandbox to be ready
         if not wait_for_sandbox_ready(info.sandbox_url, timeout=60):
@@ -526,10 +583,12 @@ class AioSandboxProvider(SandboxProvider):
             self._sandboxes[sandbox_id] = sandbox
             self._sandbox_infos[sandbox_id] = info
             self._last_activity[sandbox_id] = time.time()
-            if thread_id:
+            if track_thread and thread_id:
                 self._thread_sandboxes[thread_id] = sandbox_id
+            if ephemeral:
+                self._ephemeral_sandboxes.add(sandbox_id)
 
-        logger.info(f"Created sandbox {sandbox_id} for thread {thread_id} at {info.sandbox_url}")
+        logger.info(f"Created sandbox {sandbox_id} for thread {thread_id} workspace {workspace_id} at {info.sandbox_url}")
         return sandbox_id
 
     def get(self, sandbox_id: str) -> Sandbox | None:
@@ -567,9 +626,17 @@ class AioSandboxProvider(SandboxProvider):
             for tid in thread_ids_to_remove:
                 del self._thread_sandboxes[tid]
             self._last_activity.pop(sandbox_id, None)
+            is_ephemeral = sandbox_id in self._ephemeral_sandboxes
+            self._ephemeral_sandboxes.discard(sandbox_id)
             # Park in warm pool — container keeps running
-            if info and sandbox_id not in self._warm_pool:
+            if not is_ephemeral and info and sandbox_id not in self._warm_pool:
                 self._warm_pool[sandbox_id] = (info, time.time())
+
+        if is_ephemeral:
+            if info:
+                self._backend.destroy(info)
+            logger.info(f"Released ephemeral sandbox {sandbox_id} by destroying it")
+            return
 
         logger.info(f"Released sandbox {sandbox_id} to warm pool (container still running)")
 
@@ -592,6 +659,7 @@ class AioSandboxProvider(SandboxProvider):
             for tid in thread_ids_to_remove:
                 del self._thread_sandboxes[tid]
             self._last_activity.pop(sandbox_id, None)
+            self._ephemeral_sandboxes.discard(sandbox_id)
             # Also pull from warm pool if it was parked there
             if info is None and sandbox_id in self._warm_pool:
                 info, _ = self._warm_pool.pop(sandbox_id)

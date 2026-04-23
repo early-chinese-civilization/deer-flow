@@ -6,14 +6,25 @@ from pathlib import Path, PureWindowsPath
 # Virtual path prefix seen by agents inside the sandbox
 VIRTUAL_PATH_PREFIX = "/mnt/user-data"
 
-_SAFE_THREAD_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+_SAFE_FS_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9._\-]+$")
 
 
 def _validate_thread_id(thread_id: str) -> str:
     """Validate a thread ID before using it in filesystem paths."""
-    if not _SAFE_THREAD_ID_RE.match(thread_id):
-        raise ValueError(f"Invalid thread_id {thread_id!r}: only alphanumeric characters, hyphens, and underscores are allowed.")
+    if not _SAFE_FS_IDENTIFIER_RE.match(thread_id):
+        raise ValueError(
+            f"Invalid thread_id {thread_id!r}: only alphanumeric characters, dots, hyphens, and underscores are allowed."
+        )
     return thread_id
+
+
+def _validate_workspace_id(workspace_id: str) -> str:
+    """Validate a workspace ID before using it in filesystem paths."""
+    if not _SAFE_FS_IDENTIFIER_RE.match(workspace_id):
+        raise ValueError(
+            f"Invalid workspace_id {workspace_id!r}: only alphanumeric characters, dots, hyphens, and underscores are allowed."
+        )
+    return workspace_id
 
 
 def _join_host_path(base: str, *parts: str) -> str:
@@ -68,7 +79,8 @@ class Paths:
         1. Constructor argument `base_dir`
         2. DEER_FLOW_HOME environment variable
         3. Local dev fallback: cwd/.deer-flow  (when cwd is the backend/ dir)
-        4. Default: $HOME/.deer-flow
+        4. Monorepo fallback: cwd/backend/.deer-flow  (when cwd is the repo root)
+        5. Default: $HOME/.deer-flow
     """
 
     def __init__(self, base_dir: str | Path | None = None) -> None:
@@ -96,6 +108,26 @@ class Paths:
         return str(self.base_dir)
 
     @property
+    def shared_fs_root(self) -> Path:
+        """Root directory for the shared filesystem mounted by gateway and sandbox."""
+        if env := os.getenv("DEER_FLOW_SHARED_FS_ROOT"):
+            return Path(env).resolve()
+        return self.base_dir
+
+    @property
+    def host_shared_fs_root(self) -> Path:
+        """Host-visible shared filesystem root for bind mounts / hostPath."""
+        if env := os.getenv("DEER_FLOW_HOST_SHARED_FS_ROOT"):
+            return Path(env)
+        return self.shared_fs_root
+
+    def _host_shared_fs_root_str(self) -> str:
+        """Return the host shared filesystem root as a raw string for bind mounts."""
+        if env := os.getenv("DEER_FLOW_HOST_SHARED_FS_ROOT"):
+            return env
+        return str(self.shared_fs_root)
+
+    @property
     def base_dir(self) -> Path:
         """Root directory for all application data."""
         if self._base_dir is not None:
@@ -107,6 +139,8 @@ class Paths:
         cwd = Path.cwd()
         if cwd.name == "backend" or (cwd / "pyproject.toml").exists():
             return cwd / ".deer-flow"
+        if (cwd / "backend" / "pyproject.toml").exists():
+            return cwd / "backend" / ".deer-flow"
 
         return Path.home() / ".deer-flow"
 
@@ -124,6 +158,11 @@ class Paths:
     def agents_dir(self) -> Path:
         """Root directory for all custom agents: `{base_dir}/agents/`."""
         return self.base_dir / "agents"
+
+    @property
+    def workspaces_dir(self) -> Path:
+        """Root directory for shared workspace data: `{shared_fs_root}/workspaces/`."""
+        return self.shared_fs_root / "workspaces"
 
     def agent_dir(self, name: str) -> Path:
         """Directory for a specific agent: `{base_dir}/agents/{name}/`."""
@@ -145,6 +184,26 @@ class Paths:
                         or `..`) that could cause directory traversal.
         """
         return self.base_dir / "threads" / _validate_thread_id(thread_id)
+
+    def workspace_dir(self, workspace_id: str) -> Path:
+        """Filesystem path for a workspace root: `{shared_fs_root}/workspaces/{workspace_id}/`."""
+        return self.workspaces_dir / _validate_workspace_id(workspace_id)
+
+    def workspace_user_data_dir(self, workspace_id: str) -> Path:
+        """Workspace-scoped user-data root mounted into bash sandboxes."""
+        return self.workspace_dir(workspace_id) / "user-data"
+
+    def workspace_work_dir(self, workspace_id: str) -> Path:
+        """Workspace-backed workspace directory exposed as `/mnt/user-data/workspace/`."""
+        return self.workspace_user_data_dir(workspace_id) / "workspace"
+
+    def workspace_uploads_dir(self, workspace_id: str) -> Path:
+        """Workspace-backed uploads directory exposed as `/mnt/user-data/uploads/`."""
+        return self.workspace_user_data_dir(workspace_id) / "uploads"
+
+    def workspace_outputs_dir(self, workspace_id: str) -> Path:
+        """Workspace-backed outputs directory exposed as `/mnt/user-data/outputs/`."""
+        return self.workspace_user_data_dir(workspace_id) / "outputs"
 
     def sandbox_work_dir(self, thread_id: str) -> Path:
         """
@@ -209,6 +268,26 @@ class Paths:
         """Host path for the outputs mount source."""
         return _join_host_path(self.host_sandbox_user_data_dir(thread_id), "outputs")
 
+    def host_workspace_dir(self, workspace_id: str) -> str:
+        """Host path for a workspace directory, preserving native path syntax."""
+        return _join_host_path(self._host_shared_fs_root_str(), "workspaces", _validate_workspace_id(workspace_id))
+
+    def host_workspace_user_data_dir(self, workspace_id: str) -> str:
+        """Host path for a workspace's user-data root."""
+        return _join_host_path(self.host_workspace_dir(workspace_id), "user-data")
+
+    def host_workspace_work_dir(self, workspace_id: str) -> str:
+        """Host path for the workspace mount source."""
+        return _join_host_path(self.host_workspace_user_data_dir(workspace_id), "workspace")
+
+    def host_workspace_uploads_dir(self, workspace_id: str) -> str:
+        """Host path for the uploads mount source."""
+        return _join_host_path(self.host_workspace_user_data_dir(workspace_id), "uploads")
+
+    def host_workspace_outputs_dir(self, workspace_id: str) -> str:
+        """Host path for the outputs mount source."""
+        return _join_host_path(self.host_workspace_user_data_dir(workspace_id), "outputs")
+
     def host_acp_workspace_dir(self, thread_id: str) -> str:
         """Host path for the ACP workspace mount source."""
         return _join_host_path(self.host_thread_dir(thread_id), "acp-workspace")
@@ -231,6 +310,16 @@ class Paths:
             self.sandbox_uploads_dir(thread_id),
             self.sandbox_outputs_dir(thread_id),
             self.acp_workspace_dir(thread_id),
+        ]:
+            d.mkdir(parents=True, exist_ok=True)
+            d.chmod(0o777)
+
+    def ensure_workspace_dirs(self, workspace_id: str) -> None:
+        """Create all standard shared workspace directories."""
+        for d in [
+            self.workspace_work_dir(workspace_id),
+            self.workspace_uploads_dir(workspace_id),
+            self.workspace_outputs_dir(workspace_id),
         ]:
             d.mkdir(parents=True, exist_ok=True)
             d.chmod(0o777)
@@ -270,6 +359,25 @@ class Paths:
 
         relative = stripped[len(prefix) :].lstrip("/")
         base = self.sandbox_user_data_dir(thread_id).resolve()
+        actual = (base / relative).resolve()
+
+        try:
+            actual.relative_to(base)
+        except ValueError:
+            raise ValueError("Access denied: path traversal detected")
+
+        return actual
+
+    def resolve_workspace_virtual_path(self, workspace_id: str, virtual_path: str) -> Path:
+        """Resolve a sandbox virtual path to the actual workspace-backed filesystem path."""
+        stripped = virtual_path.lstrip("/")
+        prefix = VIRTUAL_PATH_PREFIX.lstrip("/")
+
+        if stripped != prefix and not stripped.startswith(prefix + "/"):
+            raise ValueError(f"Path must start with /{prefix}")
+
+        relative = stripped[len(prefix) :].lstrip("/")
+        base = self.workspace_user_data_dir(workspace_id).resolve()
         actual = (base / relative).resolve()
 
         try:

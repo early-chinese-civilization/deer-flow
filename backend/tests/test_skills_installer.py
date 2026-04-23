@@ -188,6 +188,16 @@ class TestInstallSkillFromArchive:
         assert result["skill_name"] == "test-skill"
         assert (skills_root / "custom" / "test-skill" / "SKILL.md").exists()
 
+    def test_success_with_user_id_uses_private_shared_fs_layout(self, tmp_path):
+        zip_path = self._make_skill_zip(tmp_path)
+        skills_root = tmp_path / "skills"
+        skills_root.mkdir()
+
+        result = install_skill_from_archive(zip_path, skills_root=skills_root, user_id=7)
+
+        assert result["success"] is True
+        assert (skills_root / "7" / "test-skill" / "SKILL.md").exists()
+
     def test_duplicate_raises(self, tmp_path):
         zip_path = self._make_skill_zip(tmp_path)
         skills_root = tmp_path / "skills"

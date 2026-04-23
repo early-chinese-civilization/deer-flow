@@ -8,6 +8,8 @@ class SandboxState(TypedDict):
 
 
 class ThreadDataState(TypedDict):
+    thread_id: NotRequired[str | None]
+    workspace_id: NotRequired[str | None]
     workspace_path: NotRequired[str | None]
     uploads_path: NotRequired[str | None]
     outputs_path: NotRequired[str | None]

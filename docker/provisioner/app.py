@@ -59,8 +59,10 @@ SANDBOX_IMAGE = os.environ.get(
     "enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest",
 )
 SKILLS_HOST_PATH = os.environ.get("SKILLS_HOST_PATH", "/skills")
-THREADS_HOST_PATH = os.environ.get("THREADS_HOST_PATH", "/.deer-flow/threads")
 SAFE_THREAD_ID_PATTERN = r"^[A-Za-z0-9_\-]+$"
+SAFE_WORKSPACE_ID_PATTERN = r"^[A-Za-z0-9._\-]+$"
+SHARED_FS_HOST_PATH = os.environ.get("SHARED_FS_HOST_PATH") or os.environ.get("DEER_FLOW_HOST_SHARED_FS_ROOT")
+WORKSPACES_HOST_PATH = os.environ.get("WORKSPACES_HOST_PATH")
 
 # Path to the kubeconfig *inside* the provisioner container.
 # Typically the host's ~/.kube/config is mounted here.
@@ -93,12 +95,26 @@ def join_host_path(base: str, *parts: str) -> str:
     return str(result)
 
 
+if WORKSPACES_HOST_PATH is None:
+    WORKSPACES_HOST_PATH = join_host_path(SHARED_FS_HOST_PATH, "workspaces") if SHARED_FS_HOST_PATH else "/.deer-flow/workspaces"
+if SHARED_FS_HOST_PATH and "SKILLS_HOST_PATH" not in os.environ:
+    SKILLS_HOST_PATH = join_host_path(SHARED_FS_HOST_PATH, "skills")
+
+
 def _validate_thread_id(thread_id: str) -> str:
     if not re.match(SAFE_THREAD_ID_PATTERN, thread_id):
         raise ValueError(
             "Invalid thread_id: only alphanumeric characters, hyphens, and underscores are allowed."
         )
     return thread_id
+
+
+def _validate_workspace_id(workspace_id: str) -> str:
+    if not re.match(SAFE_WORKSPACE_ID_PATTERN, workspace_id):
+        raise ValueError(
+            "Invalid workspace_id: only alphanumeric characters, dots, hyphens, and underscores are allowed."
+        )
+    return workspace_id
 
 
 # ── K8s client setup ────────────────────────────────────────────────────
@@ -219,6 +235,7 @@ app = FastAPI(title="DeerFlow Sandbox Provisioner", lifespan=lifespan)
 class CreateSandboxRequest(BaseModel):
     sandbox_id: str
     thread_id: str = Field(pattern=SAFE_THREAD_ID_PATTERN)
+    workspace_id: str = Field(pattern=SAFE_WORKSPACE_ID_PATTERN)
 
 
 class SandboxResponse(BaseModel):
@@ -243,9 +260,10 @@ def _sandbox_url(node_port: int) -> str:
     return f"http://{NODE_HOST}:{node_port}"
 
 
-def _build_pod(sandbox_id: str, thread_id: str) -> k8s_client.V1Pod:
+def _build_pod(sandbox_id: str, thread_id: str, workspace_id: str) -> k8s_client.V1Pod:
     """Construct a Pod manifest for a single sandbox."""
     thread_id = _validate_thread_id(thread_id)
+    workspace_id = _validate_workspace_id(workspace_id)
     return k8s_client.V1Pod(
         metadata=k8s_client.V1ObjectMeta(
             name=_pod_name(sandbox_id),
@@ -331,7 +349,7 @@ def _build_pod(sandbox_id: str, thread_id: str) -> k8s_client.V1Pod:
                 k8s_client.V1Volume(
                     name="user-data",
                     host_path=k8s_client.V1HostPathVolumeSource(
-                        path=join_host_path(THREADS_HOST_PATH, thread_id, "user-data"),
+                        path=join_host_path(WORKSPACES_HOST_PATH, workspace_id, "user-data"),
                         type="DirectoryOrCreate",
                     ),
                 ),
@@ -411,9 +429,10 @@ async def create_sandbox(req: CreateSandboxRequest):
     """
     sandbox_id = req.sandbox_id
     thread_id = req.thread_id
+    workspace_id = req.workspace_id
 
     logger.info(
-        f"Received request to create sandbox '{sandbox_id}' for thread '{thread_id}'"
+        f"Received request to create sandbox '{sandbox_id}' for thread '{thread_id}' workspace '{workspace_id}'"
     )
 
     # ── Fast path: sandbox already exists ────────────────────────────
@@ -427,7 +446,7 @@ async def create_sandbox(req: CreateSandboxRequest):
 
     # ── Create Pod ───────────────────────────────────────────────────
     try:
-        core_v1.create_namespaced_pod(K8S_NAMESPACE, _build_pod(sandbox_id, thread_id))
+        core_v1.create_namespaced_pod(K8S_NAMESPACE, _build_pod(sandbox_id, thread_id, workspace_id))
         logger.info(f"Created Pod {_pod_name(sandbox_id)}")
     except ApiException as exc:
         if exc.status != 409:  # 409 = AlreadyExists

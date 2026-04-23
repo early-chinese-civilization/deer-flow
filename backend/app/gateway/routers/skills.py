@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import shutil
 import tempfile
 import zipfile
 from pathlib import Path
@@ -13,8 +14,14 @@ from app.gateway.db.models import Skill, User
 from app.gateway.db.repository import SkillRepository
 from app.gateway.deps import get_current_user, get_db
 from app.gateway.path_utils import resolve_thread_virtual_path
+from deerflow.config import get_app_config
 from deerflow.skills.installer import SkillAlreadyExistsError, install_skill_from_archive
-from deerflow.uploads.storage import OSSStorageBackend
+from deerflow.skills.path_utils import (
+    build_private_skill_file_path,
+    build_public_skill_file_path,
+    normalize_skill_file_path,
+    resolve_skill_storage_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +103,10 @@ class SkillUploadResponse(BaseModel):
 class SkillDownloadCheckRequest(BaseModel):
     """Request body for checking whether a public skill download will conflict."""
 
-    owner_user_id: int | None = Field(default=None, description="Publisher user ID for the selected public skill")
+    owner_user_id: int | None = Field(
+        default=None,
+        description="Deprecated compatibility field. Public skill lookup now uses only skill_name.",
+    )
 
 
 class SkillDownloadCheckResponse(BaseModel):
@@ -110,7 +120,10 @@ class SkillDownloadCheckResponse(BaseModel):
 class SkillDownloadRequest(BaseModel):
     """Request body for downloading a public skill."""
 
-    owner_user_id: int | None = Field(default=None, description="Publisher user ID for the selected public skill")
+    owner_user_id: int | None = Field(
+        default=None,
+        description="Deprecated compatibility field. Public skill lookup now uses only skill_name.",
+    )
     overwrite: bool = Field(default=False, description="Whether to overwrite an existing same-name custom skill")
 
 
@@ -259,58 +272,44 @@ def _resolve_skill_root_dir(extracted_root: Path) -> Path:
     return skill_dir
 
 
-def _upload_skill_directory_to_oss(
-    *,
-    storage: OSSStorageBackend,
-    skill_dir: Path,
-    root_prefix: str,
-    existing_keys: set[str] | None = None,
-) -> None:
-    """Upload all files from a skill directory to OSS and remove stale objects if needed."""
-    uploaded_keys: set[str] = set()
-    for file_path in skill_dir.rglob("*"):
-        if not file_path.is_file():
-            continue
-        relative_path = file_path.relative_to(skill_dir).as_posix()
-        object_key = f"{root_prefix.rstrip('/')}/{relative_path}"
-        storage.put_object(
-            key=object_key,
-            content=file_path.read_bytes(),
+def _get_skills_root_dir() -> Path:
+    """Return the shared skills root used by gateway and sandbox."""
+    return get_app_config().skills.get_skills_path()
+
+
+def _resolve_skill_dir(file_path: str) -> Path:
+    """Resolve a stored skill path to a concrete directory."""
+    return resolve_skill_storage_dir(_get_skills_root_dir(), file_path)
+
+
+def _resolve_skill_record_dir(skill: Skill) -> Path:
+    """Resolve a DB-backed skill record to its concrete directory."""
+    raw_path = Path(skill.file_path)
+    if raw_path.is_absolute():
+        return raw_path.resolve()
+    return _resolve_skill_dir(
+        normalize_skill_file_path(
+            skill.file_path,
+            user_id=skill.user_id,
+            skill_name=skill.name,
         )
-        uploaded_keys.add(object_key)
-
-    if existing_keys is not None:
-        for object_key in existing_keys - uploaded_keys:
-            storage.delete_object(key=object_key)
+    )
 
 
-def _copy_oss_prefix(
-    *,
-    storage: OSSStorageBackend,
-    source_prefix: str,
-    target_prefix: str,
-    existing_keys: set[str] | None = None,
-) -> None:
-    """Copy all objects from one OSS prefix to another and prune stale objects."""
-    source_objects = storage.list_objects(prefix=source_prefix)
-    if not source_objects:
-        raise ValueError(f"No skill files found under '{source_prefix}'")
+def _replace_skill_directory(source_dir: Path, target_dir: Path) -> None:
+    """Replace a target skill directory with the contents of source_dir."""
+    if not source_dir.exists() or not source_dir.is_dir():
+        raise ValueError(f"Skill directory '{source_dir}' does not exist")
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+    target_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source_dir, target_dir)
 
-    copied_keys: set[str] = set()
-    source_root = source_prefix.rstrip("/") + "/"
-    target_root = target_prefix.rstrip("/") + "/"
-    for object_info in source_objects:
-        relative_path = object_info.key.removeprefix(source_root)
-        target_key = f"{target_root}{relative_path}"
-        storage.put_object(
-            key=target_key,
-            content=storage.get_object_bytes(key=object_info.key),
-        )
-        copied_keys.add(target_key)
 
-    if existing_keys is not None:
-        for object_key in existing_keys - copied_keys:
-            storage.delete_object(key=object_key)
+def _delete_skill_directory(target_dir: Path) -> None:
+    """Delete a skill directory if it exists."""
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
 
 
 async def _parse_uploaded_skill_archive(upload_file: UploadFile) -> tuple[str, str, Path, tempfile.TemporaryDirectory[str]]:
@@ -339,64 +338,18 @@ async def _parse_uploaded_skill_archive(upload_file: UploadFile) -> tuple[str, s
         raise
 
 
-async def _delete_oss_prefix(root_prefix: str) -> None:
-    """Delete all OSS objects under a prefix."""
-    storage = OSSStorageBackend.from_app_config()
-    objects = await asyncio.to_thread(storage.list_objects, prefix=root_prefix)
-    for object_info in objects:
-        await asyncio.to_thread(storage.delete_object, key=object_info.key)
-
-
-async def _list_oss_keys(storage: OSSStorageBackend, root_prefix: str) -> set[str]:
-    """List all object keys under an OSS prefix."""
-    objects = await asyncio.to_thread(storage.list_objects, prefix=root_prefix)
-    return {object_info.key for object_info in objects}
-
-
-async def _sync_skill_source_to_oss(
-    *,
-    storage: OSSStorageBackend,
-    source_skill: Skill,
-    target_prefix: str,
-    existing_keys: set[str] | None = None,
-) -> None:
-    """Sync a skill source into a target OSS prefix from either local seed files or existing OSS files."""
-    if source_skill.user_id is None and source_skill.owner_user_id is None:
-        skill_dir = Path(source_skill.file_path)
-        if not skill_dir.exists() or not skill_dir.is_dir():
-            raise ValueError(f"Seed skill directory '{source_skill.file_path}' does not exist")
-        await asyncio.to_thread(
-            _upload_skill_directory_to_oss,
-            storage=storage,
-            skill_dir=skill_dir,
-            root_prefix=target_prefix,
-            existing_keys=existing_keys,
-        )
-        return
-
-    await asyncio.to_thread(
-        _copy_oss_prefix,
-        storage=storage,
-        source_prefix=source_skill.file_path,
-        target_prefix=target_prefix,
-        existing_keys=existing_keys,
-    )
-
-
 async def _get_download_source_skill(
     db: AsyncSession,
     *,
     skill_name: str,
     owner_user_id: int | None,
 ) -> Skill | None:
-    """Resolve the specific public skill selected for download."""
-    if owner_user_id is None:
-        return await SkillRepository.get_system_public_skill_by_name(db, name=skill_name)
-    return await SkillRepository.get_public_skill_by_name_and_owner(
-        db,
-        name=skill_name,
-        owner_user_id=owner_user_id,
-    )
+    """Resolve the public skill selected for download.
+
+    ``owner_user_id`` is accepted for request compatibility but ignored.
+    """
+    del owner_user_id
+    return await SkillRepository.get_public_skill_by_name(db, name=skill_name)
 
 
 @router.post(
@@ -414,11 +367,13 @@ async def check_skill_upload(
     try:
         filename, skill_name, _, temp_dir = await _parse_uploaded_skill_archive(file)
         existing_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
+        target_dir = _resolve_skill_dir(build_private_skill_file_path(current_user.id, skill_name))
+        exists = existing_skill is not None or target_dir.exists()
         return SkillUploadCheckResponse(
             filename=filename,
             skill_name=skill_name,
-            exists=existing_skill is not None,
-            message="Skill name already exists" if existing_skill is not None else "Skill name is available",
+            exists=exists,
+            message="Skill name already exists" if exists else "Skill name is available",
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -455,8 +410,10 @@ async def upload_skills(
             description = description.strip()
 
             existing_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
-            existing_keys: set[str] | None = None
-            if existing_skill is not None and skill_name not in overwrite_set:
+            target_path = build_private_skill_file_path(current_user.id, skill_name)
+            target_dir = _resolve_skill_dir(target_path)
+            already_exists = existing_skill is not None or target_dir.exists()
+            if already_exists and skill_name not in overwrite_set:
                 results.append(
                     SkillUploadResult(
                         filename=filename,
@@ -467,18 +424,7 @@ async def upload_skills(
                 )
                 continue
 
-            root_prefix = f"skills/{current_user.id}/{skill_name}"
-            storage = OSSStorageBackend.from_app_config()
-            if existing_skill is not None:
-                existing_keys = await _list_oss_keys(storage, root_prefix)
-
-            await asyncio.to_thread(
-                _upload_skill_directory_to_oss,
-                storage=storage,
-                skill_dir=skill_dir,
-                root_prefix=root_prefix,
-                existing_keys=existing_keys,
-            )
+            await asyncio.to_thread(_replace_skill_directory, skill_dir, target_dir)
 
             if existing_skill is not None:
                 await SkillRepository.soft_delete_skill(db, skill=existing_skill, commit=False)
@@ -490,7 +436,7 @@ async def upload_skills(
                 name=skill_name,
                 display_name=skill_name,
                 description=description,
-                file_path=root_prefix,
+                file_path=target_path,
                 commit=False,
             )
 
@@ -559,10 +505,12 @@ async def check_skill_download(
             raise HTTPException(status_code=404, detail=f"Public skill '{skill_name}' not found")
 
         existing_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
+        target_dir = _resolve_skill_dir(build_private_skill_file_path(current_user.id, skill_name))
+        exists = existing_skill is not None or target_dir.exists()
         return SkillDownloadCheckResponse(
             skill_name=skill_name,
-            exists=existing_skill is not None,
-            message="Skill name already exists" if existing_skill is not None else "Skill can be downloaded",
+            exists=exists,
+            message="Skill name already exists" if exists else "Skill can be downloaded",
         )
     except HTTPException:
         raise
@@ -593,19 +541,14 @@ async def download_skill(
             raise HTTPException(status_code=404, detail=f"Public skill '{skill_name}' not found")
 
         existing_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
-        if existing_skill is not None and not request.overwrite:
+        target_path = build_private_skill_file_path(current_user.id, skill_name)
+        target_dir = _resolve_skill_dir(target_path)
+        already_exists = existing_skill is not None or target_dir.exists()
+        if already_exists and not request.overwrite:
             raise HTTPException(status_code=409, detail=f"Skill '{skill_name}' already exists")
 
-        root_prefix = f"skills/{current_user.id}/{skill_name}"
-        storage = OSSStorageBackend.from_app_config()
-        existing_keys = await _list_oss_keys(storage, root_prefix) if existing_skill is not None else None
-
-        await _sync_skill_source_to_oss(
-            storage=storage,
-            source_skill=source_skill,
-            target_prefix=root_prefix,
-            existing_keys=existing_keys,
-        )
+        source_dir = _resolve_skill_record_dir(source_skill)
+        await asyncio.to_thread(_replace_skill_directory, source_dir, target_dir)
 
         if existing_skill is not None:
             await SkillRepository.soft_delete_skill(db, skill=existing_skill, commit=False)
@@ -617,7 +560,7 @@ async def download_skill(
             name=skill_name,
             display_name=skill_name,
             description=source_skill.description,
-            file_path=root_prefix,
+            file_path=target_path,
             commit=False,
         )
 
@@ -647,7 +590,7 @@ async def download_skill(
     "/skills/{skill_name}/publish",
     response_model=SkillResponse,
     summary="Publish Custom Skill",
-    description="Copy the current user's custom skill into the public catalog, overwriting the user's previous public publish if present.",
+    description="Copy the current user's custom skill into the public catalog, overwriting any existing public skill with the same skill_name.",
 )
 async def publish_skill(
     skill_name: str,
@@ -659,24 +602,14 @@ async def publish_skill(
         if custom_skill is None:
             raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
 
-        existing_public_skill = await SkillRepository.get_public_skill_by_name_and_owner(
-            db,
-            name=skill_name,
-            owner_user_id=current_user.id,
-        )
+        existing_public_skills = await SkillRepository.list_public_skills_by_name(db, name=skill_name)
+        source_dir = _resolve_skill_record_dir(custom_skill)
+        target_path = build_public_skill_file_path(skill_name)
+        target_dir = _resolve_skill_dir(target_path)
 
-        root_prefix = f"skills/public/{skill_name}/{current_user.id}"
-        storage = OSSStorageBackend.from_app_config()
-        existing_keys = await _list_oss_keys(storage, root_prefix) if existing_public_skill is not None else None
+        await asyncio.to_thread(_replace_skill_directory, source_dir, target_dir)
 
-        await _sync_skill_source_to_oss(
-            storage=storage,
-            source_skill=custom_skill,
-            target_prefix=root_prefix,
-            existing_keys=existing_keys,
-        )
-
-        if existing_public_skill is not None:
+        for existing_public_skill in existing_public_skills:
             await SkillRepository.soft_delete_skill(db, skill=existing_public_skill, commit=False)
 
         published_skill = await SkillRepository.create_skill(
@@ -686,7 +619,7 @@ async def publish_skill(
             name=skill_name,
             display_name=skill_name,
             description=custom_skill.description,
-            file_path=root_prefix,
+            file_path=target_path,
             commit=False,
         )
         await db.commit()
@@ -803,7 +736,7 @@ async def delete_skill(
                     detail=f"Skill '{skill_name}' is bound to agent '{bound_agent_names[0]}' and cannot be deleted",
                 )
 
-            await _delete_oss_prefix(user_skill.file_path)
+            await asyncio.to_thread(_delete_skill_directory, _resolve_skill_record_dir(user_skill))
             await SkillRepository.soft_delete_skill(db, skill=user_skill, commit=True)
             return
 
@@ -825,19 +758,53 @@ async def delete_skill(
     summary="Install Skill",
     description="Install a skill from a .skill file (ZIP archive) located in the thread's user-data directory.",
 )
-async def install_skill(request: SkillInstallRequest) -> SkillInstallResponse:
+async def install_skill(
+    request: SkillInstallRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SkillInstallResponse:
+    installed_dir: Path | None = None
     try:
         skill_file_path = resolve_thread_virtual_path(request.thread_id, request.path)
-        result = install_skill_from_archive(skill_file_path)
+        skills_root = _get_skills_root_dir()
+        result = install_skill_from_archive(skill_file_path, skills_root=skills_root, user_id=current_user.id)
+        skill_name = result["skill_name"]
+        installed_dir = _resolve_skill_dir(build_private_skill_file_path(current_user.id, skill_name))
+
+        existing_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
+        if existing_skill is not None:
+            await asyncio.to_thread(_delete_skill_directory, installed_dir)
+            raise SkillAlreadyExistsError(f"Skill '{skill_name}' already exists")
+
+        description = _extract_frontmatter(installed_dir / "SKILL.md").get("description", "")
+        if not isinstance(description, str):
+            description = ""
+
+        await SkillRepository.create_skill(
+            db,
+            user_id=current_user.id,
+            owner_user_id=None,
+            name=skill_name,
+            display_name=skill_name,
+            description=description.strip(),
+            file_path=build_private_skill_file_path(current_user.id, skill_name),
+            commit=True,
+        )
         return SkillInstallResponse(**result)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except SkillAlreadyExistsError as exc:
+        await db.rollback()
         raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
+        await db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
     except HTTPException:
+        await db.rollback()
         raise
     except Exception as exc:
+        await db.rollback()
+        if installed_dir is not None:
+            await asyncio.to_thread(_delete_skill_directory, installed_dir)
         logger.error("Failed to install skill: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to install skill: {exc}")

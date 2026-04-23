@@ -44,6 +44,7 @@ class MemoryStreamBridge(StreamBridge):
 
     async def publish(self, run_id: str, event: str, data: Any) -> None:
         queue = self._get_or_create_queue(run_id)
+        print(data)
         entry = StreamEvent(id=self._next_id(run_id), event=event, data=data)
         try:
             await asyncio.wait_for(queue.put(entry), timeout=_PUBLISH_TIMEOUT)

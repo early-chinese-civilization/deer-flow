@@ -42,7 +42,7 @@ class LocalSandboxProvider(SandboxProvider):
 
         return mappings
 
-    def acquire(self, thread_id: str | None = None) -> str:
+    def acquire(self, thread_id: str | None = None, workspace_id: str | None = None) -> str:
         global _singleton
         if _singleton is None:
             _singleton = LocalSandbox("local", path_mappings=self._path_mappings)

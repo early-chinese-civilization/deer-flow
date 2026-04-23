@@ -1,7 +1,7 @@
 import logging
 import mimetypes
 import zipfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -9,12 +9,9 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.db.models import User
-from app.gateway.db.repository import WorkspaceRepository
 from app.gateway.deps import get_current_user, get_db, get_store
-from app.gateway.path_utils import resolve_thread_virtual_path
+from app.gateway.path_utils import resolve_thread_virtual_path, resolve_workspace_virtual_path
 from app.gateway.services.ownership import require_thread_access
-from app.gateway.services.workspace_uploads import build_workspace_object_key, ensure_workspace_prefix
-from app.gateway.routers.uploads import get_workspace_file_content
 
 logger = logging.getLogger(__name__)
 
@@ -70,52 +67,27 @@ def _extract_file_from_skill_archive(zip_path: Path, internal_path: str) -> byte
         return None
 
 
-def _get_workspace_upload_relative_path(path: str) -> str | None:
-    """Return the relative uploads path for workspace-backed thread artifacts."""
-    normalized_path = path.lstrip("/")
-    uploads_prefix = "mnt/user-data/uploads/"
-    if not normalized_path.startswith(uploads_prefix):
+def _get_bound_workspace_id(thread_access: object) -> str | None:
+    """Return the bound workspace ID when the accessed thread is workspace-backed."""
+    thread = getattr(thread_access, "thread", None)
+    workspace_id = getattr(thread, "workspace_id", None)
+    if workspace_id is None:
         return None
-
-    relative_path = normalized_path.removeprefix(uploads_prefix).strip("/")
-    if not relative_path:
-        raise HTTPException(status_code=400, detail="Artifact path must include a file name")
-
-    posix_path = PurePosixPath(relative_path)
-    if posix_path.is_absolute() or any(part in {"", ".", ".."} for part in posix_path.parts):
-        raise HTTPException(status_code=400, detail="Invalid workspace upload path")
-
-    return posix_path.as_posix()
+    return str(workspace_id)
 
 
-async def _serve_workspace_upload_artifact(
-    *,
-    workspace_id: str,
-    relative_upload_path: str,
-    download: bool,
-    current_user: User,
-    db: AsyncSession,
-):
-    """Serve a workspace-backed upload through the stable workspace proxy."""
-    workspace = await WorkspaceRepository.get_workspace_by_id(db, workspace_id)
-    if workspace is None:
-        raise HTTPException(status_code=404, detail=f"Workspace {workspace_id} not found")
-    if workspace.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail=f"Workspace belongs to user {workspace.user_id}")
+def _is_user_data_virtual_path(path: str) -> bool:
+    """Check whether an artifact path points into `/mnt/user-data`."""
+    normalized = path.lstrip("/")
+    prefix = "mnt/user-data"
+    return normalized == prefix or normalized.startswith(f"{prefix}/")
 
-    root_prefix = await ensure_workspace_prefix(db, workspace)
-    object_key = build_workspace_object_key(
-        root_prefix,
-        relative_upload_path,
-        subdir="uploads",
-    )
-    return await get_workspace_file_content(
-        workspace_id=str(workspace.id),
-        object_key=object_key,
-        download=download,
-        current_user=current_user,
-        db=db,
-    )
+
+def _resolve_artifact_virtual_path(thread_id: str, path: str, workspace_id: str | None) -> Path:
+    """Resolve an artifact path, preferring workspace-backed storage when available."""
+    if workspace_id and _is_user_data_virtual_path(path):
+        return resolve_workspace_virtual_path(workspace_id, path)
+    return resolve_thread_virtual_path(thread_id, path)
 
 
 @router.get(
@@ -138,16 +110,7 @@ async def get_artifact(
         thread_id=thread_id,
         current_user=current_user,
     )
-
-    relative_upload_path = _get_workspace_upload_relative_path(path)
-    if relative_upload_path is not None and thread_access.thread.workspace_id is not None:
-        return await _serve_workspace_upload_artifact(
-            workspace_id=str(thread_access.thread.workspace_id),
-            relative_upload_path=relative_upload_path,
-            download=download,
-            current_user=current_user,
-            db=db,
-        )
+    workspace_id = _get_bound_workspace_id(thread_access)
 
     if ".skill/" in path:
         skill_marker = ".skill/"
@@ -155,7 +118,7 @@ async def get_artifact(
         skill_file_path = path[: marker_pos + len(".skill")]
         internal_path = path[marker_pos + len(skill_marker) :]
 
-        actual_skill_path = resolve_thread_virtual_path(thread_id, skill_file_path)
+        actual_skill_path = _resolve_artifact_virtual_path(thread_id, skill_file_path, workspace_id)
 
         if not actual_skill_path.exists():
             raise HTTPException(status_code=404, detail=f"Skill file not found: {skill_file_path}")
@@ -185,7 +148,7 @@ async def get_artifact(
         except UnicodeDecodeError:
             return Response(content=content, media_type=mime_type or "application/octet-stream", headers=cache_headers)
 
-    actual_path = resolve_thread_virtual_path(thread_id, path)
+    actual_path = _resolve_artifact_virtual_path(thread_id, path, workspace_id)
 
     logger.info("Resolving artifact path: thread_id=%s, requested_path=%s, actual_path=%s", thread_id, path, actual_path)
 

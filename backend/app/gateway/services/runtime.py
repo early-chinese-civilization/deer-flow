@@ -96,6 +96,8 @@ async def _load_runtime_agent_payload(*, user_id: int, agent_name: str | None) -
             {
                 "name": skill.name,
                 "description": skill.description,
+                "file_path": skill.file_path,
+                "virtual_path": skill.virtual_path,
             }
             for skill in bundle.skills
         ],
@@ -492,12 +494,36 @@ async def start_run(
 
     agent_factory = resolve_agent_factory(body.assistant_id)
     graph_input = normalize_input(body.input)
+    config = build_run_config(
+        thread_id,
+        body.config,
+        body.metadata,
+        assistant_id=body.assistant_id,
+    )
+
+    context = getattr(body, "context", None)
+    if context:
+        configurable = config.setdefault("configurable", {})
+        for key in _CONTEXT_CONFIGURABLE_KEYS:
+            if key in context:
+                configurable.setdefault(key, context[key])
+
+    resolved_agent_name = _resolve_requested_agent_name(body)
+    configurable = config.setdefault("configurable", {})
+    if resolved_agent_name:
+        configurable.setdefault("agent_name", resolved_agent_name)
+    if workspace_id is not None:
+        configurable.setdefault("workspace_id", workspace_id)
+
     runtime_context = config.setdefault("context", {})
-    if current_user is not None and getattr(current_user, "id", None) is not None:
-        runtime_context["runtime_agent"] = await _load_runtime_agent_payload(
-            user_id=current_user.id,
-            agent_name=config.get("configurable", {}).get("agent_name"),
-        )
+    runtime_context.setdefault("thread_id", thread_id)
+    if workspace_id is not None:
+        runtime_context.setdefault("workspace_id", workspace_id)
+    runtime_context["runtime_agent"] = await _load_runtime_agent_payload(
+        user_id=current_user.id,
+        agent_name=resolved_agent_name,
+    )
+
     stream_modes = normalize_stream_modes(body.stream_mode)
 
     task = asyncio.create_task(

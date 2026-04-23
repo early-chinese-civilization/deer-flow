@@ -325,6 +325,10 @@ tools:
     group: file:read
     use: deerflow.sandbox.tools:read_file_tool
 
+  - name: skill_load
+    group: file:read
+    use: deerflow.sandbox.tools:skill_load_tool
+
   - name: write_file
     group: file:write
     use: deerflow.sandbox.tools:write_file_tool

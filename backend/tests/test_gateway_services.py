@@ -398,62 +398,95 @@ def test_build_run_config_no_request_config():
     assert config["configurable"] == {"thread_id": "thread-abc"}
     assert "context" not in config
 
+def test_resolve_requested_agent_name_prefers_context():
+    from app.gateway.services.runtime import _resolve_requested_agent_name
 
-def test_build_trusted_run_context_projects_authenticated_user():
-    """Trusted runtime context is derived from server-side auth state."""
-    from app.gateway.services.runtime import build_trusted_run_context
+    body = SimpleNamespace(
+        context={"agent_name": "Planner-Agent"},
+        config={"configurable": {"agent_name": "fallback-agent"}},
+    )
 
-    context = build_trusted_run_context(
-        thread_id="thread-1",
-        current_user=SimpleNamespace(
-            id=7,
-            external_auth_id="kc-sub",
-            username="alice",
-            display_name="Alice",
-            email="alice@example.com",
+    assert _resolve_requested_agent_name(body) == "planner-agent"
+
+
+def test_resolve_requested_agent_name_falls_back_to_configurable():
+    from app.gateway.services.runtime import _resolve_requested_agent_name
+
+    body = SimpleNamespace(
+        context=None,
+        config={"configurable": {"agent_name": "Research-Agent"}},
+    )
+
+    assert _resolve_requested_agent_name(body) == "research-agent"
+
+
+@pytest.mark.anyio
+async def test_runtime_agent_bundle_without_agent_name_includes_public_skills(monkeypatch):
+    from app.gateway.db.repository import AgentRepository
+
+    fake_db = object()
+    monkeypatch.setattr(
+        "app.gateway.db.repository.MemoryRepository.get_memory_by_user_id",
+        AsyncMock(return_value=SimpleNamespace(memory_json={"facts": []})),
+    )
+    monkeypatch.setattr(
+        AgentRepository,
+        "_public_runtime_skills",
+        AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    name="public-skill",
+                    description="shared skill",
+                    file_path="public/public-skill",
+                    virtual_path="/mnt/skills/public-skill/SKILL.md",
+                )
+            ]
         ),
     )
 
-    assert context == {
-        "thread_id": "thread-1",
-        "user_id": "7",
-        "external_auth_id": "kc-sub",
-        "username": "alice",
-        "display_name": "Alice",
-        "email": "alice@example.com",
-    }
+    bundle = await AgentRepository.get_runtime_agent_bundle(fake_db, user_id=9, agent_name=None)
+
+    assert bundle.user_id == 9
+    assert bundle.agent_name is None
+    assert bundle.skills[0].name == "public-skill"
+    assert bundle.skills[0].file_path == "public/public-skill"
+    assert bundle.skills[0].virtual_path == "/mnt/skills/public-skill/SKILL.md"
 
 
-def test_build_public_run_config_strips_server_owned_context():
-    """Public run records must not echo trusted auth/runtime bindings."""
-    from app.gateway.services.runtime import build_public_run_config
+@pytest.mark.anyio
+async def test_runtime_agent_bundle_missing_agent_includes_public_skills(monkeypatch):
+    from app.gateway.db.repository import AgentRepository
 
-    public = build_public_run_config(
-        {
-            "context": {
-                "thread_id": "thread-1",
-                "user_id": "7",
-                "external_auth_id": "kc-sub",
-                "agent_name": "private-agent",
-                "model_name": "gpt-4",
-            },
-            "configurable": {
-                "thread_id": "thread-1",
-                "agent_name": "private-agent",
-                "model_name": "gpt-4",
-            },
-            "metadata": {"source": "ui"},
-        }
+    fake_db = object()
+    monkeypatch.setattr(
+        "app.gateway.db.repository.MemoryRepository.get_memory_by_user_id",
+        AsyncMock(return_value=SimpleNamespace(memory_json={"facts": []})),
+    )
+    monkeypatch.setattr(
+        AgentRepository,
+        "get_agent_by_name",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        AgentRepository,
+        "_public_runtime_skills",
+        AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    name="public-skill",
+                    description="shared skill",
+                    file_path="public/public-skill",
+                    virtual_path="/mnt/skills/public-skill/SKILL.md",
+                )
+            ]
+        ),
     )
 
-    assert public == {
-        "context": {"model_name": "gpt-4"},
-        "configurable": {
-            "agent_name": "private-agent",
-            "model_name": "gpt-4",
-        },
-        "metadata": {"source": "ui"},
-    }
+    bundle = await AgentRepository.get_runtime_agent_bundle(fake_db, user_id=9, agent_name="ghost-agent")
+
+    assert bundle.agent_name == "ghost-agent"
+    assert bundle.skills[0].name == "public-skill"
+    assert bundle.skills[0].virtual_path == "/mnt/skills/public-skill/SKILL.md"
 
 
 @pytest.mark.anyio
@@ -571,11 +604,16 @@ async def test_start_run_marks_store_busy_before_db_mirror(monkeypatch):
     monkeypatch.setattr("app.gateway.services.runtime._sync_bound_workspace_to_thread", sync_workspace_mock)
     monkeypatch.setattr("app.gateway.services.runtime.upsert_thread_record", upsert_thread_record_mock)
     monkeypatch.setattr("app.gateway.services.runtime.ThreadRepository.update_thread", update_thread_mock)
+    monkeypatch.setattr(
+        "app.gateway.services.runtime._load_runtime_agent_payload",
+        AsyncMock(return_value={"user_id": 7, "agent_name": None, "memory": {}, "soul": None, "skills": []}),
+    )
 
     await start_run(
         body,
         "thread-1",
         request,
+        current_user=SimpleNamespace(id=7),
         thread_record=thread,
     )
     await asyncio.sleep(0)
@@ -1058,11 +1096,16 @@ async def test_start_run_skips_workspace_sync_when_thread_is_unbound(monkeypatch
     monkeypatch.setattr("app.gateway.services.runtime._sync_bound_workspace_to_thread", sync_workspace_mock)
     monkeypatch.setattr("app.gateway.services.runtime.upsert_thread_record", AsyncMock(return_value=None))
     monkeypatch.setattr("app.gateway.services.runtime.ThreadRepository.update_thread", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        "app.gateway.services.runtime._load_runtime_agent_payload",
+        AsyncMock(return_value={"user_id": 7, "agent_name": None, "memory": {}, "soul": None, "skills": []}),
+    )
 
     await start_run(
         body,
         "thread-1",
         request,
+        current_user=SimpleNamespace(id=7),
         thread_record=SimpleNamespace(thread_id="thread-1", workspace_id=None),
     )
     await asyncio.sleep(0)

@@ -19,81 +19,81 @@ class ThreadDataMiddlewareState(AgentState):
 
 
 class ThreadDataMiddleware(AgentMiddleware[ThreadDataMiddlewareState]):
-    """Create thread data directories for each thread execution.
+    """Create workspace-backed thread data directories for each execution.
 
     Creates the following directory structure:
-    - {base_dir}/threads/{thread_id}/user-data/workspace
-    - {base_dir}/threads/{thread_id}/user-data/uploads
-    - {base_dir}/threads/{thread_id}/user-data/outputs
-
-    Lifecycle Management:
-    - With lazy_init=True (default): Only compute paths, directories created on-demand
-    - With lazy_init=False: Eagerly create directories in before_agent()
+    - {shared_fs_root}/workspaces/{workspace_id}/user-data/workspace
+    - {shared_fs_root}/workspaces/{workspace_id}/user-data/uploads
+    - {shared_fs_root}/workspaces/{workspace_id}/user-data/outputs
     """
 
     state_schema = ThreadDataMiddlewareState
 
-    def __init__(self, base_dir: str | None = None, lazy_init: bool = True):
+    def __init__(self, base_dir: str | None = None, lazy_init: bool = False):
         """Initialize the middleware.
 
         Args:
-            base_dir: Base directory for thread data. Defaults to Paths resolution.
-            lazy_init: If True, defer directory creation until needed.
-                      If False, create directories eagerly in before_agent().
-                      Default is True for optimal performance.
+            base_dir: Base directory for legacy thread data. Defaults to Paths resolution.
+            lazy_init: Deprecated and ignored. Workspace directories are always created eagerly.
         """
         super().__init__()
         self._paths = Paths(base_dir) if base_dir else get_paths()
         self._lazy_init = lazy_init
 
-    def _get_thread_paths(self, thread_id: str) -> dict[str, str]:
-        """Get the paths for a thread's data directories.
+    def _get_workspace_paths(self, workspace_id: str) -> dict[str, str]:
+        """Get the paths for a workspace's shared user-data directories.
 
         Args:
-            thread_id: The thread ID.
+            workspace_id: The workspace ID.
 
         Returns:
             Dictionary with workspace_path, uploads_path, and outputs_path.
         """
         return {
-            "workspace_path": str(self._paths.sandbox_work_dir(thread_id)),
-            "uploads_path": str(self._paths.sandbox_uploads_dir(thread_id)),
-            "outputs_path": str(self._paths.sandbox_outputs_dir(thread_id)),
+            "workspace_id": workspace_id,
+            "workspace_path": str(self._paths.workspace_work_dir(workspace_id)),
+            "uploads_path": str(self._paths.workspace_uploads_dir(workspace_id)),
+            "outputs_path": str(self._paths.workspace_outputs_dir(workspace_id)),
         }
 
-    def _create_thread_directories(self, thread_id: str) -> dict[str, str]:
-        """Create the thread data directories.
+    def _create_workspace_directories(self, workspace_id: str) -> dict[str, str]:
+        """Create the workspace-backed shared user-data directories.
 
         Args:
-            thread_id: The thread ID.
+            workspace_id: The workspace ID.
 
         Returns:
             Dictionary with the created directory paths.
         """
-        self._paths.ensure_thread_dirs(thread_id)
-        return self._get_thread_paths(thread_id)
+        self._paths.ensure_workspace_dirs(workspace_id)
+        return self._get_workspace_paths(workspace_id)
 
     @override
     def before_agent(self, state: ThreadDataMiddlewareState, runtime: Runtime) -> dict | None:
         context = runtime.context or {}
         thread_id = context.get("thread_id")
-        if thread_id is None:
+        workspace_id = context.get("workspace_id")
+        if workspace_id is None or thread_id is None:
             config = get_config()
-            thread_id = config.get("configurable", {}).get("thread_id")
+            configurable = config.get("configurable", {})
+            if workspace_id is None:
+                workspace_id = configurable.get("workspace_id")
+            if thread_id is None:
+                thread_id = configurable.get("thread_id")
 
-        if thread_id is None:
-            raise ValueError("Thread ID is required in runtime context or config.configurable")
+        if workspace_id is None and thread_id is not None:
+            workspace_id = thread_id
 
-        if self._lazy_init:
-            # Lazy initialization: only compute paths, don't create directories
-            paths = self._get_thread_paths(thread_id)
-        else:
-            # Eager initialization: create directories immediately
-            paths = self._create_thread_directories(thread_id)
-            logger.debug("Created thread data directories for thread %s", thread_id)
+        if workspace_id is None:
+            raise ValueError("Workspace ID is required in runtime context or config.configurable")
+
+        paths = self._create_workspace_directories(str(workspace_id))
+        logger.debug("Created shared workspace directories for workspace %s", workspace_id)
+
+        thread_data = {**paths}
+        if thread_id is not None:
+            thread_data["thread_id"] = str(thread_id)
 
         return {
-            "thread_data": {
-                **paths,
-            }
+            "thread_data": thread_data,
         }
