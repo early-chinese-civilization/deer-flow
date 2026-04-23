@@ -14,6 +14,11 @@ export class AgentNameCheckError extends Error {
   }
 }
 
+async function readErrorDetail(response: Response, fallback: string): Promise<never> {
+  const err = (await response.json().catch(() => ({}))) as { detail?: string };
+  throw new Error(err.detail ?? fallback);
+}
+
 export async function listAgents(): Promise<Agent[]> {
   const res = await fetch(`${getBackendBaseURL()}/api/agents`, {
     credentials: "include",
@@ -39,8 +44,7 @@ export async function createAgent(request: CreateAgentRequest): Promise<Agent> {
     credentials: "include",
   });
   if (!res.ok) {
-    const err = (await res.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(err.detail ?? `Failed to create agent: ${res.statusText}`);
+    return readErrorDetail(res, `Failed to create agent: ${res.statusText}`);
   }
   return res.json() as Promise<Agent>;
 }
@@ -56,8 +60,7 @@ export async function updateAgent(
     credentials: "include",
   });
   if (!res.ok) {
-    const err = (await res.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(err.detail ?? `Failed to update agent: ${res.statusText}`);
+    return readErrorDetail(res, `Failed to update agent: ${res.statusText}`);
   }
   return res.json() as Promise<Agent>;
 }
