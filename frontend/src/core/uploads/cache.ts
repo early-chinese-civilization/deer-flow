@@ -1,19 +1,11 @@
 import type { FileTreeNode, ListFilesResponse, UploadedFileInfo } from "./api";
 
 function getDeletedObjectKeys(file: UploadedFileInfo) {
-  const objectKeys = new Set<string>([file.object_key]);
-  if (file.markdown_object_key) {
-    objectKeys.add(file.markdown_object_key);
-  }
-  return objectKeys;
+  return new Set<string>([file.object_key]);
 }
 
 function getDeletedVirtualPaths(file: UploadedFileInfo) {
-  const virtualPaths = new Set<string>([file.virtual_path]);
-  if (file.markdown_virtual_path) {
-    virtualPaths.add(file.markdown_virtual_path);
-  }
-  return virtualPaths;
+  return new Set<string>([file.virtual_path]);
 }
 
 function removeDeletedFilesFromTree(
@@ -84,6 +76,100 @@ function getRelativePathParts(relativePath: string): string[] {
     return [];
   }
   return normalizedPath.split("/");
+}
+
+function normalizeRelativePathKey(relativePath: string): string {
+  return relativePath.replace(/^\/+|\/+$/g, "").toLowerCase();
+}
+
+function mergeFilesByRelativePath(
+  currentFiles: UploadedFileInfo[],
+  nextFiles: UploadedFileInfo[],
+  options?: { overwriteExisting?: boolean },
+) {
+  const overwriteExisting = options?.overwriteExisting ?? true;
+  const filesByRelativePath = new Map(
+    currentFiles.map((file) => [
+      normalizeRelativePathKey(file.relative_path),
+      file,
+    ] as const),
+  );
+
+  for (const file of nextFiles) {
+    const relativePathKey = normalizeRelativePathKey(file.relative_path);
+    if (!relativePathKey) {
+      continue;
+    }
+
+    if (!filesByRelativePath.has(relativePathKey) || overwriteExisting) {
+      filesByRelativePath.set(relativePathKey, file);
+    }
+  }
+
+  return Array.from(filesByRelativePath.values());
+}
+
+function relativePathFromVirtualPath(virtualPath: string): string | null {
+  const normalized = virtualPath.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const pathMappings = [
+    {
+      prefix: "/mnt/user-data/uploads/",
+      relativePrefix: "uploads/",
+    },
+    {
+      prefix: "/mnt/user-data/outputs/",
+      relativePrefix: "outputs/",
+    },
+    {
+      prefix: "/mnt/user-data/workspace/",
+      relativePrefix: "workspace/",
+    },
+  ];
+
+  for (const mapping of pathMappings) {
+    if (normalized.startsWith(mapping.prefix)) {
+      const suffix = normalized.slice(mapping.prefix.length);
+      if (!suffix) {
+        return null;
+      }
+      return `${mapping.relativePrefix}${suffix}`;
+    }
+  }
+
+  return null;
+}
+
+function buildObservedWorkspaceFile(
+  virtualPath: string,
+): UploadedFileInfo | null {
+  const relativePath = relativePathFromVirtualPath(virtualPath);
+  if (!relativePath) {
+    return null;
+  }
+
+  const pathParts = getRelativePathParts(relativePath);
+  const filename = pathParts.at(-1);
+  if (!filename) {
+    return null;
+  }
+
+  const extensionIndex = filename.lastIndexOf(".");
+
+  return {
+    filename,
+    size: 0,
+    path: virtualPath,
+    virtual_path: virtualPath,
+    relative_path: relativePath,
+    artifact_url: null,
+    object_key: `virtual:${relativePath}`,
+    signed_url: null,
+    extension: extensionIndex >= 0 ? filename.slice(extensionIndex) : null,
+  };
 }
 
 function buildFileTree(files: UploadedFileInfo[]): FileTreeNode[] {
@@ -189,13 +275,38 @@ export function addUploadedFilesToList(
     return current;
   }
 
-  const filesByObjectKey = new Map(
-    current.files.map((file) => [file.object_key, file] as const),
-  );
-  for (const file of uploadedFiles) {
-    filesByObjectKey.set(file.object_key, file);
+  const updatedFiles = mergeFilesByRelativePath(current.files, uploadedFiles, {
+    overwriteExisting: true,
+  });
+  const updatedTree = buildFileTree(updatedFiles);
+
+  return {
+    ...current,
+    files: updatedFiles,
+    tree: updatedTree,
+    count: updatedFiles.length,
+  };
+}
+
+export function addObservedWorkspaceFilesToList(
+  current: ListFilesResponse | undefined,
+  virtualPaths: string[],
+): ListFilesResponse | undefined {
+  if (!current || virtualPaths.length === 0) {
+    return current;
   }
-  const updatedFiles = Array.from(filesByObjectKey.values());
+
+  const observedFiles = virtualPaths
+    .map(buildObservedWorkspaceFile)
+    .filter((file): file is UploadedFileInfo => file !== null);
+
+  if (observedFiles.length === 0) {
+    return current;
+  }
+
+  const updatedFiles = mergeFilesByRelativePath(current.files, observedFiles, {
+    overwriteExisting: false,
+  });
   const updatedTree = buildFileTree(updatedFiles);
 
   return {

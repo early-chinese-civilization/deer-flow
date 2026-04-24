@@ -316,6 +316,9 @@ export const enUS: Translations = {
   uploads: {
     uploading: "Uploading...",
     uploadingFiles: "Uploading files, please wait...",
+    retry: "Retry",
+    sendBlocked:
+      "Wait for attachments to finish uploading, or remove failed files before sending.",
     deleteSuccess: "File deleted",
     deleteFailed: "Failed to delete file",
   },

@@ -13,16 +13,10 @@ import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 
 import { getAPIClient } from "../api";
 import { getBackendBaseURL } from "../config";
-import { useI18n } from "../i18n/hooks";
 import type { FileInMessage } from "../messages/utils";
 import type { LocalSettings } from "../settings";
 import { useUpdateSubtask } from "../tasks/context";
-import {
-  type ListFilesResponse,
-  type UploadedFileInfo,
-  uploadFiles,
-} from "../uploads";
-import { addUploadedFilesToList } from "../uploads/cache";
+import type { UploadedFileInfo } from "../uploads";
 
 import { ensureThread } from "./api";
 import {
@@ -56,6 +50,11 @@ export type ThreadStreamOptions = {
   onStart?: (threadId: string) => void;
   onFinish?: (state: AgentThreadState) => void;
   onToolEnd?: (event: ToolEndEvent) => void;
+};
+
+type SendMessageOptions = {
+  workspaceId?: string | null;
+  uploadedFiles?: UploadedFileInfo[];
 };
 
 function getStreamErrorMessage(error: unknown): string {
@@ -143,7 +142,6 @@ export function useThreadStream({
   onFinish,
   onToolEnd,
 }: ThreadStreamOptions) {
-  const { t } = useI18n();
   // Track the thread ID that is currently streaming to handle thread changes during streaming
   const [onStreamThreadId, setOnStreamThreadId] = useState(() => threadId);
   // Ref to track current thread ID across async callbacks without causing re-renders,
@@ -293,7 +291,7 @@ export function useThreadStream({
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
   const [pendingUploadedFiles, setPendingUploadedFiles] =
     useState<PendingUploadedFiles | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   // Track message count before sending so we know when server has responded
   const prevMsgCountRef = useRef(thread.messages.length);
 
@@ -330,173 +328,61 @@ export function useThreadStream({
       threadId: string,
       message: PromptInputMessage,
       extraContext?: Record<string, unknown>,
+      options?: SendMessageOptions,
     ): Promise<void> => {
       if (sendInFlightRef.current) {
         return;
       }
       sendInFlightRef.current = true;
+      setIsSending(true);
 
       const text = message.text.trim();
+      const uploadedFileInfo = options?.uploadedFiles ?? [];
 
       // Capture current count before showing optimistic messages
       prevMsgCountRef.current = thread.messages.length;
 
-      // Build optimistic files list with uploading status
-      const optimisticFiles: FileInMessage[] = (message.files ?? []).map(
-        (f) => ({
-          filename: f.filename ?? "",
-          size: 0,
-          status: "uploading" as const,
-        }),
-      );
+      const optimisticFiles: FileInMessage[] = uploadedFileInfo.map((info) => ({
+        filename: info.filename,
+        size: info.size,
+        path: info.virtual_path,
+        status: "uploaded" as const,
+      }));
 
-      // Create optimistic human message (shown immediately)
-      const optimisticHumanMsg: Message = {
-        type: "human",
-        id: `opt-human-${Date.now()}`,
-        content: text ? [{ type: "text", text }] : "",
-        additional_kwargs:
-          optimisticFiles.length > 0 ? { files: optimisticFiles } : {},
-      };
-
-      const newOptimistic: Message[] = [optimisticHumanMsg];
-      if (optimisticFiles.length > 0) {
-        // Mock AI message while files are being uploaded
-        newOptimistic.push({
-          type: "ai",
-          id: `opt-ai-${Date.now()}`,
-          content: t.uploads.uploadingFiles,
-          additional_kwargs: { element: "task" },
-        });
-      }
+      const newOptimistic: Message[] = [
+        {
+          type: "human",
+          id: `opt-human-${Date.now()}`,
+          content: text ? [{ type: "text", text }] : "",
+          additional_kwargs:
+            optimisticFiles.length > 0 ? { files: optimisticFiles } : {},
+        },
+      ];
       setOptimisticMessages(newOptimistic);
 
       _handleOnStart(threadId);
 
-      let uploadedFileInfo: UploadedFileInfo[] = [];
-      const shouldEnsureThread =
-        !threadIdRef.current || Boolean(message.files?.length);
+      const shouldEnsureThread = !threadIdRef.current;
       let ensuredThread: Awaited<ReturnType<typeof ensureThread>> | undefined =
         undefined;
 
       try {
         if (shouldEnsureThread) {
-          ensuredThread = await ensureThread(threadId);
+          ensuredThread = await ensureThread(threadId, {
+            workspaceId: options?.workspaceId ?? undefined,
+          });
           queryClient.setQueryData(
             ["threads", "detail", threadId],
             ensuredThread,
           );
         }
 
-        // Upload files first if any
-        if (message.files && message.files.length > 0) {
-          setIsUploading(true);
-          try {
-            // Convert FileUIPart to File objects by fetching blob URLs
-            const filePromises = message.files.map(async (fileUIPart) => {
-              if (fileUIPart.url && fileUIPart.filename) {
-                try {
-                  // Fetch the blob URL to get the file data
-                  const response = await fetch(fileUIPart.url);
-                  const blob = await response.blob();
-
-                  // Create a File object from the blob
-                  return new File([blob], fileUIPart.filename, {
-                    type: fileUIPart.mediaType || blob.type,
-                  });
-                } catch (error) {
-                  console.error(
-                    `Failed to fetch file ${fileUIPart.filename}:`,
-                    error,
-                  );
-                  return null;
-                }
-              }
-              return null;
-            });
-
-            const conversionResults = await Promise.all(filePromises);
-            const files = conversionResults.filter(
-              (file): file is File => file !== null,
-            );
-            const failedConversions = conversionResults.length - files.length;
-
-            if (failedConversions > 0) {
-              throw new Error(
-                `Failed to prepare ${failedConversions} attachment(s) for upload. Please retry.`,
-              );
-            }
-
-            if (!threadId) {
-              throw new Error("Thread is not ready for file upload.");
-            }
-
-            if (files.length > 0) {
-              const workspaceId = ensuredThread?.workspace_id;
-              if (!workspaceId) {
-                throw new Error(
-                  "Thread workspace is not ready for file upload.",
-                );
-              }
-
-              const uploadResponse = await uploadFiles(workspaceId, files);
-              uploadedFileInfo = uploadResponse.files;
-
-              queryClient.setQueriesData<ListFilesResponse | undefined>(
-                { queryKey: ["uploads", "list", workspaceId] },
-                (current) =>
-                  addUploadedFilesToList(current, uploadResponse.files),
-              );
-              void queryClient.invalidateQueries({
-                queryKey: ["uploads", "list", workspaceId],
-              });
-
-              // Update optimistic human message with uploaded status + paths
-              const uploadedFiles: FileInMessage[] = uploadedFileInfo.map(
-                (info) => ({
-                  filename: info.filename,
-                  size: info.size,
-                  path: info.virtual_path,
-                  status: "uploaded" as const,
-                }),
-              );
-              setOptimisticMessages((messages) => {
-                if (messages.length > 1 && messages[0]) {
-                  const humanMessage: Message = messages[0];
-                  return [
-                    {
-                      ...humanMessage,
-                      additional_kwargs: { files: uploadedFiles },
-                    },
-                    ...messages.slice(1),
-                  ];
-                }
-                return messages;
-              });
-            }
-          } catch (error) {
-            console.error("Failed to upload files:", error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "Failed to upload files.";
-            toast.error(errorMessage);
-            setOptimisticMessages([]);
-            throw error;
-          } finally {
-            setIsUploading(false);
-          }
-        }
-
-        // Build files metadata for submission (included in additional_kwargs)
-        const filesForSubmit: FileInMessage[] = uploadedFileInfo.map(
-          (info) => ({
-            filename: info.filename,
-            size: info.size,
-            path: info.virtual_path,
-            status: "uploaded" as const,
-          }),
-        );
+        const filesForSubmit: FileInMessage[] = uploadedFileInfo.map((info) => ({
+          filename: info.filename,
+          size: info.size,
+          path: info.virtual_path,
+          status: "uploaded" as const,
+        }));
 
         setPendingUploadedFiles(
           filesForSubmit.length > 0
@@ -538,13 +424,13 @@ export function useThreadStream({
       } catch (error) {
         setOptimisticMessages([]);
         setPendingUploadedFiles(null);
-        setIsUploading(false);
         throw error;
       } finally {
         sendInFlightRef.current = false;
+        setIsSending(false);
       }
     },
-    [thread, _handleOnStart, t.uploads.uploadingFiles, context, queryClient],
+    [thread, _handleOnStart, context, queryClient],
   );
 
   // Merge thread with optimistic messages for display
@@ -562,7 +448,7 @@ export function useThreadStream({
         messages: pendingFilesResult.messages,
       } as typeof thread);
 
-  return [mergedThread, sendMessage, isUploading] as const;
+  return [mergedThread, sendMessage, isSending] as const;
 }
 
 export function useThreads(

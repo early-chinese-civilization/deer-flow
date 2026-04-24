@@ -11,7 +11,13 @@ import {
   SearchIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -24,18 +30,22 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
+import { extractPresentFilesFromMessage } from "@/core/messages/utils";
 import type { ThreadRecord } from "@/core/threads";
 import { getThread } from "@/core/threads/api";
 import {
   downloadUploadedFile,
   listUploadedFiles,
   type FileTreeNode,
+  type ListFilesResponse,
   type UploadedFileInfo,
 } from "@/core/uploads";
+import { addObservedWorkspaceFilesToList } from "@/core/uploads/cache";
 import { getFileIcon } from "@/core/utils/files";
 import { cn } from "@/lib/utils";
 
 import { useArtifacts } from "./artifacts/context";
+import { useThread } from "./messages/context";
 
 function formatBytes(bytes: number): string {
   if (bytes <= 0) {
@@ -269,8 +279,10 @@ export function WorkspaceFilesPanel({
   const [query, setQuery] = useState("");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const { t } = useI18n();
+  const { thread } = useThread();
   const queryClient = useQueryClient();
   const {
+    artifacts,
     deselect,
     open: artifactsOpen,
     select: selectArtifact,
@@ -279,6 +291,10 @@ export function WorkspaceFilesPanel({
     setArtifacts,
     setOpen: setArtifactsOpen,
   } = useArtifacts();
+  const processedPresentFilesMessageIdsRef = useRef<Set<string>>(new Set());
+  const processedArtifactPathsRef = useRef<Set<string>>(new Set());
+  const latestArtifactsRef = useRef(artifacts);
+  const latestThreadMessagesRef = useRef(thread.messages);
   const initialThread = useMemo<ThreadRecord | undefined>(
     () =>
       threadId && threadId !== "new"
@@ -324,6 +340,73 @@ export function WorkspaceFilesPanel({
   useEffect(() => {
     setArtifactSourcesForThread(threadId, workspaceArtifactSources);
   }, [setArtifactSourcesForThread, threadId, workspaceArtifactSources]);
+
+  useEffect(() => {
+    latestArtifactsRef.current = artifacts;
+  }, [artifacts]);
+
+  useEffect(() => {
+    latestThreadMessagesRef.current = thread.messages;
+  }, [thread.messages]);
+
+  useEffect(() => {
+    processedPresentFilesMessageIdsRef.current = new Set(
+      latestThreadMessagesRef.current
+        .filter((message) => extractPresentFilesFromMessage(message).length > 0)
+        .map((message) => message.id)
+        .filter((messageId): messageId is string => Boolean(messageId)),
+    );
+    processedArtifactPathsRef.current = new Set(latestArtifactsRef.current);
+  }, [threadId]);
+
+  useEffect(() => {
+    if (!workspaceId || !filesQuery.data) {
+      return;
+    }
+
+    const nextVirtualPaths = new Set<string>();
+
+    for (const message of thread.messages) {
+      const presentFiles = extractPresentFilesFromMessage(message);
+      if (presentFiles.length === 0) {
+        continue;
+      }
+
+      if (
+        message.id &&
+        processedPresentFilesMessageIdsRef.current.has(message.id)
+      ) {
+        continue;
+      }
+
+      if (message.id) {
+        processedPresentFilesMessageIdsRef.current.add(message.id);
+      }
+
+      for (const path of presentFiles) {
+        nextVirtualPaths.add(path);
+      }
+    }
+
+    for (const artifactPath of artifacts) {
+      if (processedArtifactPathsRef.current.has(artifactPath)) {
+        continue;
+      }
+
+      processedArtifactPathsRef.current.add(artifactPath);
+      nextVirtualPaths.add(artifactPath);
+    }
+
+    if (nextVirtualPaths.size === 0) {
+      return;
+    }
+
+    queryClient.setQueriesData<ListFilesResponse | undefined>(
+      { queryKey: ["uploads", "list", workspaceId] },
+      (current) =>
+        addObservedWorkspaceFilesToList(current, Array.from(nextVirtualPaths)),
+    );
+  }, [artifacts, filesQuery.data, queryClient, thread.messages, workspaceId]);
 
   useEffect(() => {
     const files = filesQuery.data?.files ?? [];

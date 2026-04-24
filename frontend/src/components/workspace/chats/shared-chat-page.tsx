@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { usePathname, useSearchParams } from "next/navigation";
 import { parseAsString, useQueryStates } from "nuqs";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { AgentWelcome } from "@/components/workspace/agent-welcome";
@@ -37,6 +38,8 @@ import {
   getThreadAgentName,
   pathOfThread,
 } from "@/core/threads/utils";
+import { useComposerAttachmentUploads } from "@/core/uploads/composer";
+import { hasBlockingAttachmentUploads } from "@/core/uploads/composer-core";
 import { uuid } from "@/core/utils/uuid";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
@@ -123,7 +126,12 @@ export function SharedChatPage({
     };
   }, [effectiveAgentName, settings.context]);
 
-  const [thread, sendMessage, isUploading] = useThreadStream({
+  const persistedWorkspaceId = threadDetailQuery.data?.workspace_id ?? null;
+  const { composerWorkspaceId } = useComposerAttachmentUploads({
+    persistedWorkspaceId,
+  });
+
+  const [thread, sendMessage, isSendingMessage] = useThreadStream({
     threadId: isNewThread ? undefined : threadId,
     context: submitContext,
     isMock,
@@ -188,16 +196,29 @@ export function SharedChatPage({
       if (!isNewThread && !threadDetailQuery.isSuccess) {
         return;
       }
+      if (hasBlockingAttachmentUploads(message.files)) {
+        toast.error(t.uploads.sendBlocked);
+        return;
+      }
+
       void sendMessage(
         threadId,
         message,
         effectiveAgentName ? { agent_name: effectiveAgentName } : undefined,
+        {
+          workspaceId: composerWorkspaceId,
+          uploadedFiles: message.files
+            .map((file) => file.uploadedFile)
+            .filter((file) => file != null),
+        },
       );
     },
     [
+      composerWorkspaceId,
       effectiveAgentName,
       isNewThread,
       sendMessage,
+      t.uploads.sendBlocked,
       threadDetailQuery.isSuccess,
       threadId,
     ],
@@ -251,7 +272,7 @@ export function SharedChatPage({
 
   const inputDisabled =
     env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ||
-    isUploading ||
+    isSendingMessage ||
     (!isNewThread && !threadDetailQuery.isSuccess);
 
   return (
