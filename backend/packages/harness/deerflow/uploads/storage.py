@@ -216,3 +216,24 @@ class OSSStorageBackend:
             expires=dt.timedelta(seconds=expires_seconds or self.signed_url_expires_seconds),
         )
         return result.url, result.expiration
+
+    def presign_put_object(
+        self,
+        *,
+        key: str,
+        content_type: str | None = None,
+        content_length: int | None = None,
+        expires_seconds: int | None = None,
+    ) -> tuple[str, dt.datetime | None, dict[str, str]]:
+        """Generate a signed PUT URL for an OSS object."""
+        result = self._client.presign(
+            PutObjectRequest(
+                bucket=self.bucket,
+                key=key,
+                content_type=content_type or mimetypes.guess_type(key)[0],
+                content_length=content_length,
+            ),
+            expires=dt.timedelta(seconds=expires_seconds or self.signed_url_expires_seconds),
+        )
+        headers = dict(result.signed_headers or {})
+        return result.url, result.expiration, headers

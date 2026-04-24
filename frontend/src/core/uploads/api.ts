@@ -64,6 +64,26 @@ export interface DeleteUploadedFileInput {
   object_key: string;
 }
 
+export interface UploadPrepareRequest {
+  filename: string;
+  content_type?: string | null;
+  size?: number | null;
+}
+
+export interface UploadPrepareResponse {
+  mode: "direct" | "multipart";
+  method: "PUT" | null;
+  upload_url: string | null;
+  upload_headers: Record<string, string>;
+  file: UploadedFileInfo;
+}
+
+export interface UploadFinalizeRequest {
+  filename: string;
+  object_key: string;
+  size?: number | null;
+}
+
 function downloadBlobAsFile(blob: Blob, filename: string): void {
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -91,6 +111,30 @@ function buildUploadsUrl(
 }
 
 /**
+ * 直接上传文件到 OSS（使用预签名 URL）
+ * @param prepare - prepare 接口返回的预签名信息
+ * @param file - 要上传的文件
+ */
+async function uploadDirectFile(
+  prepare: UploadPrepareResponse,
+  file: File,
+): Promise<void> {
+  if (!prepare.upload_url || !prepare.method) {
+    throw new Error("Upload target is not ready for direct upload.");
+  }
+
+  const response = await fetch(prepare.upload_url, {
+    method: prepare.method,
+    headers: prepare.upload_headers,
+    body: file,
+  });
+
+  if (!response.ok) {
+    throw new Error("Direct upload failed");
+  }
+}
+
+/**
  * Upload files to a workspace
  */
 export async function uploadFiles(
@@ -114,6 +158,85 @@ export async function uploadFiles(
   }
 
   return response.json();
+}
+
+/**
+ * 准备上传：获取预签名 URL 和处理文件名冲突
+ * @param workspaceId - workspace ID
+ * @param payload - 文件信息（文件名、类型、大小）
+ * @returns 预签名 URL 和文件元数据
+ */
+export async function prepareUpload(
+  workspaceId: string,
+  payload: UploadPrepareRequest,
+): Promise<UploadPrepareResponse> {
+  const response = await fetch(buildUploadsUrl(workspaceId, "/prepare"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorDetail(response, "Failed to prepare upload"));
+  }
+
+  return response.json();
+}
+
+/**
+ * 确认上传完成：校验文件存在并返回元数据
+ * @param workspaceId - workspace ID
+ * @param payload - 文件信息（文件名、object key、大小）
+ * @returns 文件完整元数据
+ */
+export async function finalizeUpload(
+  workspaceId: string,
+  payload: UploadFinalizeRequest,
+): Promise<UploadedFileInfo> {
+  const response = await fetch(buildUploadsUrl(workspaceId, "/finalize"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorDetail(response, "Failed to finalize upload"));
+  }
+
+  return response.json();
+}
+
+export async function uploadFileImmediately(
+  workspaceId: string,
+  file: File,
+): Promise<UploadedFileInfo> {
+  const prepare = await prepareUpload(workspaceId, {
+    filename: file.name,
+    content_type: file.type || null,
+    size: file.size,
+  });
+
+  if (prepare.mode === "direct") {
+    await uploadDirectFile(prepare, file);
+    return finalizeUpload(workspaceId, {
+      filename: prepare.file.filename,
+      object_key: prepare.file.object_key,
+      size: file.size,
+    });
+  }
+
+  const uploadResponse = await uploadFiles(workspaceId, [file]);
+  const uploadedFile = uploadResponse.files[0];
+  if (!uploadedFile) {
+    throw new Error("Upload finished without returning file metadata.");
+  }
+  return uploadedFile;
 }
 
 /**

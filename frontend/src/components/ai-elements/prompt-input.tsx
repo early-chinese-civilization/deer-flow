@@ -1,6 +1,8 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { useI18n } from "@/core/i18n/hooks";
+import { resetAttachmentForRetry } from "@/core/uploads/composer-core";
 import {
   Command,
   CommandEmpty,
@@ -36,8 +38,10 @@ import {
 } from "@/components/ui/select";
 import { isIMEComposing } from "@/lib/ime";
 import { cn } from "@/lib/utils";
+import type { UploadedFileInfo } from "@/core/uploads";
 import type { ChatStatus, FileUIPart } from "ai";
 import {
+  AlertCircleIcon,
   ArrowUpIcon,
   ImageIcon,
   Loader2Icon,
@@ -76,11 +80,23 @@ import {
 // Provider Context & Types
 // ============================================================================
 
+export type PromptInputAttachmentFile = FileUIPart & {
+  id: string;
+  sourceFile?: File;
+  uploadState?: "pending" | "uploading" | "uploaded" | "error";
+  uploadError?: string | null;
+  uploadedFile?: UploadedFileInfo | null;
+};
+
 export type AttachmentsContext = {
-  files: (FileUIPart & { id: string })[];
+  files: PromptInputAttachmentFile[];
   add: (files: File[] | FileList) => void;
   remove: (id: string) => void;
   clear: () => void;
+  update: (
+    id: string,
+    updater: (current: PromptInputAttachmentFile) => PromptInputAttachmentFile,
+  ) => void;
   openFileDialog: () => void;
   fileInputRef: RefObject<HTMLInputElement | null>;
 };
@@ -153,7 +169,7 @@ export function PromptInputProvider({
 
   // ----- attachments state (global when wrapped)
   const [attachmentFiles, setAttachmentFiles] = useState<
-    (FileUIPart & { id: string })[]
+    PromptInputAttachmentFile[]
   >([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const openRef = useRef<() => void>(() => {});
@@ -172,10 +188,26 @@ export function PromptInputProvider({
           url: URL.createObjectURL(file),
           mediaType: file.type,
           filename: file.name,
+          sourceFile: file,
+          uploadState: "pending" as const,
+          uploadError: null,
+          uploadedFile: null,
         })),
       ),
     );
   }, []);
+
+  const update = useCallback(
+    (
+      id: string,
+      updater: (current: PromptInputAttachmentFile) => PromptInputAttachmentFile,
+    ) => {
+      setAttachmentFiles((prev) =>
+        prev.map((file) => (file.id === id ? updater(file) : file)),
+      );
+    },
+    [],
+  );
 
   const remove = useCallback((id: string) => {
     setAttachmentFiles((prev) => {
@@ -223,10 +255,11 @@ export function PromptInputProvider({
       add,
       remove,
       clear,
+      update,
       openFileDialog,
       fileInputRef,
     }),
-    [attachmentFiles, add, remove, clear, openFileDialog],
+    [attachmentFiles, add, remove, clear, update, openFileDialog],
   );
 
   const __registerFileInput = useCallback(
@@ -279,7 +312,7 @@ export const usePromptInputAttachments = () => {
 };
 
 export type PromptInputAttachmentProps = HTMLAttributes<HTMLDivElement> & {
-  data: FileUIPart & { id: string };
+  data: PromptInputAttachmentFile;
   className?: string;
 };
 
@@ -288,6 +321,7 @@ export function PromptInputAttachment({
   className,
   ...props
 }: PromptInputAttachmentProps) {
+  const { t } = useI18n();
   const attachments = usePromptInputAttachments();
 
   const filename = data.filename || "";
@@ -297,6 +331,9 @@ export function PromptInputAttachment({
   const isImage = mediaType === "image";
 
   const attachmentLabel = filename || (isImage ? "Image" : "Attachment");
+  const uploadState = data.uploadState;
+  const isUploading = uploadState === "uploading" || uploadState === "pending";
+  const hasUploadError = uploadState === "error";
 
   return (
     <PromptInputHoverCard>
@@ -341,6 +378,12 @@ export function PromptInputAttachment({
           </div>
 
           <span className="flex-1 truncate">{attachmentLabel}</span>
+          {isUploading && (
+            <Loader2Icon className="text-muted-foreground size-3 shrink-0 animate-spin" />
+          )}
+          {hasUploadError && (
+            <AlertCircleIcon className="text-destructive size-3 shrink-0" />
+          )}
         </div>
       </HoverCardTrigger>
       <PromptInputHoverCardContent className="w-auto p-2">
@@ -366,7 +409,27 @@ export function PromptInputAttachment({
                   {data.mediaType}
                 </p>
               )}
+              {hasUploadError && data.uploadError && (
+                <p className="text-destructive truncate text-xs">
+                  {data.uploadError}
+                </p>
+              )}
             </div>
+            {hasUploadError && data.sourceFile && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  attachments.update(data.id, (current) =>
+                    resetAttachmentForRetry(current),
+                  );
+                }}
+              >
+                {t.uploads.retry}
+              </Button>
+            )}
           </div>
         </div>
       </PromptInputHoverCardContent>
@@ -378,7 +441,7 @@ export type PromptInputAttachmentsProps = Omit<
   HTMLAttributes<HTMLDivElement>,
   "children"
 > & {
-  children: (attachment: FileUIPart & { id: string }) => ReactNode;
+  children: (attachment: PromptInputAttachmentFile) => ReactNode;
 };
 
 export function PromptInputAttachments({
@@ -433,7 +496,7 @@ export const PromptInputActionAddAttachments = ({
 
 export type PromptInputMessage = {
   text: string;
-  files: FileUIPart[];
+  files: PromptInputAttachmentFile[];
 };
 
 export type PromptInputProps = Omit<
@@ -483,7 +546,7 @@ export const PromptInput = ({
   const formRef = useRef<HTMLFormElement | null>(null);
 
   // ----- Local attachments (only used when no provider)
-  const [items, setItems] = useState<(FileUIPart & { id: string })[]>([]);
+  const [items, setItems] = useState<PromptInputAttachmentFile[]>([]);
   const files = usingProvider ? controller.attachments.files : items;
 
   // Keep a ref to files for cleanup on unmount (avoids stale closure)
@@ -551,7 +614,7 @@ export const PromptInput = ({
             message: "Too many files. Some were not added.",
           });
         }
-        const next: (FileUIPart & { id: string })[] = [];
+        const next: PromptInputAttachmentFile[] = [];
         for (const file of capped) {
           next.push({
             id: nanoid(),
@@ -559,6 +622,10 @@ export const PromptInput = ({
             url: URL.createObjectURL(file),
             mediaType: file.type,
             filename: file.name,
+            sourceFile: file,
+            uploadState: "pending",
+            uploadError: null,
+            uploadedFile: null,
           });
         }
         return prev.concat(next);
@@ -595,6 +662,11 @@ export const PromptInput = ({
   const add = usingProvider ? controller.attachments.add : addLocal;
   const remove = usingProvider ? controller.attachments.remove : removeLocal;
   const clear = usingProvider ? controller.attachments.clear : clearLocal;
+  const update = usingProvider ? controller.attachments.update : (
+    id: string,
+    updater: (current: PromptInputAttachmentFile) => PromptInputAttachmentFile,
+  ) =>
+    setItems((prev) => prev.map((file) => (file.id === id ? updater(file) : file)));
   const openFileDialog = usingProvider
     ? controller.attachments.openFileDialog
     : openFileDialogLocal;
@@ -684,33 +756,17 @@ export const PromptInput = ({
     event.currentTarget.value = "";
   };
 
-  const convertBlobUrlToDataUrl = async (
-    url: string,
-  ): Promise<string | null> => {
-    try {
-      const response = await fetch(url);
-      const blob = await response.blob();
-      return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.onerror = () => resolve(null);
-        reader.readAsDataURL(blob);
-      });
-    } catch {
-      return null;
-    }
-  };
-
   const ctx = useMemo<AttachmentsContext>(
     () => ({
       files: files.map((item) => ({ ...item, id: item.id })),
       add,
       remove,
       clear,
+      update,
       openFileDialog,
       fileInputRef: inputRef,
     }),
-    [files, add, remove, clear, openFileDialog],
+    [files, add, remove, clear, update, openFileDialog],
   );
 
   const handleSubmit: FormEventHandler<HTMLFormElement> = (event) => {
@@ -730,50 +786,29 @@ export const PromptInput = ({
       form.reset();
     }
 
-    // Convert blob URLs to data URLs asynchronously
-    Promise.all(
-      files.map(async ({ id, ...item }) => {
-        if (item.url && item.url.startsWith("blob:")) {
-          const dataUrl = await convertBlobUrlToDataUrl(item.url);
-          // If conversion failed, keep the original blob URL
-          return {
-            ...item,
-            url: dataUrl ?? item.url,
-          };
-        }
-        return item;
-      }),
-    )
-      .then((convertedFiles: FileUIPart[]) => {
-        try {
-          const result = onSubmit({ text, files: convertedFiles }, event);
+    try {
+      const result = onSubmit({ text, files }, event);
 
-          // Handle both sync and async onSubmit
-          if (result instanceof Promise) {
-            result
-              .then(() => {
-                clear();
-                if (usingProvider) {
-                  controller.textInput.clear();
-                }
-              })
-              .catch(() => {
-                // Don't clear on error - user may want to retry
-              });
-          } else {
-            // Sync function completed without throwing, clear attachments
+      if (result instanceof Promise) {
+        result
+          .then(() => {
             clear();
             if (usingProvider) {
               controller.textInput.clear();
             }
-          }
-        } catch {
-          // Don't clear on error - user may want to retry
+          })
+          .catch(() => {
+            // Don't clear on error - user may want to retry
+          });
+      } else {
+        clear();
+        if (usingProvider) {
+          controller.textInput.clear();
         }
-      })
-      .catch(() => {
-        // Don't clear on error - user may want to retry
-      });
+      }
+    } catch {
+      // Don't clear on error - user may want to retry
+    }
   };
 
   // Render with or without local provider

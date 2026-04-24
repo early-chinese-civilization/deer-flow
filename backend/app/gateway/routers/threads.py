@@ -62,6 +62,7 @@ class ThreadCreateRequest(BaseModel):
     """Request body for creating a thread."""
 
     thread_id: str | None = Field(default=None, description="Optional thread ID (auto-generated if omitted)")
+    workspace_id: str | None = Field(default=None, description="可选的 workspace ID，用于新会话绑定草稿 workspace")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Initial metadata")
 
 
@@ -123,6 +124,17 @@ class ThreadHistoryRequest(BaseModel):
 def _store_unavailable_error() -> HTTPException:
     """Return the canonical 503 for Store connectivity failures."""
     return HTTPException(status_code=503, detail="Thread metadata store unavailable")
+
+
+def _normalize_workspace_id(workspace_id: str | None) -> str | None:
+    """规范化可选的 workspace UUID 字符串，校验格式是否合法"""
+    if workspace_id is None:
+        return None
+
+    try:
+        return str(uuid.UUID(workspace_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid workspace_id") from exc
 
 
 def _require_store(request: Request):
@@ -360,6 +372,7 @@ async def create_thread(
     checkpointer = get_checkpointer(request)
     store = _require_store(request)
     thread_id = body.thread_id or str(uuid.uuid4())
+    requested_workspace_id = _normalize_workspace_id(body.workspace_id)
 
     existing_thread = await ThreadRepository.get_thread_by_id(
         db=db,
@@ -373,6 +386,15 @@ async def create_thread(
     if existing_thread is not None:
         if existing_thread.user_id != current_user.id:
             raise HTTPException(status_code=403, detail=f"Thread belongs to user {existing_thread.user_id}")
+        if requested_workspace_id is not None:
+            existing_workspace_id = (
+                str(existing_thread.workspace_id) if existing_thread.workspace_id is not None else None
+            )
+            if existing_workspace_id != requested_workspace_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Thread already exists with a different workspace binding",
+                )
         if existing_store_record is None:
             raise HTTPException(
                 status_code=409,
@@ -400,12 +422,31 @@ async def create_thread(
             detail="Thread exists in runtime state but is missing business metadata",
         )
 
-    workspace = await WorkspaceRepository.create_workspace(
-        db=db,
-        user_id=current_user.id,
-        name=None,
-        commit=False,
-    )
+    if requested_workspace_id is None:
+        workspace = await WorkspaceRepository.create_workspace(
+            db=db,
+            user_id=current_user.id,
+            name=None,
+            commit=False,
+        )
+    else:
+        workspace = await WorkspaceRepository.get_workspace_by_id(
+            db=db,
+            workspace_id=requested_workspace_id,
+        )
+        if workspace is None:
+            workspace = await WorkspaceRepository.create_workspace(
+                db=db,
+                user_id=current_user.id,
+                name=None,
+                id=uuid.UUID(requested_workspace_id),
+                commit=False,
+            )
+        elif workspace.user_id != current_user.id:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Workspace belongs to user {workspace.user_id}",
+            )
     created_thread = await ThreadRepository.create_thread(
         db=db,
         thread_id=thread_id,

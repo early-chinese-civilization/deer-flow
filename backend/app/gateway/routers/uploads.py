@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import mimetypes
-import shutil
 import uuid
 from pathlib import Path, PurePosixPath
+from typing import Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,14 +23,19 @@ from app.gateway.services.workspace_uploads import (
     build_workspace_root_path,
     delete_workspace_object,
     ensure_workspace_prefix,
+    get_workspace_object_bytes,
     list_workspace_objects,
-    upload_workspace_object,
     upload_workspace_object_stream,
+    uses_oss_workspace_uploads,
     workspace_object_path,
 )
-from deerflow.config.paths import get_paths
-from deerflow.uploads import normalize_filename
-from deerflow.utils.file_conversion import CONVERTIBLE_EXTENSIONS, convert_file_to_markdown
+from deerflow.uploads import (
+    OSSStorageBackend,
+    claim_unique_filename,
+    normalize_filename,
+    workspace_object_key,
+    workspace_root_prefix,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +110,32 @@ class DeleteUploadedFileRequest(BaseModel):
     object_key: str | None = None
 
 
+class UploadPrepareRequest(BaseModel):
+    """Request body for preparing a workspace upload."""
+
+    filename: str = Field(min_length=1)
+    content_type: str | None = None
+    size: int | None = Field(default=None, ge=0)
+
+
+class UploadPrepareResponse(BaseModel):
+    """Prepared upload metadata returned to the frontend."""
+
+    mode: Literal["direct", "multipart"]
+    method: Literal["PUT"] | None = None
+    upload_url: str | None = None
+    upload_headers: dict[str, str] = Field(default_factory=dict)
+    file: WorkspaceFileResponse
+
+
+class UploadFinalizeRequest(BaseModel):
+    """Request body for finalizing a workspace upload."""
+
+    filename: str = Field(min_length=1)
+    object_key: str = Field(min_length=1)
+    size: int | None = Field(default=None, ge=0)
+
+
 def _require_authenticated_user(current_user: User | None) -> User:
     """Return the current user or raise a 401."""
     if current_user is None:
@@ -127,6 +159,37 @@ async def _require_workspace_access(
     return workspace
 
 
+def _normalize_workspace_id(workspace_id: str) -> str:
+    """Normalize and validate a workspace UUID string."""
+    try:
+        return str(uuid.UUID(workspace_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid workspace_id") from exc
+
+
+async def _resolve_workspace_upload_root(
+    *,
+    db: AsyncSession,
+    workspace_id: str,
+    current_user: User | None,
+    allow_draft: bool = False,
+) -> tuple[Workspace | None, str]:
+    """Resolve a workspace upload root, optionally allowing draft workspace IDs."""
+    user = _require_authenticated_user(current_user)
+    normalized_workspace_id = _normalize_workspace_id(workspace_id)
+    workspace = await WorkspaceRepository.get_workspace_by_id(db, normalized_workspace_id)
+
+    if workspace is None:
+        if not allow_draft:
+            raise HTTPException(status_code=404, detail=f"Workspace {workspace_id} not found")
+        return None, workspace_root_prefix(normalized_workspace_id)
+
+    if workspace.user_id != user.id:
+        raise HTTPException(status_code=403, detail=f"Workspace belongs to user {workspace.user_id}")
+
+    return workspace, await ensure_workspace_prefix(db, workspace)
+
+
 
 
 def _build_workspace_root_label(workspace: Workspace) -> str:
@@ -134,6 +197,66 @@ def _build_workspace_root_label(workspace: Workspace) -> str:
     if workspace.name and workspace.name.strip():
         return workspace.name.strip()
     return "workspace"
+
+
+def _build_content_disposition(disposition_type: str, filename: str) -> str:
+    """Build an RFC 5987 encoded Content-Disposition header."""
+    return f"{disposition_type}; filename*=UTF-8''{quote(filename)}"
+
+
+async def _claim_upload_filenames(
+    *,
+    root_prefix: str,
+    workspace_id: str,
+    filenames: list[str],
+) -> list[str]:
+    """Claim unique upload filenames against the current workspace uploads prefix."""
+    existing_objects = await list_workspace_objects(root_prefix=root_prefix, workspace_id=workspace_id)
+    seen_names: set[str] = set()
+
+    for item in existing_objects:
+        relative_path = _relative_object_path(root_prefix, item.key)
+        if not relative_path.parts or relative_path.parts[0] != "uploads":
+            continue
+        seen_names.add(relative_path.name)
+
+    return [claim_unique_filename(filename, seen_names) for filename in filenames]
+
+
+def _is_direct_workspace_upload_enabled() -> bool:
+    """Return whether direct browser uploads should use OSS presigned PUT."""
+    try:
+        from deerflow.config import get_app_config
+
+        uploads_config = get_app_config().uploads
+    except Exception:
+        return False
+
+    if uploads_config.backend != "oss":
+        return False
+
+    return bool(
+        uploads_config.oss.endpoint
+        and uploads_config.oss.bucket
+        and uploads_config.oss.access_key_id
+        and uploads_config.oss.access_key_secret
+    )
+
+
+def _presign_workspace_put_upload(
+    *,
+    object_key: str,
+    content_type: str | None,
+    content_length: int | None,
+) -> tuple[str, str, dict[str, str]]:
+    """Build a presigned PUT upload target for a workspace object."""
+    storage = OSSStorageBackend.from_app_config()
+    upload_url, _expiration, signed_headers = storage.presign_put_object(
+        key=object_key,
+        content_type=content_type,
+        content_length=content_length,
+    )
+    return "PUT", upload_url, signed_headers
 
 
 def _object_key_belongs_to_workspace(*, object_key: str, root_prefix: str) -> bool:
@@ -256,59 +379,12 @@ def _get_upload_file_size(upload_file: UploadFile) -> int | None:
     return size
 
 
-async def _read_upload_content(upload_file: UploadFile) -> bytes:
-    """Read an upload from the beginning and reset the stream position."""
-    await upload_file.seek(0)
-    content = await upload_file.read()
-    await upload_file.seek(0)
-    return content
-
-
-def _get_gateway_temp_root() -> Path:
-    """Return a gateway-owned temp root for transient upload conversion files."""
-    temp_root = get_paths().base_dir / "tmp"
-    temp_root.mkdir(parents=True, exist_ok=True)
-    return temp_root
-
-
-async def _upload_markdown_companion(
-    *,
-    root_prefix: str,
-    workspace_id: str,
-    markdown_path: Path,
-    subdir: str | None = None,
-) -> tuple[str, str | None]:
-    """Upload an auto-generated markdown companion file to the shared filesystem."""
-    logger.info(
-        "Uploading markdown companion for workspace %s: local_path=%s subdir=%s",
-        workspace_id,
-        markdown_path,
-        subdir,
-    )
-    markdown_content = markdown_path.read_bytes()
-    _, markdown_object_key, markdown_signed_url, _ = await upload_workspace_object(
-        root_prefix=root_prefix,
-        workspace_id=workspace_id,
-        filename=markdown_path.name,
-        content=markdown_content,
-        content_type="text/markdown; charset=utf-8",
-        subdir=subdir,
-    )
-    logger.info(
-        "Uploaded markdown companion for workspace %s: filename=%s object_key=%s",
-        workspace_id,
-        markdown_path.name,
-        markdown_object_key,
-    )
-    return markdown_object_key, markdown_signed_url
-
-
 async def _process_single_file(
     *,
     file: UploadFile,
+    target_filename: str,
     root_prefix: str,
     workspace_id: str,
-    temp_dir: Path,
 ) -> WorkspaceFileResponse | None:
     """Process a single file upload into the shared workspace filesystem."""
     if not file.filename:
@@ -322,148 +398,43 @@ async def _process_single_file(
     )
 
     try:
-        safe_filename = normalize_filename(file.filename)
-    except ValueError:
-        logger.warning("Skipping file with unsafe filename: %r", file.filename)
-        return None
-
-    try:
-        # Check if file needs conversion
-        needs_conversion = Path(safe_filename).suffix.lower() in CONVERTIBLE_EXTENSIONS
+        file_size = _get_upload_file_size(file) or 0
         logger.info(
-            "Resolved upload metadata for workspace %s: filename=%s safe_filename=%s needs_conversion=%s temp_dir=%s",
+            "Streaming upload for workspace %s: filename=%s size=%s",
             workspace_id,
-            file.filename,
-            safe_filename,
-            needs_conversion,
-            temp_dir,
+            target_filename,
+            file_size,
         )
 
-        if needs_conversion:
-            # For convertible files, read content once for both OSS upload and conversion
-            content = await _read_upload_content(file)
-            file_size = len(content)
-            logger.info(
-                "Read convertible upload into memory for workspace %s: filename=%s size=%s",
-                workspace_id,
-                safe_filename,
-                file_size,
-            )
-
-            # Write to shared workspace storage (user uploads go to uploads/ subdirectory)
-            _, object_key, signed_url, _ = await upload_workspace_object(
-                root_prefix=root_prefix,
-                workspace_id=workspace_id,
-                filename=safe_filename,
-                content=content,
-                content_type=file.content_type or mimetypes.guess_type(safe_filename)[0],
-                subdir="uploads",
-            )
-            logger.info(
-                "Stored original upload for workspace %s: filename=%s object_key=%s",
-                workspace_id,
-                safe_filename,
-                object_key,
-            )
-
-            # Write to temp directory for document conversion
-            convert_source_path = temp_dir / safe_filename
-            convert_source_path.write_bytes(content)
-            logger.info(
-                "Wrote temp conversion source for workspace %s: filename=%s temp_path=%s",
-                workspace_id,
-                safe_filename,
-                convert_source_path,
-            )
-
-            # Convert to markdown
-            logger.info(
-                "Starting markdown conversion for workspace %s: source=%s",
-                workspace_id,
-                convert_source_path,
-            )
-            markdown_path = await convert_file_to_markdown(convert_source_path)
-            if markdown_path is not None:
-                logger.info(
-                    "Markdown conversion finished for workspace %s: source=%s markdown_path=%s",
-                    workspace_id,
-                    convert_source_path,
-                    markdown_path,
-                )
-                markdown_object_key, markdown_signed_url = await _upload_markdown_companion(
-                    root_prefix=root_prefix,
-                    workspace_id=workspace_id,
-                    markdown_path=markdown_path,
-                    subdir="uploads",
-                )
-                relative_path = _relative_object_path(root_prefix, object_key).as_posix()
-                logger.info(
-                    "Building upload response with markdown companion for workspace %s: filename=%s object_key=%s markdown_object_key=%s relative_path=%s",
-                    workspace_id,
-                    safe_filename,
-                    object_key,
-                    markdown_object_key,
-                    relative_path,
-                )
-                return WorkspaceFileResponse.model_validate(
-                    build_workspace_file_response(
-                        workspace_id=workspace_id,
-                        filename=safe_filename,
-                        relative_path=relative_path,
-                        size=file_size,
-                        object_key=object_key,
-                        signed_url=signed_url,
-                        markdown_file=markdown_path.name,
-                        markdown_object_key=markdown_object_key,
-                        markdown_signed_url=markdown_signed_url,
-                    )
-                )
-            logger.warning(
-                "Markdown conversion returned no output for workspace %s: filename=%s temp_source=%s",
-                workspace_id,
-                safe_filename,
-                convert_source_path,
-            )
-        else:
-            # For non-convertible files, stream directly to the shared filesystem
-            file_size = _get_upload_file_size(file) or 0
-            logger.info(
-                "Streaming non-convertible upload for workspace %s: filename=%s size=%s",
-                workspace_id,
-                safe_filename,
-                file_size,
-            )
-
-            # Stream to shared workspace storage (user uploads go to uploads/ subdirectory)
-            await file.seek(0)
-            _, object_key, signed_url, _ = await upload_workspace_object_stream(
-                root_prefix=root_prefix,
-                workspace_id=workspace_id,
-                filename=safe_filename,
-                stream=file.file,
-                content_length=_get_upload_file_size(file),
-                content_type=file.content_type or mimetypes.guess_type(safe_filename)[0],
-                subdir="uploads",
-            )
-            logger.info(
-                "Stored streamed upload for workspace %s: filename=%s object_key=%s",
-                workspace_id,
-                safe_filename,
-                object_key,
-            )
+        await file.seek(0)
+        _, object_key, signed_url, _ = await upload_workspace_object_stream(
+            root_prefix=root_prefix,
+            workspace_id=workspace_id,
+            filename=target_filename,
+            stream=file.file,
+            content_length=_get_upload_file_size(file),
+            content_type=file.content_type or mimetypes.guess_type(target_filename)[0],
+            subdir="uploads",
+        )
+        logger.info(
+            "Stored streamed upload for workspace %s: filename=%s object_key=%s",
+            workspace_id,
+            target_filename,
+            object_key,
+        )
 
         relative_path = _relative_object_path(root_prefix, object_key).as_posix()
         logger.info(
             "Building upload response for workspace %s: filename=%s object_key=%s relative_path=%s",
             workspace_id,
-            safe_filename,
+            target_filename,
             object_key,
             relative_path,
         )
         return WorkspaceFileResponse.model_validate(
             build_workspace_file_response(
                 workspace_id=workspace_id,
-                filename=safe_filename,
+                filename=target_filename,
                 relative_path=relative_path,
                 size=file_size,
                 object_key=object_key,
@@ -495,80 +466,66 @@ async def upload_files(
         [file.filename for file in files],
     )
 
-    workspace = await _require_workspace_access(
+    _workspace, root_prefix = await _resolve_workspace_upload_root(
         db=db,
         workspace_id=workspace_id,
         current_user=current_user,
+        allow_draft=True,
+    )
+    normalized_files: list[tuple[UploadFile, str]] = []
+    for file in files:
+        if not file.filename:
+            continue
+        try:
+            normalized_files.append((file, normalize_filename(file.filename)))
+        except ValueError:
+            logger.warning("Skipping file with unsafe filename: %r", file.filename)
+
+    claimed_filenames = await _claim_upload_filenames(
+        root_prefix=root_prefix,
+        workspace_id=workspace_id,
+        filenames=[filename for _, filename in normalized_files],
     )
 
-    root_prefix = await ensure_workspace_prefix(db, workspace)
-
-    temp_dir = _get_gateway_temp_root() / f"workspace-upload-{uuid.uuid4().hex}"
-    temp_dir.mkdir(parents=True, exist_ok=False)
+    tasks = [
+        _process_single_file(
+            file=file,
+            target_filename=claimed_filename,
+            root_prefix=root_prefix,
+            workspace_id=workspace_id,
+        )
+        for (file, _), claimed_filename in zip(normalized_files, claimed_filenames, strict=False)
+    ]
     logger.info(
-        "Created upload temp directory for workspace %s: temp_dir=%s root_prefix=%s",
+        "Starting parallel upload processing for workspace %s: task_count=%s",
         workspace_id,
-        temp_dir,
-        root_prefix,
+        len(tasks),
+    )
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    logger.info(
+        "Parallel upload processing finished for workspace %s: result_count=%s",
+        workspace_id,
+        len(results),
     )
 
-    try:
-        # Process all files in parallel
-        tasks = [
-            _process_single_file(
-                file=file,
-                root_prefix=root_prefix,
-                workspace_id=workspace_id,
-                temp_dir=temp_dir,
+    uploaded_files: list[WorkspaceFileResponse] = []
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            if isinstance(result, HTTPException):
+                raise result
+            logger.error("Failed to process file %s: %s", files[i].filename, result)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload {files[i].filename}: {str(result)}",
             )
-            for file in files
-        ]
-        logger.info(
-            "Starting parallel upload processing for workspace %s: task_count=%s",
-            workspace_id,
-            len(tasks),
-        )
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        logger.info(
-            "Parallel upload processing finished for workspace %s: result_count=%s",
-            workspace_id,
-            len(results),
-        )
-
-        # Collect successful uploads and handle errors
-        uploaded_files: list[WorkspaceFileResponse] = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                # Re-raise HTTPException to maintain error handling behavior
-                if isinstance(result, HTTPException):
-                    raise result
-                logger.error("Failed to process file %s: %s", files[i].filename, result)
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to upload {files[i].filename}: {str(result)}"
-                )
-            elif result is not None:
-                uploaded_files.append(result)
-                logger.info(
-                    "Upload result ready for workspace %s: filename=%s object_key=%s",
-                    workspace_id,
-                    result.filename,
-                    result.object_key,
-                )
-    finally:
-        logger.info(
-            "Cleaning upload temp directory for workspace %s: temp_dir=%s exists=%s",
-            workspace_id,
-            temp_dir,
-            temp_dir.exists(),
-        )
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        logger.info(
-            "Cleaned upload temp directory for workspace %s: temp_dir=%s exists=%s",
-            workspace_id,
-            temp_dir,
-            temp_dir.exists(),
-        )
+        if result is not None:
+            uploaded_files.append(result)
+            logger.info(
+                "Upload result ready for workspace %s: filename=%s object_key=%s",
+                workspace_id,
+                result.filename,
+                result.object_key,
+            )
 
     logger.info(
         "Workspace upload request completed: workspace_id=%s uploaded_count=%s",
@@ -579,6 +536,121 @@ async def upload_files(
         success=True,
         files=uploaded_files,
         message=f"Successfully uploaded {len(uploaded_files)} file(s)",
+    )
+
+
+@router.post("/prepare", response_model=UploadPrepareResponse)
+async def prepare_upload(
+    workspace_id: str,
+    payload: UploadPrepareRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UploadPrepareResponse:
+    """Prepare upload metadata and an optional presigned direct-upload target."""
+    _workspace, root_prefix = await _resolve_workspace_upload_root(
+        db=db,
+        workspace_id=workspace_id,
+        current_user=current_user,
+        allow_draft=True,
+    )
+
+    try:
+        safe_filename = normalize_filename(payload.filename)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid filename") from None
+
+    [final_filename] = await _claim_upload_filenames(
+        root_prefix=root_prefix,
+        workspace_id=workspace_id,
+        filenames=[safe_filename],
+    )
+    object_key = workspace_object_key(root_prefix, final_filename, subdir="uploads")
+    relative_path = _relative_object_path(root_prefix, object_key).as_posix()
+    file_response = WorkspaceFileResponse.model_validate(
+        build_workspace_file_response(
+            workspace_id=workspace_id,
+            filename=final_filename,
+            relative_path=relative_path,
+            size=payload.size or 0,
+            object_key=object_key,
+            signed_url=None,
+        )
+    )
+
+    if not _is_direct_workspace_upload_enabled():
+        return UploadPrepareResponse(
+            mode="multipart",
+            file=file_response,
+        )
+
+    try:
+        method, upload_url, upload_headers = _presign_workspace_put_upload(
+            object_key=object_key,
+            content_type=payload.content_type,
+            content_length=payload.size,
+        )
+    except Exception:
+        logger.exception("Failed to presign direct upload for workspace %s", workspace_id)
+        return UploadPrepareResponse(
+            mode="multipart",
+            file=file_response,
+        )
+
+    return UploadPrepareResponse(
+        mode="direct",
+        method=method,
+        upload_url=upload_url,
+        upload_headers=upload_headers,
+        file=file_response,
+    )
+
+
+@router.post("/finalize", response_model=WorkspaceFileResponse)
+async def finalize_upload(
+    workspace_id: str,
+    payload: UploadFinalizeRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> WorkspaceFileResponse:
+    """Finalize an uploaded workspace object and return canonical metadata."""
+    _workspace, root_prefix = await _resolve_workspace_upload_root(
+        db=db,
+        workspace_id=workspace_id,
+        current_user=current_user,
+        allow_draft=True,
+    )
+
+    try:
+        safe_filename = normalize_filename(payload.filename)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid filename") from None
+
+    normalized_object_key = payload.object_key.strip("/")
+    if not _object_key_belongs_to_workspace(
+        object_key=normalized_object_key,
+        root_prefix=root_prefix,
+    ):
+        raise HTTPException(status_code=403, detail="Object key does not belong to this workspace")
+
+    if Path(normalized_object_key).name != safe_filename:
+        raise HTTPException(status_code=400, detail="Filename does not match object key")
+
+    objects = await list_workspace_objects(root_prefix=root_prefix, workspace_id=workspace_id)
+    uploaded_object = next((item for item in objects if item.key == normalized_object_key), None)
+    if uploaded_object is None:
+        raise HTTPException(status_code=404, detail="Uploaded file not found")
+
+    relative_path = _relative_object_path(root_prefix, uploaded_object.key).as_posix()
+    return WorkspaceFileResponse.model_validate(
+        build_workspace_file_response(
+            workspace_id=workspace_id,
+            filename=safe_filename,
+            relative_path=relative_path,
+            size=uploaded_object.size,
+            object_key=uploaded_object.key,
+            signed_url=None,
+            modified=int(uploaded_object.last_modified.timestamp()) if uploaded_object.last_modified else None,
+        )
     )
 
 
@@ -598,10 +670,6 @@ async def list_uploaded_files(
     root_prefix = await ensure_workspace_prefix(db, workspace)
     objects = await list_workspace_objects(root_prefix=root_prefix, workspace_id=workspace_id)
 
-    objects_by_relative_path = {
-        _relative_object_path(root_prefix, item.key).as_posix(): item for item in objects
-    }
-
     files: list[WorkspaceFileResponse] = []
     processed_paths: set[str] = set()
 
@@ -612,31 +680,12 @@ async def list_uploaded_files(
         relative_path = _relative_object_path(root_prefix, item.key).as_posix()
         filename = PurePosixPath(relative_path).name
 
-        # Skip markdown companion files (they'll be linked to their source files)
-        if filename.endswith(".md"):
-            source_stem = str(PurePosixPath(relative_path).with_suffix(""))
-            if any(f"{source_stem}{extension}" in objects_by_relative_path for extension in CONVERTIBLE_EXTENSIONS):
-                continue
-
         # Skip if already processed
         if relative_path in processed_paths:
             continue
         processed_paths.add(relative_path)
 
         signed_url = None
-
-        # Check if this file has a markdown companion
-        markdown_file = None
-        markdown_object_key = None
-        markdown_signed_url = None
-        if PurePosixPath(relative_path).suffix.lower() in CONVERTIBLE_EXTENSIONS:
-            markdown_relative_path = PurePosixPath(relative_path).with_suffix(".md").as_posix()
-            if markdown_relative_path in objects_by_relative_path:
-                markdown_item = objects_by_relative_path[markdown_relative_path]
-                markdown_object_key = markdown_item.key
-                markdown_signed_url = None
-                markdown_file = PurePosixPath(markdown_relative_path).name
-                processed_paths.add(markdown_relative_path)
 
         files.append(
             WorkspaceFileResponse.model_validate(
@@ -648,9 +697,6 @@ async def list_uploaded_files(
                     object_key=item.key,
                     signed_url=signed_url,
                     modified=int(item.last_modified.timestamp()) if item.last_modified is not None else None,
-                    markdown_file=markdown_file,
-                    markdown_object_key=markdown_object_key,
-                    markdown_signed_url=markdown_signed_url,
                 )
             )
         )
@@ -698,6 +744,55 @@ async def get_workspace_file_content(
             detail="Object key does not belong to this workspace",
         )
 
+    filename = Path(normalized_object_key).name
+    active_content_types = {
+        "text/html",
+        "application/xhtml+xml",
+        "image/svg+xml",
+    }
+
+    if uses_oss_workspace_uploads():
+        objects = await list_workspace_objects(root_prefix=root_prefix, workspace_id=workspace_id)
+        file_object = next((item for item in objects if item.key == normalized_object_key), None)
+        if file_object is None:
+            raise HTTPException(status_code=404, detail="Workspace file not found")
+
+        content_type = file_object.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        force_download = download or content_type in active_content_types
+
+        try:
+            content = await get_workspace_object_bytes(
+                root_prefix=root_prefix,
+                workspace_id=workspace_id,
+                object_key=normalized_object_key,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Workspace file not found") from None
+        except Exception as exc:
+            logger.exception("Failed to fetch workspace file %s", normalized_object_key)
+            raise HTTPException(status_code=500, detail="Failed to fetch workspace file") from exc
+
+        if force_download:
+            return Response(
+                content=content,
+                media_type=content_type,
+                headers={"Content-Disposition": _build_content_disposition("attachment", filename)},
+            )
+
+        if content_type.startswith("text/"):
+            try:
+                return PlainTextResponse(content=content.decode("utf-8"), media_type=content_type)
+            except UnicodeDecodeError:
+                pass
+
+        return Response(
+            content=content,
+            media_type=content_type,
+            headers={"Content-Disposition": _build_content_disposition("inline", filename)},
+        )
+
     try:
         file_path = workspace_object_path(
             root_prefix=root_prefix,
@@ -713,14 +808,7 @@ async def get_workspace_file_content(
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="Workspace file not found")
 
-    filename = Path(normalized_object_key).name
     content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-
-    active_content_types = {
-        "text/html",
-        "application/xhtml+xml",
-        "image/svg+xml",
-    }
     force_download = download or content_type in active_content_types
 
     disposition = "attachment" if force_download else "inline"
@@ -740,18 +828,17 @@ async def delete_uploaded_file(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Delete a canonical workspace file from OSS."""
-    workspace = await _require_workspace_access(
+    _workspace, root_prefix = await _resolve_workspace_upload_root(
         db=db,
         workspace_id=workspace_id,
         current_user=current_user,
+        allow_draft=True,
     )
 
     try:
         safe_filename = normalize_filename(payload.filename)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid filename") from None
-
-    root_prefix = await ensure_workspace_prefix(db, workspace)
 
     # Determine which subdirectory the file is in by checking the shared filesystem
     objects = await list_workspace_objects(root_prefix=root_prefix, workspace_id=workspace_id)
@@ -776,12 +863,6 @@ async def delete_uploaded_file(
 
     try:
         await delete_workspace_object(root_prefix=root_prefix, workspace_id=workspace_id, object_key=object_key)
-        if Path(safe_filename).suffix.lower() in CONVERTIBLE_EXTENSIONS:
-            companion_key = str(PurePosixPath(object_key).with_suffix(".md"))
-            try:
-                await delete_workspace_object(root_prefix=root_prefix, workspace_id=workspace_id, object_key=companion_key)
-            except FileNotFoundError:
-                logger.debug("Workspace markdown companion already missing: %s", companion_key)
     except HTTPException:
         raise
     except Exception as exc:

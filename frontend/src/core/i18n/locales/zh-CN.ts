@@ -297,6 +297,8 @@ export const zhCN: Translations = {
   uploads: {
     uploading: "上传中...",
     uploadingFiles: "文件上传中，请稍候...",
+    retry: "重试",
+    sendBlocked: "请等待附件上传完成，或移除上传失败的文件后再发送。",
     deleteSuccess: "文件已删除",
     deleteFailed: "删除文件失败",
   },
