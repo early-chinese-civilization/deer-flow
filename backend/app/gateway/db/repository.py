@@ -258,11 +258,13 @@ class WorkspaceRepository:
         db: AsyncSession,
         user_id: int,
         name: str | None = None,
+        id: str | uuid.UUID | None = None,  # 支持前端传入草稿 workspace_id
         *,
         commit: bool = True,
     ) -> Workspace:
-        """Create a workspace record."""
+        """创建 workspace 记录，支持显式指定 ID（用于草稿场景）"""
         workspace = Workspace(
+            id=_as_optional_uuid(id) or uuid.uuid4(),  # 使用传入的 ID 或生成新 ID
             user_id=user_id,
             name=name,
         )
