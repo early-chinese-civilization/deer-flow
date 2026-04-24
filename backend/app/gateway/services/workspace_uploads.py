@@ -1,4 +1,4 @@
-"""Helpers for canonical workspace files backed by the shared filesystem."""
+"""Helpers for canonical workspace files backed by the configured uploads backend."""
 
 from __future__ import annotations
 
@@ -16,12 +16,12 @@ from app.gateway.db.models import Workspace
 from app.gateway.db.repository import WorkspaceRepository
 from deerflow.config import get_app_config
 from deerflow.config.paths import get_paths
-from deerflow.uploads import oss_root_path, workspace_object_key, workspace_root_prefix
+from deerflow.uploads import OSSStorageBackend, oss_root_path, workspace_object_key, workspace_root_prefix
 
 
 @dataclass(frozen=True)
 class WorkspaceObjectInfo:
-    """Normalized metadata returned from the shared filesystem workspace tree."""
+    """Normalized metadata returned from the configured workspace uploads backend."""
 
     key: str
     size: int
@@ -63,6 +63,19 @@ def _build_markdown_relative_path(*, relative_path: str, markdown_file: str) -> 
 def _workspace_root_dir(workspace_id: str) -> Path:
     """Return the shared `user-data` root directory for a workspace."""
     return get_paths().workspace_user_data_dir(workspace_id)
+
+
+def uses_oss_workspace_uploads() -> bool:
+    """Return whether canonical workspace uploads are stored in OSS."""
+    try:
+        return get_app_config().uploads.backend == "oss"
+    except Exception:
+        return False
+
+
+def _get_oss_storage_backend() -> OSSStorageBackend:
+    """Build the configured OSS storage backend."""
+    return OSSStorageBackend.from_app_config()
 
 
 def _workspace_path_from_relative(*, workspace_id: str, relative_path: str) -> Path:
@@ -119,9 +132,9 @@ async def ensure_workspace_prefix(
 
 def build_workspace_root_path(root_prefix: str) -> str:
     """Build a display root path for workspace files."""
-    bucket = get_app_config().uploads.oss.bucket
-    if bucket:
-        return oss_root_path(bucket, f"{root_prefix.rstrip('/')}/user-data")
+    uploads_config = get_app_config().uploads
+    if uploads_config.backend == "oss" and uploads_config.oss.bucket:
+        return oss_root_path(uploads_config.oss.bucket, root_prefix)
     return str((get_paths().shared_fs_root / root_prefix / "user-data").resolve())
 
 
@@ -131,7 +144,24 @@ def build_workspace_object_key(root_prefix: str, filename: str, subdir: str | No
 
 
 async def list_workspace_objects(*, root_prefix: str, workspace_id: str) -> list[WorkspaceObjectInfo]:
-    """List all canonical files under a workspace root in the shared filesystem."""
+    """List all canonical files under a workspace root."""
+
+    if uses_oss_workspace_uploads():
+        storage = _get_oss_storage_backend()
+
+        def _list_oss() -> list[WorkspaceObjectInfo]:
+            objects = storage.list_objects(prefix=root_prefix)
+            return [
+                WorkspaceObjectInfo(
+                    key=item.key,
+                    size=item.size,
+                    last_modified=item.last_modified,
+                    content_type=item.content_type or mimetypes.guess_type(item.key)[0],
+                )
+                for item in sorted(objects, key=lambda value: value.key.lower())
+            ]
+
+        return await asyncio.to_thread(_list_oss)
 
     def _list() -> list[WorkspaceObjectInfo]:
         root_dir = _workspace_root_dir(workspace_id)
@@ -167,9 +197,23 @@ async def upload_workspace_object(
     content_type: str | None = None,
     subdir: str | None = None,
 ) -> tuple[None, str, None, None]:
-    """Write a file into the shared workspace filesystem."""
-    relative_path = filename if subdir is None else f"{subdir.strip('/')}/{filename}"
+    """Write a file into canonical workspace storage."""
     object_key = build_workspace_object_key(root_prefix, filename, subdir=subdir)
+
+    if uses_oss_workspace_uploads():
+        storage = _get_oss_storage_backend()
+
+        def _write_oss() -> None:
+            storage.put_object(
+                key=object_key,
+                content=content,
+                content_type=content_type,
+            )
+
+        await asyncio.to_thread(_write_oss)
+        return None, object_key, None, None
+
+    relative_path = filename if subdir is None else f"{subdir.strip('/')}/{filename}"
     target_path = _workspace_path_from_relative(workspace_id=workspace_id, relative_path=relative_path)
 
     def _write() -> None:
@@ -190,9 +234,26 @@ async def upload_workspace_object_stream(
     content_type: str | None = None,
     subdir: str | None = None,
 ) -> tuple[None, str, None, None]:
-    """Write a streamed upload into the shared workspace filesystem."""
-    relative_path = filename if subdir is None else f"{subdir.strip('/')}/{filename}"
+    """Write a streamed upload into canonical workspace storage."""
     object_key = build_workspace_object_key(root_prefix, filename, subdir=subdir)
+
+    if uses_oss_workspace_uploads():
+        storage = _get_oss_storage_backend()
+
+        def _write_stream_to_oss() -> None:
+            if hasattr(stream, "seek"):
+                stream.seek(0)
+            storage.put_object_stream(
+                key=object_key,
+                stream=stream,
+                content_length=content_length,
+                content_type=content_type,
+            )
+
+        await asyncio.to_thread(_write_stream_to_oss)
+        return None, object_key, None, None
+
+    relative_path = filename if subdir is None else f"{subdir.strip('/')}/{filename}"
     target_path = _workspace_path_from_relative(workspace_id=workspace_id, relative_path=relative_path)
 
     def _write_stream() -> None:
@@ -212,9 +273,29 @@ async def delete_workspace_object(
     workspace_id: str,
     object_key: str,
 ) -> None:
-    """Delete a canonical workspace file from the shared filesystem."""
+    """Delete a canonical workspace file from the configured uploads backend."""
+    if uses_oss_workspace_uploads():
+        storage = _get_oss_storage_backend()
+        await asyncio.to_thread(storage.delete_object, key=object_key)
+        return
+
     target_path = workspace_object_path(root_prefix=root_prefix, workspace_id=workspace_id, object_key=object_key)
     await asyncio.to_thread(target_path.unlink)
+
+
+async def get_workspace_object_bytes(
+    *,
+    root_prefix: str,
+    workspace_id: str,
+    object_key: str,
+) -> bytes:
+    """Read a canonical workspace file from the configured uploads backend."""
+    if uses_oss_workspace_uploads():
+        storage = _get_oss_storage_backend()
+        return await asyncio.to_thread(storage.get_object_bytes, key=object_key)
+
+    file_path = workspace_object_path(root_prefix=root_prefix, workspace_id=workspace_id, object_key=object_key)
+    return await asyncio.to_thread(file_path.read_bytes)
 
 
 def build_workspace_file_response(
