@@ -50,6 +50,7 @@ class SandboxBackend(ABC):
         sandbox_id: str,
         extra_mounts: list[tuple[str, str, bool]] | None = None,
         workspace_id: str | None = None,
+        skill_scope: str | None = None,
     ) -> SandboxInfo:
         """Create/provision a new sandbox.
 
@@ -59,6 +60,7 @@ class SandboxBackend(ABC):
             extra_mounts: Additional volume mounts as (host_path, container_path, read_only) tuples.
                 Ignored by backends that don't manage containers (e.g., remote).
             workspace_id: Workspace ID whose shared filesystem should be mounted into the sandbox.
+            skill_scope: Optional skills scope mounted into ``/mnt/skills``.
 
         Returns:
             SandboxInfo with connection details.
@@ -103,3 +105,23 @@ class SandboxBackend(ABC):
             SandboxInfo if found and healthy, None otherwise.
         """
         ...
+
+    def initialize(
+        self,
+        info: SandboxInfo,
+        thread_id: str | None,
+        workspace_id: str | None = None,
+        skill_scope: str | None = None,
+    ) -> None:
+        """Run post-ready initialization for a sandbox.
+
+        Backends that need extra setup after the sandbox health endpoint is up
+        can override this hook. The default implementation is a no-op.
+
+        Args:
+            info: Connection details for the provisioned sandbox.
+            thread_id: Thread ID associated with the sandbox.
+            workspace_id: Workspace ID associated with the sandbox.
+            skill_scope: Optional skill scope associated with the sandbox.
+        """
+        del info, thread_id, workspace_id, skill_scope

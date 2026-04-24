@@ -1,3 +1,4 @@
+import logging
 import posixpath
 import re
 import shlex
@@ -19,6 +20,7 @@ from deerflow.sandbox.file_operation_lock import get_file_operation_lock
 from deerflow.sandbox.sandbox import Sandbox
 from deerflow.sandbox.sandbox_provider import get_sandbox_provider
 from deerflow.sandbox.security import LOCAL_HOST_BASH_DISABLED_MESSAGE, is_host_bash_allowed
+from deerflow.sandbox.skill_scope import derive_skill_scope_from_runtime, get_runtime_agent_context
 from deerflow.skills.path_utils import resolve_skill_storage_dir
 
 _ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![:\w])(?<!:/)/(?:[^\s\"'`;&|<>()]+)")
@@ -35,6 +37,8 @@ _LOCAL_BASH_SYSTEM_PATH_PREFIXES = (
 _DEFAULT_SKILLS_CONTAINER_PATH = "/mnt/skills"
 _ACP_WORKSPACE_VIRTUAL_PATH = "/mnt/acp-workspace"
 _DIRECT_FS_LOCK_OWNER = SimpleNamespace(id="shared-fs")
+
+logger = logging.getLogger(__name__)
 
 
 def _get_skills_container_path() -> str:
@@ -112,26 +116,9 @@ def _resolve_skills_path(path: str) -> str:
     return _join_path_preserving_style(skills_host, relative)
 
 
-def _get_runtime_agent_context(runtime: "ToolRuntime[ContextT, ThreadState] | None") -> dict:
-    """Return runtime_agent metadata injected into the active tool runtime."""
-    if runtime is None:
-        return {}
-    if runtime.context:
-        runtime_agent = runtime.context.get("runtime_agent")
-        if isinstance(runtime_agent, dict):
-            return runtime_agent
-    if runtime.config:
-        context = runtime.config.get("context", {})
-        if isinstance(context, dict):
-            runtime_agent = context.get("runtime_agent")
-            if isinstance(runtime_agent, dict):
-                return runtime_agent
-    return {}
-
-
 def _get_runtime_skill_root_map(runtime: "ToolRuntime[ContextT, ThreadState] | None") -> dict[str, str]:
     """Map runtime-exposed virtual skill roots to their backing filesystem paths."""
-    runtime_agent = _get_runtime_agent_context(runtime)
+    runtime_agent = get_runtime_agent_context(runtime)
     raw_skills = runtime_agent.get("skills")
     if not isinstance(raw_skills, list):
         return {}
@@ -156,47 +143,6 @@ def _get_runtime_skill_root_map(runtime: "ToolRuntime[ContextT, ThreadState] | N
 def _list_runtime_skill_roots(runtime: "ToolRuntime[ContextT, ThreadState] | None") -> list[str]:
     """Return the virtual skill directories exposed to the current runtime."""
     return sorted(f"{virtual_root}/" for virtual_root in _get_runtime_skill_root_map(runtime))
-
-
-def _resolve_runtime_skill_container_path(
-    path: str,
-    runtime: "ToolRuntime[ContextT, ThreadState] | None",
-) -> str:
-    """Resolve a virtual runtime skill path to its actual in-sandbox container path."""
-    if not _is_skills_path(path):
-        return path
-
-    allowed_roots = _get_runtime_skill_root_map(runtime)
-    if not allowed_roots:
-        raise PermissionError(f"Skill path is not available in this runtime: {path}")
-
-    skills_container = _get_skills_container_path().rstrip("/")
-    for virtual_root, file_path in sorted(allowed_roots.items(), key=lambda item: len(item[0]), reverse=True):
-        if path != virtual_root and not path.startswith(f"{virtual_root}/"):
-            continue
-
-        suffix = path[len(virtual_root) :].lstrip("/")
-        actual_root = f"{skills_container}/{file_path.strip('/').replace('\\', '/')}"
-        return f"{actual_root}/{suffix}" if suffix else actual_root
-
-    raise PermissionError(f"Skill path is not available in this runtime: {path}")
-
-
-def _replace_runtime_skill_paths_in_command(
-    command: str,
-    runtime: "ToolRuntime[ContextT, ThreadState] | None",
-) -> str:
-    """Rewrite virtual runtime skill paths in bash commands to real mounted container paths."""
-    if _get_runtime_skill_root_map(runtime) == {}:
-        return command
-
-    def replace_match(match: re.Match) -> str:
-        path = match.group(0)
-        if not _is_skills_path(path):
-            return path
-        return _resolve_runtime_skill_container_path(path, runtime)
-
-    return _ABSOLUTE_PATH_PATTERN.sub(replace_match, command)
 
 
 def _get_runtime_skill_actual_to_virtual_map(runtime: "ToolRuntime[ContextT, ThreadState] | None") -> dict[str, str]:
@@ -905,17 +851,30 @@ def ensure_sandbox_initialized(runtime: ToolRuntime[ContextT, ThreadState] | Non
         raise SandboxRuntimeError("Tool runtime state not available")
 
     # Check if sandbox already exists in state
+    provider = get_sandbox_provider()
+    expected_skill_scope = derive_skill_scope_from_runtime(runtime)
     sandbox_state = runtime.state.get("sandbox")
     if sandbox_state is not None:
         sandbox_id = sandbox_state.get("sandbox_id")
+        stored_skill_scope = sandbox_state.get("skill_scope")
         if sandbox_id is not None:
-            sandbox = get_sandbox_provider().get(sandbox_id)
-            if sandbox is not None:
-                if runtime.context is None:
-                    runtime.context = {}
-                runtime.context["sandbox_id"] = sandbox_id  # Ensure sandbox_id is in context for releasing in after_agent
-                return sandbox
-            # Sandbox was released, fall through to acquire new one
+            if stored_skill_scope == expected_skill_scope:
+                sandbox = provider.get(sandbox_id)
+                if sandbox is not None:
+                    if runtime.context is None:
+                        runtime.context = {}
+                    runtime.context["sandbox_id"] = sandbox_id  # Ensure sandbox_id is in context for releasing in after_agent
+                    return sandbox
+            else:
+                logger.info(
+                    "Discarding cached sandbox %s because skill_scope changed from %s to %s",
+                    sandbox_id,
+                    stored_skill_scope,
+                    expected_skill_scope,
+                )
+                if provider.get(sandbox_id) is not None:
+                    provider.release(sandbox_id)
+            # Sandbox was released or scope changed, fall through to acquire new one
 
     # Lazy acquisition: get thread_id and acquire sandbox
     thread_id = runtime.context.get("thread_id") if runtime.context else None
@@ -929,11 +888,16 @@ def ensure_sandbox_initialized(runtime: ToolRuntime[ContextT, ThreadState] | Non
     if workspace_id is None and thread_data is not None and thread_data.get("workspace_id") is not None:
         workspace_id = str(thread_data.get("workspace_id"))
 
-    provider = get_sandbox_provider()
-    sandbox_id = provider.acquire(thread_id, workspace_id=workspace_id)
+    logger.info(
+        "Acquiring sandbox for thread %s workspace %s with skill_scope=%s",
+        thread_id,
+        workspace_id,
+        expected_skill_scope,
+    )
+    sandbox_id = provider.acquire(thread_id, workspace_id=workspace_id, skill_scope=expected_skill_scope)
 
     # Update runtime state - this persists across tool calls
-    runtime.state["sandbox"] = {"sandbox_id": sandbox_id}
+    runtime.state["sandbox"] = {"sandbox_id": sandbox_id, "skill_scope": expected_skill_scope}
 
     # Retrieve and return the sandbox
     sandbox = provider.get(sandbox_id)
@@ -954,34 +918,6 @@ def _get_bash_output_max_chars() -> int:
         return sandbox_cfg.bash_output_max_chars if sandbox_cfg else 20000
     except Exception:
         return 20000
-
-
-def _execute_bash_in_ephemeral_sandbox(runtime: ToolRuntime[ContextT, ThreadState], command: str) -> str:
-    """Run a bash command in a fresh remote sandbox when the provider supports it."""
-    provider = get_sandbox_provider()
-    acquire_ephemeral = getattr(provider, "acquire_ephemeral", None)
-    destroy = getattr(provider, "destroy", None)
-    if not callable(acquire_ephemeral) or not callable(destroy):
-        sandbox = ensure_sandbox_initialized(runtime)
-        return sandbox.execute_command(command)
-
-    thread_id = _get_runtime_context_value(runtime, "thread_id")
-    if thread_id is None:
-        raise SandboxRuntimeError("Thread ID not available in runtime context")
-
-    workspace_id = _get_runtime_context_value(runtime, "workspace_id")
-    thread_data = get_thread_data(runtime)
-    if workspace_id is None and thread_data is not None and thread_data.get("workspace_id") is not None:
-        workspace_id = str(thread_data.get("workspace_id"))
-
-    sandbox_id = acquire_ephemeral(thread_id=thread_id, workspace_id=workspace_id)
-    try:
-        sandbox = provider.get(sandbox_id)
-        if sandbox is None:
-            raise SandboxNotFoundError("Sandbox not found after ephemeral acquisition", sandbox_id=sandbox_id)
-        return sandbox.execute_command(command)
-    finally:
-        destroy(sandbox_id)
 
 
 def ensure_thread_directories_exist(runtime: ToolRuntime[ContextT, ThreadState] | None) -> None:
@@ -1096,7 +1032,6 @@ def bash_tool(runtime: ToolRuntime[ContextT, ThreadState], description: str, com
         command: The bash command to execute. Always use absolute paths for files and directories.
     """
     try:
-        command = _replace_runtime_skill_paths_in_command(command, runtime)
         if is_local_sandbox(runtime):
             sandbox = ensure_sandbox_initialized(runtime)
             if not is_host_bash_allowed():
@@ -1109,7 +1044,8 @@ def bash_tool(runtime: ToolRuntime[ContextT, ThreadState], description: str, com
             output = sandbox.execute_command(command)
             max_chars = _get_bash_output_max_chars()
             return _truncate_bash_output(mask_local_paths_in_output(output, thread_data), max_chars)
-        output = _execute_bash_in_ephemeral_sandbox(runtime, command)
+        sandbox = ensure_sandbox_initialized(runtime)
+        output = sandbox.execute_command(command)
         return _truncate_bash_output(output, _get_bash_output_max_chars())
     except SandboxError as e:
         return f"Error: {e}"

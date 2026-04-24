@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from unittest.mock import MagicMock
 
 
 def _load_provisioner_module():
@@ -133,23 +134,18 @@ def test_join_host_path_preserves_windows_style_paths():
     assert result == r"C:\shared-root\workspaces\workspace-1\user-data"
 
 
-def test_build_pod_mounts_workspace_backed_user_data():
-    """Sandbox pod should mount the shared workspace user-data directory."""
+def test_build_pod_uses_privileged_container_without_startup_mounts():
+    """Sandbox pod should defer skills/user-data mounts until after readiness."""
     provisioner_module = _load_provisioner_module()
-    provisioner_module.WORKSPACES_HOST_PATH = "/shared-root/workspaces"
-    provisioner_module.SKILLS_HOST_PATH = "/shared-root/skills"
 
     pod = provisioner_module._build_pod("sandbox-1", "thread_1", "workspace.1")
 
-    volumes = {volume.name: volume for volume in pod.spec.volumes}
-    mounts = {mount.name: mount for mount in pod.spec.containers[0].volume_mounts}
+    container = pod.spec.containers[0]
 
-    assert volumes["skills"].host_path.path == "/shared-root/skills"
-    assert volumes["user-data"].host_path.path.replace("\\", "/") == "/shared-root/workspaces/workspace.1/user-data"
-    assert mounts["skills"].mount_path == "/mnt/skills"
-    assert mounts["user-data"].mount_path == "/mnt/user-data"
-    assert mounts["skills"].read_only is True
-    assert mounts["user-data"].read_only is False
+    assert pod.spec.volumes in (None, [])
+    assert container.volume_mounts in (None, [])
+    assert container.security_context.privileged is True
+    assert container.security_context.run_as_user == 0
 
 
 def test_build_pod_rejects_invalid_workspace_id():
@@ -161,3 +157,52 @@ def test_build_pod_rejects_invalid_workspace_id():
         raise AssertionError("Expected ValueError for invalid workspace_id")
     except ValueError as exc:
         assert "workspace_id" in str(exc)
+
+
+def test_build_pod_rejects_invalid_skill_scope():
+    provisioner_module = _load_provisioner_module()
+
+    try:
+        provisioner_module._build_pod("sandbox-1", "thread_1", "workspace.1", "../escape")
+        raise AssertionError("Expected ValueError for invalid skill_scope")
+    except ValueError as exc:
+        assert "skill_scope" in str(exc)
+
+
+def test_create_sandbox_request_validates_skill_scope():
+    provisioner_module = _load_provisioner_module()
+
+    request = provisioner_module.CreateSandboxRequest(
+        sandbox_id="sandbox-1",
+        thread_id="thread_1",
+        workspace_id="workspace.1",
+        skill_scope="public",
+    )
+
+    assert request.skill_scope == "public"
+
+
+def test_exec_in_sandbox_runs_bash_in_target_pod(monkeypatch):
+    provisioner_module = _load_provisioner_module()
+    provisioner_module.core_v1 = MagicMock()
+
+    captured: dict[str, object] = {}
+
+    def fake_stream(func, name, namespace, **kwargs):
+        captured["func"] = func
+        captured["name"] = name
+        captured["namespace"] = namespace
+        captured["kwargs"] = kwargs
+        return "mounted"
+
+    monkeypatch.setattr(provisioner_module, "k8s_stream", fake_stream)
+
+    output = provisioner_module._exec_in_sandbox("sandbox-1", "echo hi", timeout_seconds=33)
+
+    assert output == "mounted"
+    assert captured["func"] == provisioner_module.core_v1.connect_get_namespaced_pod_exec
+    assert captured["name"] == "sandbox-sandbox-1"
+    assert captured["namespace"] == provisioner_module.K8S_NAMESPACE
+    assert captured["kwargs"]["container"] == "sandbox"
+    assert captured["kwargs"]["command"] == ["/bin/bash", "-lc", "echo hi"]
+    assert captured["kwargs"]["_request_timeout"] == 33

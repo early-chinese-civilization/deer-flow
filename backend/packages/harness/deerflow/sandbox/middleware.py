@@ -7,6 +7,7 @@ from langgraph.runtime import Runtime
 
 from deerflow.agents.thread_state import SandboxState, ThreadDataState
 from deerflow.sandbox import get_sandbox_provider
+from deerflow.sandbox.skill_scope import derive_skill_scope_from_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +43,15 @@ class SandboxMiddleware(AgentMiddleware[SandboxMiddlewareState]):
         super().__init__()
         self._lazy_init = lazy_init
 
-    def _acquire_sandbox(self, thread_id: str, workspace_id: str | None = None) -> str:
+    def _acquire_sandbox(
+        self,
+        thread_id: str,
+        workspace_id: str | None = None,
+        skill_scope: str | None = None,
+    ) -> str:
         provider = get_sandbox_provider()
-        sandbox_id = provider.acquire(thread_id, workspace_id=workspace_id)
-        logger.info(f"Acquiring sandbox {sandbox_id}")
+        sandbox_id = provider.acquire(thread_id, workspace_id=workspace_id, skill_scope=skill_scope)
+        logger.info(f"Acquiring sandbox {sandbox_id} with skill_scope={skill_scope}")
         return sandbox_id
 
     @override
@@ -54,19 +60,36 @@ class SandboxMiddleware(AgentMiddleware[SandboxMiddlewareState]):
         if self._lazy_init:
             return super().before_agent(state, runtime)
 
-        # Eager initialization (original behavior)
-        if "sandbox" not in state or state["sandbox"] is None:
-            thread_id = (runtime.context or {}).get("thread_id")
-            if thread_id is None:
-                return super().before_agent(state, runtime)
-            workspace_id = (runtime.context or {}).get("workspace_id")
-            sandbox_id = self._acquire_sandbox(
-                str(thread_id),
-                str(workspace_id) if workspace_id is not None else None,
-            )
-            logger.info(f"Assigned sandbox {sandbox_id} to thread {thread_id}")
-            return {"sandbox": {"sandbox_id": sandbox_id}}
-        return super().before_agent(state, runtime)
+        thread_id = (runtime.context or {}).get("thread_id")
+        if thread_id is None:
+            return super().before_agent(state, runtime)
+
+        workspace_id = (runtime.context or {}).get("workspace_id")
+        expected_skill_scope = derive_skill_scope_from_runtime(runtime)
+        provider = get_sandbox_provider()
+        sandbox_state = state.get("sandbox")
+        if sandbox_state is not None:
+            sandbox_id = sandbox_state.get("sandbox_id")
+            stored_skill_scope = sandbox_state.get("skill_scope")
+            if sandbox_id is not None and stored_skill_scope == expected_skill_scope:
+                if provider.get(sandbox_id) is not None:
+                    return super().before_agent(state, runtime)
+            elif sandbox_id is not None and provider.get(sandbox_id) is not None:
+                logger.info(
+                    "Releasing active sandbox %s because skill_scope changed from %s to %s",
+                    sandbox_id,
+                    stored_skill_scope,
+                    expected_skill_scope,
+                )
+                provider.release(sandbox_id)
+
+        sandbox_id = self._acquire_sandbox(
+            str(thread_id),
+            str(workspace_id) if workspace_id is not None else None,
+            skill_scope=expected_skill_scope,
+        )
+        logger.info(f"Assigned sandbox {sandbox_id} to thread {thread_id}")
+        return {"sandbox": {"sandbox_id": sandbox_id, "skill_scope": expected_skill_scope}}
 
     @override
     def after_agent(self, state: SandboxMiddlewareState, runtime: Runtime) -> dict | None:

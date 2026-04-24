@@ -122,12 +122,11 @@ services:
     command: sh -c "cd backend && uv sync && PYTHONPATH=. uv run uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001 --reload --reload-include='*.yaml .env' > /app/logs/gateway.log 2>&1"
     volumes:
       - ../backend/:/app/backend/
+      - ../backend/.deer-flow:/app/backend/.deer-flow
       # Preserve the .venv built during Docker image build — mounting the full backend/
       # directory above would otherwise shadow it with the (empty) host directory.
       - gateway-venv:/app/backend/.venv
       - ../config.yaml:/app/config.yaml
-      - ../extensions_config.json:/app/extensions_config.json
-      - ../skills:/app/skills
       - ../logs:/app/logs
       # Mount uv cache for faster dependency installation
       - ~/.cache/uv:/root/.cache/uv

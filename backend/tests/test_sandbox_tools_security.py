@@ -5,12 +5,12 @@ from unittest.mock import patch
 
 import pytest
 
+from deerflow.sandbox.exceptions import SandboxRuntimeError
 from deerflow.sandbox.tools import (
     VIRTUAL_PATH_PREFIX,
     _apply_cwd_prefix,
     _is_acp_workspace_path,
     _is_skills_path,
-    _replace_runtime_skill_paths_in_command,
     _reject_path_traversal,
     _resolve_acp_workspace_path,
     _resolve_and_validate_user_data_path,
@@ -26,6 +26,7 @@ from deerflow.sandbox.tools import (
     validate_local_tool_path,
     write_file_tool,
 )
+from deerflow.sandbox.skill_scope import derive_skill_scope_from_runtime
 
 _THREAD_DATA = {
     "workspace_path": "/tmp/deer-flow/threads/t1/user-data/workspace",
@@ -132,8 +133,6 @@ def test_validate_local_tool_path_rejects_traversal_in_skills() -> None:
 
 def test_validate_local_tool_path_rejects_none_thread_data() -> None:
     """Missing thread_data should raise SandboxRuntimeError."""
-    from deerflow.sandbox.exceptions import SandboxRuntimeError
-
     with pytest.raises(SandboxRuntimeError):
         validate_local_tool_path(f"{VIRTUAL_PATH_PREFIX}/workspace/file.txt", None)
 
@@ -283,6 +282,35 @@ def test_bash_tool_rejects_host_bash_when_local_sandbox_default(monkeypatch) -> 
     )
 
     assert "Host bash execution is disabled" in result
+
+
+def test_bash_tool_remote_reuses_initialized_sandbox(monkeypatch) -> None:
+    executed_commands: list[str] = []
+    runtime = SimpleNamespace(
+        state={"sandbox": {"sandbox_id": "remote", "skill_scope": "public"}, "thread_data": _THREAD_DATA.copy()},
+        context={"thread_id": "thread-1"},
+    )
+
+    monkeypatch.setattr(
+        "deerflow.sandbox.tools.ensure_sandbox_initialized",
+        lambda runtime: SimpleNamespace(execute_command=lambda command: executed_commands.append(command) or "remote ok"),
+    )
+    monkeypatch.setattr(
+        "deerflow.sandbox.tools.get_sandbox_provider",
+        lambda: SimpleNamespace(
+            acquire_ephemeral=lambda **kwargs: pytest.fail("ephemeral acquire should not be used"),
+            destroy=lambda _sandbox_id: pytest.fail("sandbox destroy should not be used"),
+        ),
+    )
+
+    result = bash_tool.func(
+        runtime=runtime,
+        description="run command",
+        command="cat /mnt/skills/sql-review/SKILL.md",
+    )
+
+    assert result == "remote ok"
+    assert executed_commands == ["cat /mnt/skills/sql-review/SKILL.md"]
 
 
 # ---------- Skills path tests ----------
@@ -467,56 +495,148 @@ def test_ls_skills_root_lists_runtime_skill_directories() -> None:
     assert "/mnt/skills/table-tools/" in result
 
 
-def test_replace_runtime_skill_paths_in_command_maps_virtual_root() -> None:
+def test_derive_skill_scope_returns_none_when_runtime_skills_are_missing() -> None:
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={"runtime_agent": {"user_id": 7, "skills": []}},
+        config={},
+    )
+
+    assert derive_skill_scope_from_runtime(runtime) is None
+
+
+def test_derive_skill_scope_returns_public_for_public_skills() -> None:
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
         context={
             "runtime_agent": {
+                "user_id": 9,
                 "skills": [
                     {
                         "name": "chart-visualization",
                         "file_path": "public/chart-visualization",
                         "virtual_path": "/mnt/skills/chart-visualization/SKILL.md",
                     }
-                ]
+                ],
             }
         },
         config={},
     )
 
-    with patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"):
-        result = _replace_runtime_skill_paths_in_command(
-            'cd /mnt/skills/chart-visualization && node ./scripts/generate.js "$(cat /mnt/user-data/workspace/data.json)"',
-            runtime,
-        )
-
-    assert "cd /mnt/skills/public/chart-visualization" in result
-    assert 'cat /mnt/user-data/workspace/data.json' in result
+    assert derive_skill_scope_from_runtime(runtime) == "public"
 
 
-def test_replace_runtime_skill_paths_in_command_rejects_unmapped_skill_paths() -> None:
+def test_derive_skill_scope_returns_private_scope_for_private_skills() -> None:
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "user_id": 7,
+                "skills": [
+                    {
+                        "name": "table-tools",
+                        "file_path": "7/table-tools",
+                        "virtual_path": "/mnt/skills/table-tools/SKILL.md",
+                    }
+                ],
+            }
+        },
+        config={},
+    )
+
+    assert derive_skill_scope_from_runtime(runtime) == "7"
+
+
+def test_derive_skill_scope_rejects_mixed_public_and_private_skills() -> None:
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "user_id": 7,
+                "skills": [
+                    {
+                        "name": "chart-visualization",
+                        "file_path": "public/chart-visualization",
+                        "virtual_path": "/mnt/skills/chart-visualization/SKILL.md",
+                    },
+                    {
+                        "name": "table-tools",
+                        "file_path": "7/table-tools",
+                        "virtual_path": "/mnt/skills/table-tools/SKILL.md",
+                    },
+                ],
+            }
+        },
+        config={},
+    )
+
+    with pytest.raises(SandboxRuntimeError, match="same scope"):
+        derive_skill_scope_from_runtime(runtime)
+
+
+def test_derive_skill_scope_rejects_malformed_skill_roots() -> None:
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "user_id": 7,
+                "skills": [
+                    {
+                        "name": "broken",
+                        "file_path": "custom/broken-skill",
+                        "virtual_path": "/mnt/skills/broken/SKILL.md",
+                    }
+                ],
+            }
+        },
+        config={},
+    )
+
+    with pytest.raises(SandboxRuntimeError, match="invalid scope root"):
+        derive_skill_scope_from_runtime(runtime)
+
+
+def test_derive_skill_scope_rejects_private_scope_user_mismatch() -> None:
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "user_id": 9,
+                "skills": [
+                    {
+                        "name": "table-tools",
+                        "file_path": "7/table-tools",
+                        "virtual_path": "/mnt/skills/table-tools/SKILL.md",
+                    }
+                ],
+            }
+        },
+        config={},
+    )
+
+    with pytest.raises(SandboxRuntimeError, match="does not match"):
+        derive_skill_scope_from_runtime(runtime)
+
+
+def test_derive_skill_scope_rejects_private_scope_without_runtime_user_id() -> None:
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
         context={
             "runtime_agent": {
                 "skills": [
                     {
-                        "name": "chart-visualization",
-                        "file_path": "public/chart-visualization",
-                        "virtual_path": "/mnt/skills/chart-visualization/SKILL.md",
+                        "name": "table-tools",
+                        "file_path": "7/table-tools",
+                        "virtual_path": "/mnt/skills/table-tools/SKILL.md",
                     }
-                ]
+                ],
             }
         },
         config={},
     )
 
-    with patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"):
-        with pytest.raises(PermissionError, match="not available in this runtime"):
-            _replace_runtime_skill_paths_in_command(
-                "cat /mnt/skills/other-skill/SKILL.md",
-                runtime,
-            )
+    with pytest.raises(SandboxRuntimeError, match="user_id is required"):
+        derive_skill_scope_from_runtime(runtime)
 
 
 def test_validate_local_bash_command_paths_allows_urls() -> None:

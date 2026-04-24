@@ -1,6 +1,9 @@
 """Tests for AioSandboxProvider mount helpers."""
 
+import hashlib
 import importlib
+import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -134,3 +137,113 @@ def test_discover_or_create_only_unlocks_when_lock_succeeds(tmp_path, monkeypatc
             provider._discover_or_create_with_lock("thread-5", "sandbox-5")
 
     assert unlock_calls == []
+
+
+def test_get_skills_mount_scopes_public_skills(tmp_path, monkeypatch):
+    aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir()
+    monkeypatch.setattr(
+        aio_mod,
+        "get_app_config",
+        lambda: SimpleNamespace(skills=SimpleNamespace(get_skills_path=lambda: skills_root, container_path="/mnt/skills")),
+    )
+    monkeypatch.delenv("DEER_FLOW_HOST_SHARED_FS_ROOT", raising=False)
+    monkeypatch.delenv("DEER_FLOW_HOST_SKILLS_PATH", raising=False)
+
+    mount = aio_mod.AioSandboxProvider._get_skills_mount("public")
+
+    assert mount == (str(skills_root / "public"), "/mnt/skills", True)
+
+
+def test_get_skills_mount_preserves_windows_private_scope_paths(tmp_path, monkeypatch):
+    aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir()
+    monkeypatch.setattr(
+        aio_mod,
+        "get_app_config",
+        lambda: SimpleNamespace(skills=SimpleNamespace(get_skills_path=lambda: skills_root, container_path="/mnt/skills")),
+    )
+    monkeypatch.setenv("DEER_FLOW_HOST_SHARED_FS_ROOT", r"C:\Users\demo\deer-flow\backend\.deer-flow")
+    monkeypatch.setattr(aio_mod, "get_paths", lambda: Paths(base_dir=tmp_path))
+
+    mount = aio_mod.AioSandboxProvider._get_skills_mount("7")
+
+    assert mount == (r"C:\Users\demo\deer-flow\backend\.deer-flow\skills\7", "/mnt/skills", True)
+
+
+def test_deterministic_sandbox_id_includes_skill_scope() -> None:
+    aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
+
+    legacy_id = aio_mod.AioSandboxProvider._deterministic_sandbox_id("thread-1")
+    public_id = aio_mod.AioSandboxProvider._deterministic_sandbox_id("thread-1", "public")
+    private_id = aio_mod.AioSandboxProvider._deterministic_sandbox_id("thread-1", "7")
+
+    assert legacy_id == hashlib.sha256("thread-1".encode()).hexdigest()[:8]
+    assert public_id == hashlib.sha256("thread-1:public".encode()).hexdigest()[:8]
+    assert private_id == hashlib.sha256("thread-1:7".encode()).hexdigest()[:8]
+    assert legacy_id != public_id
+    assert public_id != private_id
+
+
+def test_acquire_internal_does_not_reclaim_warm_pool_sandbox_from_wrong_scope():
+    aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
+    provider = aio_mod.AioSandboxProvider.__new__(aio_mod.AioSandboxProvider)
+    provider._lock = threading.Lock()
+    provider._sandboxes = {}
+    provider._sandbox_infos = {}
+    provider._thread_sandboxes = {}
+    provider._thread_locks = {}
+    provider._last_activity = {}
+    provider._warm_pool = {}
+    provider._config = {}
+    provider._backend = MagicMock()
+    provider._idle_checker_stop = MagicMock()
+    provider._shutdown_called = False
+    provider._idle_checker_thread = None
+
+    public_id = aio_mod.AioSandboxProvider._deterministic_sandbox_id("thread-1", "public")
+    private_id = aio_mod.AioSandboxProvider._deterministic_sandbox_id("thread-1", "7")
+    provider._warm_pool[public_id] = (SimpleNamespace(sandbox_url="http://warm"), 0.0)
+    provider._discover_or_create_with_lock = MagicMock(return_value=private_id)
+
+    sandbox_id = provider._acquire_internal("thread-1", skill_scope="7")
+
+    assert sandbox_id == private_id
+    assert public_id in provider._warm_pool
+    provider._discover_or_create_with_lock.assert_called_once_with(
+        "thread-1",
+        private_id,
+        workspace_id=None,
+        skill_scope="7",
+    )
+
+
+def test_create_sandbox_initializes_backend_after_ready(monkeypatch):
+    aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
+    provider = aio_mod.AioSandboxProvider.__new__(aio_mod.AioSandboxProvider)
+    provider._lock = threading.Lock()
+    provider._sandboxes = {}
+    provider._sandbox_infos = {}
+    provider._thread_sandboxes = {}
+    provider._thread_locks = {}
+    provider._last_activity = {}
+    provider._warm_pool = {}
+    provider._config = {"replicas": 3}
+    provider._idle_checker_stop = MagicMock()
+    provider._shutdown_called = False
+    provider._idle_checker_thread = None
+    provider._backend = MagicMock()
+    provider._backend.create.return_value = SimpleNamespace(sandbox_id="sandbox-1", sandbox_url="http://sandbox")
+
+    monkeypatch.setattr(aio_mod, "wait_for_sandbox_ready", lambda url, timeout=60: True)
+
+    sandbox_id = provider._create_sandbox("thread-1", "sandbox-1", workspace_id="workspace-1", skill_scope="7")
+
+    assert sandbox_id == "sandbox-1"
+    provider._backend.initialize.assert_called_once()
+    args, kwargs = provider._backend.initialize.call_args
+    assert args[0].sandbox_id == "sandbox-1"
+    assert args[1] == "thread-1"
+    assert kwargs == {"workspace_id": "workspace-1", "skill_scope": "7"}

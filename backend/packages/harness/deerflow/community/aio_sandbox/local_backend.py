@@ -116,6 +116,7 @@ class LocalContainerBackend(SandboxBackend):
         sandbox_id: str,
         extra_mounts: list[tuple[str, str, bool]] | None = None,
         workspace_id: str | None = None,
+        skill_scope: str | None = None,
     ) -> SandboxInfo:
         """Start a new container and return its connection info.
 
@@ -124,6 +125,7 @@ class LocalContainerBackend(SandboxBackend):
             sandbox_id: Deterministic sandbox identifier (used in container name).
             extra_mounts: Additional volume mounts as (host_path, container_path, read_only) tuples.
             workspace_id: Workspace ID mounted via extra_mounts when provided by the caller.
+            skill_scope: Optional skills scope mounted via extra_mounts when provided by the caller.
 
         Returns:
             SandboxInfo with container details.
@@ -131,6 +133,7 @@ class LocalContainerBackend(SandboxBackend):
         Raises:
             RuntimeError: If the container fails to start.
         """
+        del skill_scope
         container_name = f"{self._container_prefix}-{sandbox_id}"
 
         # Retry loop: if Docker rejects the port (e.g. a stale container still

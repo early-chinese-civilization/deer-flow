@@ -40,6 +40,7 @@ from fastapi import FastAPI, HTTPException
 from kubernetes import client as k8s_client
 from kubernetes import config as k8s_config
 from kubernetes.client.rest import ApiException
+from kubernetes.stream import stream as k8s_stream
 from pydantic import BaseModel, Field
 
 # Suppress only the InsecureRequestWarning from urllib3
@@ -61,6 +62,7 @@ SANDBOX_IMAGE = os.environ.get(
 SKILLS_HOST_PATH = os.environ.get("SKILLS_HOST_PATH", "/skills")
 SAFE_THREAD_ID_PATTERN = r"^[A-Za-z0-9_\-]+$"
 SAFE_WORKSPACE_ID_PATTERN = r"^[A-Za-z0-9._\-]+$"
+SAFE_SKILL_SCOPE_PATTERN = r"^(public|[0-9]+)$"
 SHARED_FS_HOST_PATH = os.environ.get("SHARED_FS_HOST_PATH") or os.environ.get("DEER_FLOW_HOST_SHARED_FS_ROOT")
 WORKSPACES_HOST_PATH = os.environ.get("WORKSPACES_HOST_PATH")
 
@@ -115,6 +117,14 @@ def _validate_workspace_id(workspace_id: str) -> str:
             "Invalid workspace_id: only alphanumeric characters, dots, hyphens, and underscores are allowed."
         )
     return workspace_id
+
+
+def _validate_skill_scope(skill_scope: str | None) -> str | None:
+    if skill_scope is None:
+        return None
+    if not re.match(SAFE_SKILL_SCOPE_PATTERN, skill_scope):
+        raise ValueError("Invalid skill_scope: only 'public' or decimal user ids are allowed.")
+    return skill_scope
 
 
 # ── K8s client setup ────────────────────────────────────────────────────
@@ -236,12 +246,23 @@ class CreateSandboxRequest(BaseModel):
     sandbox_id: str
     thread_id: str = Field(pattern=SAFE_THREAD_ID_PATTERN)
     workspace_id: str = Field(pattern=SAFE_WORKSPACE_ID_PATTERN)
+    skill_scope: str | None = Field(default=None, pattern=SAFE_SKILL_SCOPE_PATTERN)
 
 
 class SandboxResponse(BaseModel):
     sandbox_id: str
     sandbox_url: str  # Direct access URL, e.g. http://host.docker.internal:{NodePort}
     status: str
+
+
+class ExecInSandboxRequest(BaseModel):
+    command: str
+    timeout_seconds: int = Field(default=120, ge=1, le=900)
+
+
+class ExecInSandboxResponse(BaseModel):
+    sandbox_id: str
+    output: str
 
 
 # ── K8s resource helpers ─────────────────────────────────────────────────
@@ -255,15 +276,31 @@ def _svc_name(sandbox_id: str) -> str:
     return f"sandbox-{sandbox_id}-svc"
 
 
+def _container_name() -> str:
+    return "sandbox"
+
+
 def _sandbox_url(node_port: int) -> str:
     """Build the sandbox URL using the configured NODE_HOST."""
     return f"http://{NODE_HOST}:{node_port}"
 
 
-def _build_pod(sandbox_id: str, thread_id: str, workspace_id: str) -> k8s_client.V1Pod:
+def _build_pod(
+    sandbox_id: str,
+    thread_id: str,
+    workspace_id: str,
+    skill_scope: str | None = None,
+) -> k8s_client.V1Pod:
     """Construct a Pod manifest for a single sandbox."""
     thread_id = _validate_thread_id(thread_id)
     workspace_id = _validate_workspace_id(workspace_id)
+    skill_scope = _validate_skill_scope(skill_scope)
+    logger.info(
+        "Building pod for sandbox=%s workspace=%s skill_scope=%s",
+        sandbox_id,
+        workspace_id,
+        skill_scope,
+    )
     return k8s_client.V1Pod(
         metadata=k8s_client.V1ObjectMeta(
             name=_pod_name(sandbox_id),
@@ -320,39 +357,12 @@ def _build_pod(sandbox_id: str, thread_id: str, workspace_id: str) -> k8s_client
                             "ephemeral-storage": "500Mi",
                         },
                     ),
-                    volume_mounts=[
-                        k8s_client.V1VolumeMount(
-                            name="skills",
-                            mount_path="/mnt/skills",
-                            read_only=True,
-                        ),
-                        k8s_client.V1VolumeMount(
-                            name="user-data",
-                            mount_path="/mnt/user-data",
-                            read_only=False,
-                        ),
-                    ],
                     security_context=k8s_client.V1SecurityContext(
-                        privileged=False,
+                        privileged=True,
                         allow_privilege_escalation=True,
+                        run_as_user=0,
                     ),
                 )
-            ],
-            volumes=[
-                k8s_client.V1Volume(
-                    name="skills",
-                    host_path=k8s_client.V1HostPathVolumeSource(
-                        path=SKILLS_HOST_PATH,
-                        type="Directory",
-                    ),
-                ),
-                k8s_client.V1Volume(
-                    name="user-data",
-                    host_path=k8s_client.V1HostPathVolumeSource(
-                        path=join_host_path(WORKSPACES_HOST_PATH, workspace_id, "user-data"),
-                        type="DirectoryOrCreate",
-                    ),
-                ),
             ],
             restart_policy="Always",
         ),
@@ -411,6 +421,30 @@ def _get_pod_phase(sandbox_id: str) -> str:
         return "NotFound"
 
 
+def _exec_in_sandbox(sandbox_id: str, command: str, timeout_seconds: int = 120) -> str:
+    """Execute a bash command inside a sandbox pod."""
+    try:
+        output = k8s_stream(
+            core_v1.connect_get_namespaced_pod_exec,
+            _pod_name(sandbox_id),
+            K8S_NAMESPACE,
+            container=_container_name(),
+            command=["/bin/bash", "-lc", command],
+            stderr=True,
+            stdin=False,
+            stdout=True,
+            tty=False,
+            _request_timeout=timeout_seconds,
+        )
+    except ApiException as exc:
+        if exc.status == 404:
+            raise HTTPException(status_code=404, detail=f"Sandbox '{sandbox_id}' not found") from exc
+        raise HTTPException(status_code=500, detail=f"Sandbox exec failed: {exc.reason}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Sandbox exec failed: {exc}") from exc
+    return output or ""
+
+
 # ── API endpoints ────────────────────────────────────────────────────────
 
 
@@ -418,6 +452,30 @@ def _get_pod_phase(sandbox_id: str) -> str:
 async def health():
     """Provisioner health check."""
     return {"status": "ok"}
+
+
+@app.post("/api/internal/sandboxes/{sandbox_id}/exec", response_model=ExecInSandboxResponse)
+async def exec_in_sandbox(sandbox_id: str, req: ExecInSandboxRequest):
+    """Execute a command inside a sandbox pod.
+
+    This endpoint is for internal backend-to-provisioner orchestration only.
+    """
+    logger.info(
+        "Received internal exec request for sandbox %s (timeout=%ss) command:\n%s",
+        sandbox_id,
+        req.timeout_seconds,
+        req.command,
+    )
+    output = _exec_in_sandbox(sandbox_id, req.command, req.timeout_seconds)
+    logger.info(
+        "Internal exec output for sandbox %s:\n%s",
+        sandbox_id,
+        output,
+    )
+    return ExecInSandboxResponse(
+        sandbox_id=sandbox_id,
+        output=output,
+    )
 
 
 @app.post("/api/sandboxes", response_model=SandboxResponse)
@@ -430,9 +488,14 @@ async def create_sandbox(req: CreateSandboxRequest):
     sandbox_id = req.sandbox_id
     thread_id = req.thread_id
     workspace_id = req.workspace_id
+    skill_scope = req.skill_scope
 
     logger.info(
-        f"Received request to create sandbox '{sandbox_id}' for thread '{thread_id}' workspace '{workspace_id}'"
+        "Received request to create sandbox '%s' for thread '%s' workspace '%s' skill_scope=%s",
+        sandbox_id,
+        thread_id,
+        workspace_id,
+        skill_scope,
     )
 
     # ── Fast path: sandbox already exists ────────────────────────────
@@ -446,7 +509,7 @@ async def create_sandbox(req: CreateSandboxRequest):
 
     # ── Create Pod ───────────────────────────────────────────────────
     try:
-        core_v1.create_namespaced_pod(K8S_NAMESPACE, _build_pod(sandbox_id, thread_id, workspace_id))
+        core_v1.create_namespaced_pod(K8S_NAMESPACE, _build_pod(sandbox_id, thread_id, workspace_id, skill_scope))
         logger.info(f"Created Pod {_pod_name(sandbox_id)}")
     except ApiException as exc:
         if exc.status != 409:  # 409 = AlreadyExists
