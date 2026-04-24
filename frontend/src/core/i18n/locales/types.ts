@@ -244,6 +244,8 @@ export interface Translations {
   uploads: {
     uploading: string;
     uploadingFiles: string;
+    retry: string;
+    sendBlocked: string;
     deleteSuccess: string;
     deleteFailed: string;
   };
