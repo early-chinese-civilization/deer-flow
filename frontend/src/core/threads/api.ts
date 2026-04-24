@@ -10,7 +10,10 @@ async function readErrorDetail(
   return error.detail ?? fallback;
 }
 
-export async function ensureThread(threadId: string): Promise<ThreadRecord> {
+export async function ensureThread(
+  threadId: string,
+  options?: { workspaceId?: string | null },
+): Promise<ThreadRecord> {
   const response = await fetch(`${getBackendBaseURL()}/api/threads`, {
     method: "POST",
     headers: {
@@ -19,6 +22,7 @@ export async function ensureThread(threadId: string): Promise<ThreadRecord> {
     credentials: "include",
     body: JSON.stringify({
       thread_id: threadId,
+      workspace_id: options?.workspaceId ?? undefined,
     }),
   });
 
