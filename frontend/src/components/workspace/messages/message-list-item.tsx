@@ -27,6 +27,7 @@ import {
   stripUploadedFilesTag,
   type FileInMessage,
 } from "@/core/messages/utils";
+import { getBrowserOssSource, useResolvedOssUrl } from "@/core/oss";
 import { useRehypeSplitWordsIntoSpans } from "@/core/rehype";
 import { humanMessagePlugins } from "@/core/streamdown";
 import { cn } from "@/lib/utils";
@@ -34,6 +35,7 @@ import { cn } from "@/lib/utils";
 import { CopyButton } from "../copy-button";
 
 import { MarkdownContent } from "./markdown-content";
+import { useThread } from "./context";
 
 export function MessageListItem({
   className,
@@ -148,7 +150,7 @@ function MessageContent_({
 
   const filesList =
     files && files.length > 0 && thread_id ? (
-      <RichFilesList files={files} threadId={thread_id} />
+      <RichFilesList files={files} />
     ) : null;
 
   if (message.additional_kwargs?.element === "task") {
@@ -262,10 +264,8 @@ function formatBytes(bytes: number): string {
 
 function RichFilesList({
   files,
-  threadId,
 }: {
   files: FileInMessage[];
-  threadId: string;
 }) {
   if (files.length === 0) return null;
   return (
@@ -274,7 +274,6 @@ function RichFilesList({
         <RichFileCard
           key={`${file.filename}-${index}`}
           file={file}
-          threadId={threadId}
         />
       ))}
     </div>
@@ -283,12 +282,11 @@ function RichFilesList({
 
 function RichFileCard({
   file,
-  threadId,
 }: {
   file: FileInMessage;
-  threadId: string;
 }) {
   const { t } = useI18n();
+  const { workspaceId } = useThread();
   const isUploading = file.status === "uploading";
   const isImage = isImageFile(file.filename);
 
@@ -319,24 +317,66 @@ function RichFileCard({
     );
   }
 
-  const filePath = file.virtual_path ?? null;
-  if (!filePath) return null;
-
-  const fileUrl = resolveArtifactURL(filePath, threadId);
+  const source = getBrowserOssSource(file);
+  const urlResult = useResolvedOssUrl(workspaceId, source);
+  const fileUrl = urlResult.data;
 
   if (isImage) {
+    if (fileUrl) {
+      return (
+        <a
+          href={fileUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="group border-border/40 relative block overflow-hidden rounded-lg border"
+        >
+          <img
+            src={fileUrl}
+            alt={file.filename}
+            className="h-32 w-auto max-w-60 object-cover transition-transform group-hover:scale-105"
+          />
+        </a>
+      );
+    }
+    return (
+      <div className="group border-border/40 relative block overflow-hidden rounded-lg border">
+        <img
+          src=""
+          alt={file.filename}
+          className="h-32 w-auto max-w-60 object-cover"
+        />
+      </div>
+    );
+  }
+
+  if (fileUrl) {
     return (
       <a
         href={fileUrl}
         target="_blank"
         rel="noopener noreferrer"
-        className="group border-border/40 relative block overflow-hidden rounded-lg border"
+        className="bg-background border-border/40 flex max-w-50 min-w-30 flex-col gap-1 rounded-lg border p-3 shadow-sm"
       >
-        <img
-          src={fileUrl}
-          alt={file.filename}
-          className="h-32 w-auto max-w-60 object-cover transition-transform group-hover:scale-105"
-        />
+        <div className="flex items-start gap-2">
+          <FileIcon className="text-muted-foreground mt-0.5 size-4 shrink-0" />
+          <span
+            className="text-foreground truncate text-sm font-medium"
+            title={file.filename}
+          >
+            {file.filename}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <Badge
+            variant="secondary"
+            className="rounded px-1.5 py-0.5 text-[10px] font-normal"
+          >
+            {getFileTypeLabel(file.filename)}
+          </Badge>
+          <span className="text-muted-foreground text-[10px]">
+            {formatBytes(file.size)}
+          </span>
+        </div>
       </a>
     );
   }
