@@ -104,19 +104,19 @@ export function ArtifactFileDetail({
     return getArtifactSource(threadId, filepath);
   }, [filepath, getArtifactSource, isWriteFile, threadId]);
   const { isMock, workspaceId } = useThread();
+  const browserOssSource = artifactSource?.browserOssSource ?? null;
   const { data: resolvedOssUrl } = useResolvedOssUrl(
     workspaceId,
-    artifactSource?.browserOssSource ?? null,
+    browserOssSource,
   );
-  const artifactViewUrl =
-    resolvedOssUrl ??
-    artifactSource?.viewUrl ??
-    urlOfArtifact({ filepath, threadId, isMock });
+  const artifactViewUrl = browserOssSource
+    ? resolvedOssUrl ?? urlOfArtifact({ filepath, threadId, isMock })
+    : artifactSource?.viewUrl ?? urlOfArtifact({ filepath, threadId, isMock });
   const { content, url } = useArtifactContent({
     threadId,
     filepath: filepathFromProps,
     enabled: isCodeFile && !isWriteFile,
-    urlOverride: resolvedOssUrl ?? artifactSource?.viewUrl,
+    urlOverride: browserOssSource ? resolvedOssUrl : artifactSource?.viewUrl,
   });
 
   const displayContent = content ?? "";
