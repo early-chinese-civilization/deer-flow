@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { resolveWorkspaceDownloadUrl } from "./api.ts";
-import type { BrowserOssSource } from "./source.ts";
+import { resolveWorkspaceDownloadUrl } from "./api";
+import type { BrowserOssSource } from "./source";
 import {
   getResolvedOssUrlQueryKey,
   isResolvedOssUrlQueryEnabled,
-} from "./query.ts";
+} from "./query";
 
 export function useResolvedOssUrl(
   workspaceId: string | null | undefined,

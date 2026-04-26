@@ -156,7 +156,7 @@ function WorkspaceDirectoryNode({
             ) : (
               <WorkspaceFileRow
                 key={child.object_key}
-                file={child as UploadedFileInfo}
+                file={child as unknown as UploadedFileInfo}
                 downloadLabel={downloadLabel}
                 selected={selectedFile === child.object_key}
                 onSelect={onFileSelect}
@@ -573,7 +573,7 @@ export function WorkspaceFilesPanel({
                 ) : (
                   <WorkspaceFileRow
                     key={node.object_key}
-                    file={node as UploadedFileInfo}
+                    file={node as unknown as UploadedFileInfo}
                     downloadLabel={t.common.download}
                     selected={selectedFile === node.object_key}
                     onSelect={handleFileSelect}

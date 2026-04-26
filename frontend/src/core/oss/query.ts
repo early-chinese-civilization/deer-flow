@@ -1,4 +1,4 @@
-import type { BrowserOssSource } from "./source.ts";
+import type { BrowserOssSource } from "./source";
 
 export function getResolvedOssUrlQueryKey(
   workspaceId: string | null | undefined,

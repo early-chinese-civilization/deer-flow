@@ -1,3 +1,3 @@
-export * from "./api.ts";
-export * from "./hooks.ts";
-export * from "./source.ts";
+export * from "./api";
+export * from "./hooks";
+export * from "./source";
