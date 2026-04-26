@@ -10,10 +10,12 @@ import {
 
 import { useSidebar } from "@/components/ui/sidebar";
 import { env } from "@/env";
+import type { BrowserOssSource } from "@/core/oss";
 
 export interface ArtifactSource {
   filepath: string;
-  viewUrl: string;
+  browserOssSource?: BrowserOssSource | null;
+  viewUrl?: string;
 }
 
 export interface ArtifactsContextType {
@@ -95,6 +97,10 @@ export function ArtifactsProvider({ children }: ArtifactsProviderProps) {
             const nextSource = nextSources[key];
             return (
               currentSource?.filepath === nextSource?.filepath &&
+              currentSource?.browserOssSource?.ossUri ===
+                nextSource?.browserOssSource?.ossUri &&
+              currentSource?.browserOssSource?.objectKey ===
+                nextSource?.browserOssSource?.objectKey &&
               currentSource?.viewUrl === nextSource?.viewUrl
             );
           });

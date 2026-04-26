@@ -34,6 +34,7 @@ import { useArtifactContent } from "@/core/artifacts/hooks";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
 import { installSkill } from "@/core/skills/api";
+import { useResolvedOssUrl } from "@/core/oss";
 import { streamdownPlugins } from "@/core/streamdown";
 import {
   checkCodeFile,
@@ -102,15 +103,20 @@ export function ArtifactFileDetail({
     }
     return getArtifactSource(threadId, filepath);
   }, [filepath, getArtifactSource, isWriteFile, threadId]);
-  const { isMock } = useThread();
+  const { isMock, workspaceId } = useThread();
+  const { data: resolvedOssUrl } = useResolvedOssUrl(
+    workspaceId,
+    artifactSource?.browserOssSource ?? null,
+  );
   const artifactViewUrl =
+    resolvedOssUrl ??
     artifactSource?.viewUrl ??
     urlOfArtifact({ filepath, threadId, isMock });
   const { content, url } = useArtifactContent({
     threadId,
     filepath: filepathFromProps,
     enabled: isCodeFile && !isWriteFile,
-    urlOverride: artifactSource?.viewUrl,
+    urlOverride: resolvedOssUrl ?? artifactSource?.viewUrl,
   });
 
   const displayContent = content ?? "";
