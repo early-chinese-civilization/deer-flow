@@ -15,7 +15,6 @@ import type { BrowserOssSource } from "@/core/oss";
 export interface ArtifactSource {
   filepath: string;
   browserOssSource?: BrowserOssSource | null;
-  viewUrl?: string;
 }
 
 export interface ArtifactsContextType {
@@ -100,8 +99,7 @@ export function ArtifactsProvider({ children }: ArtifactsProviderProps) {
               currentSource?.browserOssSource?.ossUri ===
                 nextSource?.browserOssSource?.ossUri &&
               currentSource?.browserOssSource?.objectKey ===
-                nextSource?.browserOssSource?.objectKey &&
-              currentSource?.viewUrl === nextSource?.viewUrl
+                nextSource?.browserOssSource?.objectKey
             );
           });
 

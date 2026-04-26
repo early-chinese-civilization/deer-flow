@@ -28,7 +28,6 @@ import {
 } from "@/components/ui/input-group";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { resolveArtifactURL } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
 import { extractPresentFilesFromMessage } from "@/core/messages/utils";
 import type { ThreadRecord } from "@/core/threads";
@@ -44,6 +43,7 @@ import {
 import { addObservedWorkspaceFilesToList } from "@/core/uploads/cache";
 import { getFileIcon } from "@/core/utils/files";
 import { cn } from "@/lib/utils";
+import { getBrowserOssSource } from "@/core/oss";
 
 import { useArtifacts } from "./artifacts/context";
 import { useThread } from "./messages/context";
@@ -298,13 +298,11 @@ export function WorkspaceFilesPanel({
   const workspaceArtifactSources = useMemo(() => {
     const files = filesQuery.data?.files ?? [];
     return files
-      .map((file) => {
-        return {
-          filepath: file.virtual_path,
-          viewUrl: resolveArtifactURL(file.virtual_path, threadId),
-        };
-      });
-  }, [filesQuery.data?.files, threadId]);
+      .map((file) => ({
+        filepath: file.virtual_path,
+        browserOssSource: getBrowserOssSource(file),
+      }));
+  }, [filesQuery.data?.files]);
 
   useEffect(() => {
     setArtifactSourcesForThread(threadId, workspaceArtifactSources);

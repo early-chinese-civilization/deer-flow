@@ -109,14 +109,15 @@ export function ArtifactFileDetail({
     workspaceId,
     browserOssSource,
   );
+  const hasResolvedBrowserOssUrl = !browserOssSource || Boolean(resolvedOssUrl);
   const artifactViewUrl = browserOssSource
-    ? resolvedOssUrl ?? urlOfArtifact({ filepath, threadId, isMock })
-    : artifactSource?.viewUrl ?? urlOfArtifact({ filepath, threadId, isMock });
+    ? resolvedOssUrl
+    : urlOfArtifact({ filepath, threadId, isMock });
   const { content, url } = useArtifactContent({
     threadId,
     filepath: filepathFromProps,
-    enabled: isCodeFile && !isWriteFile,
-    urlOverride: browserOssSource ? resolvedOssUrl : artifactSource?.viewUrl,
+    enabled: isCodeFile && !isWriteFile && hasResolvedBrowserOssUrl,
+    urlOverride: browserOssSource ? resolvedOssUrl : undefined,
   });
 
   const displayContent = content ?? "";
@@ -246,12 +247,13 @@ export function ArtifactFileDetail({
             readonly
           />
         )}
-        {displayMode === "iframe-preview" && (
-          <iframe
-            className="size-full"
-            src={artifactViewUrl}
-          />
-        )}
+        {displayMode === "iframe-preview" &&
+          hasResolvedBrowserOssUrl && (
+            <iframe
+              className="size-full"
+              src={artifactViewUrl}
+            />
+          )}
         {displayMode === "unsupported-preview" && (
           <ArtifactUnsupportedPreview
             fileType={getFileExtensionDisplayName(filepath)}
