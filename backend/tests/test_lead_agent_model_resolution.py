@@ -136,7 +136,27 @@ def test_build_middlewares_uses_resolved_model_name_for_vision(monkeypatch):
 
     assert any(isinstance(m, lead_agent_module.ViewImageMiddleware) for m in middlewares)
     # verify the custom middleware is injected correctly
-    assert len(middlewares) > 0 and isinstance(middlewares[-2], MagicMock)
+    assert len(middlewares) > 0 and isinstance(middlewares[-3], MagicMock)
+
+
+def test_build_middlewares_inserts_file_reference_before_clarification(monkeypatch):
+    app_config = MagicMock()
+    app_config.get_model_config.return_value = MagicMock(supports_vision=False)
+    app_config.token_usage.enabled = False
+    app_config.tool_search.enabled = False
+
+    monkeypatch.setattr(lead_agent_module, "get_app_config", lambda: app_config)
+    monkeypatch.setattr(lead_agent_module, "build_lead_runtime_middlewares", lambda lazy_init=True: [])
+    monkeypatch.setattr(lead_agent_module, "_create_summarization_middleware", lambda: None)
+    monkeypatch.setattr(lead_agent_module, "_create_todo_list_middleware", lambda is_plan_mode: None)
+
+    middlewares = lead_agent_module._build_middlewares(
+        {"configurable": {"is_plan_mode": False, "subagent_enabled": False}},
+        model_name="safe-model",
+    )
+
+    mw_types = [type(m).__name__ for m in middlewares]
+    assert mw_types[-2:] == ["FileReferenceMiddleware", "ClarificationMiddleware"]
 
 
 def test_create_summarization_middleware_uses_configured_model_alias(monkeypatch):

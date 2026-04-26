@@ -33,6 +33,7 @@ from deerflow.uploads import (
     OSSStorageBackend,
     claim_unique_filename,
     normalize_filename,
+    oss_object_uri,
     workspace_object_key,
     workspace_root_prefix,
 )
@@ -51,6 +52,7 @@ class WorkspaceFileResponse(BaseModel):
     artifact_url: str | None = None
     object_key: str
     signed_url: str | None = None
+    oss_uri: str | None = None
     modified: int | None = None
     extension: str | None = None
     markdown_file: str | None = None
@@ -59,6 +61,7 @@ class WorkspaceFileResponse(BaseModel):
     markdown_artifact_url: str | None = None
     markdown_object_key: str | None = None
     markdown_signed_url: str | None = None
+    markdown_oss_uri: str | None = None
 
 
 class FileTreeNode(BaseModel):
@@ -76,6 +79,7 @@ class FileTreeNode(BaseModel):
     artifact_url: str | None = None
     object_key: str | None = None
     signed_url: str | None = None
+    oss_uri: str | None = None
     extension: str | None = None
     markdown_file: str | None = None
     markdown_path: str | None = None
@@ -83,6 +87,7 @@ class FileTreeNode(BaseModel):
     markdown_artifact_url: str | None = None
     markdown_object_key: str | None = None
     markdown_signed_url: str | None = None
+    markdown_oss_uri: str | None = None
 
 
 class UploadResponse(BaseModel):
@@ -134,6 +139,13 @@ class UploadFinalizeRequest(BaseModel):
     filename: str = Field(min_length=1)
     object_key: str = Field(min_length=1)
     size: int | None = Field(default=None, ge=0)
+
+
+class DownloadUrlResponse(BaseModel):
+    """Presigned workspace download target."""
+
+    download_url: str
+    oss_uri: str
 
 
 def _require_authenticated_user(current_user: User | None) -> User:
@@ -344,6 +356,7 @@ def _build_file_tree(*, root_prefix: str, files: list[WorkspaceFileResponse]) ->
             markdown_artifact_url=file.markdown_artifact_url,
             markdown_object_key=file.markdown_object_key,
             markdown_signed_url=file.markdown_signed_url,
+            markdown_oss_uri=file.markdown_oss_uri,
         )
 
         if len(relative_path.parts) == 1:
@@ -487,6 +500,11 @@ async def upload_files(
         filenames=[filename for _, filename in normalized_files],
     )
 
+    task_inputs = [
+        ((file, normalized_filename), claimed_filename)
+        for (file, normalized_filename), claimed_filename in zip(normalized_files, claimed_filenames, strict=False)
+    ]
+
     tasks = [
         _process_single_file(
             file=file,
@@ -494,7 +512,7 @@ async def upload_files(
             root_prefix=root_prefix,
             workspace_id=workspace_id,
         )
-        for (file, _), claimed_filename in zip(normalized_files, claimed_filenames, strict=False)
+        for (file, _), claimed_filename in task_inputs
     ]
     logger.info(
         "Starting parallel upload processing for workspace %s: task_count=%s",
@@ -513,10 +531,16 @@ async def upload_files(
         if isinstance(result, Exception):
             if isinstance(result, HTTPException):
                 raise result
-            logger.error("Failed to process file %s: %s", files[i].filename, result)
+            (_file, normalized_filename), claimed_filename = task_inputs[i]
+            logger.error(
+                "Failed to process file %s (claimed=%s): %s",
+                normalized_filename,
+                claimed_filename,
+                result,
+            )
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to upload {files[i].filename}: {str(result)}",
+                detail=f"Failed to upload {claimed_filename}: {str(result)}",
             )
         if result is not None:
             uploaded_files.append(result)
@@ -817,6 +841,43 @@ async def get_workspace_file_content(
         media_type=content_type,
         filename=filename,
         content_disposition_type=disposition,
+    )
+
+
+@router.get("/download-url", response_model=DownloadUrlResponse)
+async def get_workspace_download_url(
+    workspace_id: str,
+    object_key: str = Query(..., description="OSS object key"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DownloadUrlResponse:
+    """Return a presigned OSS download URL for a workspace object."""
+    if not uses_oss_workspace_uploads():
+        raise HTTPException(status_code=400, detail="Presigned download URLs require OSS uploads")
+
+    _workspace, root_prefix = await _resolve_workspace_upload_root(
+        db=db,
+        workspace_id=workspace_id,
+        current_user=current_user,
+    )
+
+    normalized_object_key = object_key.strip("/")
+    if not _object_key_belongs_to_workspace(
+        object_key=normalized_object_key,
+        root_prefix=root_prefix,
+    ):
+        raise HTTPException(status_code=403, detail="Object key does not belong to this workspace")
+
+    try:
+        storage = OSSStorageBackend.from_app_config()
+        download_url, _expiration = storage.presign_get_object(key=normalized_object_key)
+    except Exception:
+        logger.exception("Failed to presign download URL for workspace %s", workspace_id)
+        raise HTTPException(status_code=500, detail="Failed to generate download URL") from None
+
+    return DownloadUrlResponse(
+        download_url=download_url,
+        oss_uri=oss_object_uri(storage.bucket, normalized_object_key),
     )
 
 

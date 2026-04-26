@@ -2,7 +2,7 @@
 
 ## 概述
 
-DeerFlow 后端提供了完整的文件上传功能，支持多文件上传，并自动将 Office 文档和 PDF 转换为 Markdown 格式。
+DeerFlow 后端提供了完整的文件上传功能，支持多文件上传，并自动将 Office 文档和 PDF 转换为 Markdown 格式。内部文件身份统一使用 `oss://...`，沙箱仍然只处理 `/mnt/user-data/...` 路径。上传通过 Gateway 生成的 presigned `PUT` URL 完成，下载和预览使用 presigned `GET` URL；LangGraph checkpoint/state 只持久化 `oss://`，需要发给模型时才生成临时 `https://` 链接。
 
 ## 功能特性
 
@@ -30,13 +30,13 @@ POST /api/threads/{thread_id}/uploads
     {
       "filename": "document.pdf",
       "size": 1234567,
-      "path": ".deer-flow/threads/{thread_id}/user-data/uploads/document.pdf",
+      "path": "uploads/document.pdf",
       "virtual_path": "/mnt/user-data/uploads/document.pdf",
-      "artifact_url": "/api/threads/{thread_id}/artifacts/mnt/user-data/uploads/document.pdf",
+      "oss_uri": "oss://demo-bucket/workspaces/{workspace_id}/uploads/document.pdf",
       "markdown_file": "document.md",
-      "markdown_path": ".deer-flow/threads/{thread_id}/user-data/uploads/document.md",
+      "markdown_path": "uploads/document.md",
       "markdown_virtual_path": "/mnt/user-data/uploads/document.md",
-      "markdown_artifact_url": "/api/threads/{thread_id}/artifacts/mnt/user-data/uploads/document.md"
+      "markdown_oss_uri": "oss://demo-bucket/workspaces/{workspace_id}/uploads/document.md"
     }
   ],
   "message": "Successfully uploaded 1 file(s)"
@@ -44,9 +44,14 @@ POST /api/threads/{thread_id}/uploads
 ```
 
 **路径说明：**
-- `path`: 实际文件系统路径（相对于 `backend/` 目录）
+- `path`: 相对文件路径（例如 `uploads/document.pdf`）
 - `virtual_path`: Agent 在沙箱中使用的虚拟路径
-- `artifact_url`: 前端通过 HTTP 访问文件的 URL
+- `oss_uri`: OSS 内部文件标识，作为权威文件身份保存
+
+**上传与访问：**
+- 上传使用 Gateway 签发的 presigned `PUT` URL
+- 下载和预览使用 Gateway 签发的 presigned `GET` URL
+- 沙箱只读写 `/mnt/user-data/...`，不解析 `oss://`
 
 ### 2. 列出已上传文件
 ```
@@ -60,9 +65,9 @@ GET /api/threads/{thread_id}/uploads/list
     {
       "filename": "document.pdf",
       "size": 1234567,
-      "path": ".deer-flow/threads/{thread_id}/user-data/uploads/document.pdf",
+      "path": "uploads/document.pdf",
       "virtual_path": "/mnt/user-data/uploads/document.pdf",
-      "artifact_url": "/api/threads/{thread_id}/artifacts/mnt/user-data/uploads/document.pdf",
+      "oss_uri": "oss://demo-bucket/workspaces/{workspace_id}/uploads/document.pdf",
       "extension": ".pdf",
       "modified": 1705997600.0
     }
@@ -116,7 +121,7 @@ You can read these files using the `read_file` tool with the paths shown above.
 
 ### 使用上传的文件
 
-Agent 在沙箱中运行，使用虚拟路径访问文件。Agent 可以直接使用 `read_file` 工具读取上传的文件：
+Agent 在沙箱中运行，使用虚拟路径访问文件。`oss://` 只用于内部状态和链接生成，Agent 读取文件时仍然使用 `/mnt/user-data/...` 路径：
 
 ```python
 # 读取原始 PDF（如果支持）
@@ -128,13 +133,12 @@ read_file(path="/mnt/user-data/uploads/document.md")
 
 **路径映射关系：**
 - Agent 使用：`/mnt/user-data/uploads/document.pdf`（虚拟路径）
-- 实际存储：`backend/.deer-flow/threads/{thread_id}/user-data/uploads/document.pdf`
-- 前端访问：`/api/threads/{thread_id}/artifacts/mnt/user-data/uploads/document.pdf`（HTTP URL）
+- OSS 身份：`oss://demo-bucket/workspaces/{workspace_id}/uploads/document.pdf`
+- 前端访问：presigned `GET` URL（短期有效）
 
 上传流程采用“线程目录优先”策略：
-- 先写入 `backend/.deer-flow/threads/{thread_id}/user-data/uploads/` 作为权威存储
 - 本地沙箱（`sandbox_id=local`）直接使用线程目录内容
-- 非本地沙箱会额外同步到 `/mnt/user-data/uploads/*`，确保运行时可见
+- 非本地沙箱只需要能解析 `/mnt/user-data/uploads/*`，不需要理解 `oss://`
 
 ## 测试示例
 

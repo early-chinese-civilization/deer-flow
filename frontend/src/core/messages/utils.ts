@@ -330,7 +330,9 @@ export function findToolCallResult(toolCallId: string, messages: Message[]) {
 export interface FileInMessage {
   filename: string;
   size: number; // bytes
-  path?: string; // virtual path, may not be set during upload
+  path: string; // canonical OSS URI when available
+  virtual_path?: string; // sandbox path used for artifact viewing
+  oss_uri?: string;
   status?: "uploading" | "uploaded";
 }
 
@@ -373,10 +375,12 @@ export function parseUploadedFiles(content: string): FileInMessage[] {
   let fileMatch;
 
   while ((fileMatch = fileRegex.exec(uploadedFilesContent ?? "")) !== null) {
+    const path = fileMatch[3].trim();
     files.push({
       filename: fileMatch[1].trim(),
       size: parseInt(fileMatch[2].trim(), 10) ?? 0,
-      path: fileMatch[3].trim(),
+      path,
+      virtual_path: path,
     });
   }
 

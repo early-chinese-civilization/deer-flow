@@ -16,7 +16,7 @@ from app.gateway.db.models import Workspace
 from app.gateway.db.repository import WorkspaceRepository
 from deerflow.config import get_app_config
 from deerflow.config.paths import get_paths
-from deerflow.uploads import OSSStorageBackend, oss_root_path, workspace_object_key, workspace_root_prefix
+from deerflow.uploads import OSSStorageBackend, oss_object_uri, oss_root_path, workspace_object_key, workspace_root_prefix
 
 
 @dataclass(frozen=True)
@@ -312,6 +312,7 @@ def build_workspace_file_response(
     markdown_signed_url: str | None = None,
 ) -> dict[str, object]:
     """Build the frontend-facing response payload for a workspace file."""
+    uploads_config = get_app_config().uploads
     artifact_url = _build_workspace_content_url(
         workspace_id=workspace_id,
         object_key=object_key,
@@ -321,12 +322,15 @@ def build_workspace_file_response(
     response: dict[str, object] = {
         "filename": filename,
         "size": size,
-        "path": virtual_path,
+        "path": relative_path,
         "virtual_path": virtual_path,
         "relative_path": relative_path,
         "artifact_url": artifact_url,
         "object_key": object_key,
         "signed_url": signed_url,
+        "oss_uri": oss_object_uri(uploads_config.oss.bucket, object_key)
+        if uploads_config.backend == "oss" and uploads_config.oss.bucket
+        else None,
         "modified": modified,
         "extension": Path(filename).suffix,
     }
@@ -337,7 +341,7 @@ def build_workspace_file_response(
         )
         markdown_virtual_path = _relative_path_to_virtual_path(markdown_relative_path)
         response["markdown_file"] = markdown_file
-        response["markdown_path"] = markdown_virtual_path
+        response["markdown_path"] = markdown_relative_path
         response["markdown_virtual_path"] = markdown_virtual_path
         response["markdown_artifact_url"] = (
             _build_workspace_content_url(
@@ -349,4 +353,9 @@ def build_workspace_file_response(
         )
         response["markdown_object_key"] = markdown_object_key
         response["markdown_signed_url"] = markdown_signed_url
+        response["markdown_oss_uri"] = (
+            oss_object_uri(uploads_config.oss.bucket, markdown_object_key)
+            if uploads_config.backend == "oss" and uploads_config.oss.bucket and markdown_object_key
+            else None
+        )
     return response
