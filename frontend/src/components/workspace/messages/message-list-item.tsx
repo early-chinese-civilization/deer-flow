@@ -18,7 +18,6 @@ import {
 } from "@/components/ai-elements/reasoning";
 import { Task, TaskTrigger } from "@/components/ai-elements/task";
 import { Badge } from "@/components/ui/badge";
-import { resolveArtifactURL } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
 import {
   extractContentFromMessage,
@@ -82,11 +81,9 @@ export function MessageListItem({
 function MessageImage({
   src,
   alt,
-  threadId,
   maxWidth = "90%",
   ...props
 }: React.ImgHTMLAttributes<HTMLImageElement> & {
-  threadId: string;
   maxWidth?: string;
 }) {
   if (!src) return null;
@@ -97,11 +94,13 @@ function MessageImage({
     return <img className={imgClassName} src={src} alt={alt} {...props} />;
   }
 
-  const url = src.startsWith("/mnt/") ? resolveArtifactURL(src, threadId) : src;
+  if (src.startsWith("/mnt/")) {
+    return <img className={imgClassName} src={src} alt={alt} {...props} />;
+  }
 
   return (
-    <a href={url} target="_blank" rel="noopener noreferrer">
-      <img className={imgClassName} src={url} alt={alt} {...props} />
+    <a href={src} target="_blank" rel="noopener noreferrer">
+      <img className={imgClassName} src={src} alt={alt} {...props} />
     </a>
   );
 }
@@ -121,10 +120,10 @@ function MessageContent_({
   const components = useMemo(
     () => ({
       img: (props: ImgHTMLAttributes<HTMLImageElement>) => (
-        <MessageImage {...props} threadId={thread_id} maxWidth="90%" />
+        <MessageImage {...props} maxWidth="90%" />
       ),
     }),
-    [thread_id],
+    [],
   );
 
   const rawContent = extractContentFromMessage(message);
