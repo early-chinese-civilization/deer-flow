@@ -259,6 +259,19 @@ sandbox:
 
 When you configure `sandbox.mounts`, DeerFlow exposes those `container_path` values in the agent prompt so the agent can discover and operate on mounted directories directly instead of assuming everything must live under `/mnt/user-data`.
 
+### Local OSS-backed Workspaces
+
+For local development, you can mount an OSS bucket prefix onto the host workspace directory and keep DeerFlow's sandbox paths unchanged.
+
+Recommended layout:
+
+- Host mount point: `backend/.deer-flow/workspaces`
+- OSS prefix: `workspaces/`
+- Workspace directory layout: `backend/.deer-flow/workspaces/<workspace_id>/workspace`, `uploads`, `outputs`
+- Sandbox paths: unchanged (`/mnt/user-data/workspace`, `/mnt/user-data/uploads`, `/mnt/user-data/outputs`)
+
+With this setup, `make dev` continues to work normally, and any file written by the sandbox to `/mnt/user-data/workspace` is persisted through the host OSSFS mount.
+
 ### Skills
 
 Configure the skills directory for specialized workflows:

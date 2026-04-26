@@ -3,8 +3,8 @@
 ## 文档说明
 
 - 生成日期：2026-04-09
-- 数据源：项目根目录 `.env` 中的 `DATABASE_URL` 与 `DEER_FLOW_CHECKPOINTER_DATABASE_URL`
-- 范围：仅整理两个 PostgreSQL 数据库的 `public` schema
+- 数据源：项目根目录 `.env` 中的 `DATABASE_URL`、`DEER_FLOW_CHECKPOINTER_DATABASE_URL` 与 `DEER_FLOW_DB_SCHEMA`
+- 范围：仅整理 DeerFlow 使用的 PostgreSQL schema（默认写入 `DEER_FLOW_DB_SCHEMA` 指定的 schema）
 - 快照属性：本文档反映生成当日的真实库结构，后续表结构变化不会自动同步到本文档
 - 交叉校对来源：
   - `flow` 章节结合 `backend/app/gateway/db/models.py` 与 Alembic 迁移定义整理

@@ -20,15 +20,9 @@ class TestThreadDataMiddleware:
         assert result is not None
         assert result["thread_data"]["thread_id"] == "thread-123"
         assert result["thread_data"]["workspace_id"] == "workspace-123"
-        assert _as_posix(result["thread_data"]["workspace_path"]).endswith(
-            "workspaces/workspace-123/user-data/workspace"
-        )
-        assert _as_posix(result["thread_data"]["uploads_path"]).endswith(
-            "workspaces/workspace-123/user-data/uploads"
-        )
-        assert _as_posix(result["thread_data"]["outputs_path"]).endswith(
-            "workspaces/workspace-123/user-data/outputs"
-        )
+        assert _as_posix(result["thread_data"]["workspace_path"]).endswith("workspaces/workspace-123/workspace")
+        assert _as_posix(result["thread_data"]["uploads_path"]).endswith("workspaces/workspace-123/uploads")
+        assert _as_posix(result["thread_data"]["outputs_path"]).endswith("workspaces/workspace-123/outputs")
 
     def test_before_agent_falls_back_to_thread_id_as_workspace_id(self, tmp_path):
         middleware = ThreadDataMiddleware(base_dir=str(tmp_path), lazy_init=True)
@@ -38,9 +32,7 @@ class TestThreadDataMiddleware:
         assert result is not None
         assert result["thread_data"]["thread_id"] == "thread-123"
         assert result["thread_data"]["workspace_id"] == "thread-123"
-        assert _as_posix(result["thread_data"]["workspace_path"]).endswith(
-            "workspaces/thread-123/user-data/workspace"
-        )
+        assert _as_posix(result["thread_data"]["workspace_path"]).endswith("workspaces/thread-123/workspace")
 
     def test_before_agent_uses_workspace_id_from_configurable_when_context_is_none(self, tmp_path, monkeypatch):
         middleware = ThreadDataMiddleware(base_dir=str(tmp_path), lazy_init=True)
@@ -55,7 +47,7 @@ class TestThreadDataMiddleware:
         assert result is not None
         assert result["thread_data"]["thread_id"] == "thread-from-config"
         assert _as_posix(result["thread_data"]["workspace_path"]).endswith(
-            "workspaces/workspace-from-config/user-data/workspace"
+            "workspaces/workspace-from-config/workspace"
         )
         assert runtime.context is None
 
@@ -71,9 +63,7 @@ class TestThreadDataMiddleware:
 
         assert result is not None
         assert result["thread_data"]["workspace_id"] == "thread-from-config"
-        assert _as_posix(result["thread_data"]["uploads_path"]).endswith(
-            "workspaces/thread-from-config/user-data/uploads"
-        )
+        assert _as_posix(result["thread_data"]["uploads_path"]).endswith("workspaces/thread-from-config/uploads")
         assert runtime.context == {}
 
     def test_before_agent_raises_clear_error_when_workspace_and_thread_missing_everywhere(self, tmp_path, monkeypatch):

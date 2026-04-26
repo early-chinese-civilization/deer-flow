@@ -257,6 +257,7 @@ If you prefer running services locally:
 
 Prerequisite: complete the "Configuration" steps above first (`make config` and model API keys). `make dev` requires a valid configuration file (defaults to `config.yaml` in the project root; can be overridden via `DEER_FLOW_CONFIG_PATH`).
 When using `AioSandboxProvider` with a provisioner during local development, set `DEER_FLOW_SANDBOX_PROVISIONER_URL=http://localhost:8002` in the root `.env`. Do not use `http://provisioner:8002` for `make dev` because that hostname only exists inside Docker Compose.
+If you want sandbox writes to persist in OSS during local development, mount the OSS `workspaces/` prefix on the host to `backend/.deer-flow/workspaces` with `ossfs` before starting `make dev`. The sandbox paths stay the same (`/mnt/user-data/workspace`, `/mnt/user-data/uploads`, `/mnt/user-data/outputs`); only the host-side storage backing changes.
 On Windows, run the local development flow from Git Bash. Native `cmd.exe` and PowerShell shells are not supported for the bash-based service scripts, and WSL is not guaranteed because some scripts rely on Git for Windows utilities such as `cygpath`.
 
 1. **Check prerequisites**:

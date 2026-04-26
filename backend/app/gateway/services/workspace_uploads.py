@@ -61,8 +61,8 @@ def _build_markdown_relative_path(*, relative_path: str, markdown_file: str) -> 
 
 
 def _workspace_root_dir(workspace_id: str) -> Path:
-    """Return the shared `user-data` root directory for a workspace."""
-    return get_paths().workspace_user_data_dir(workspace_id)
+    """Return the shared root directory for a workspace."""
+    return get_paths().workspace_dir(workspace_id)
 
 
 def uses_oss_workspace_uploads() -> bool:
@@ -135,7 +135,7 @@ def build_workspace_root_path(root_prefix: str) -> str:
     uploads_config = get_app_config().uploads
     if uploads_config.backend == "oss" and uploads_config.oss.bucket:
         return oss_root_path(uploads_config.oss.bucket, root_prefix)
-    return str((get_paths().shared_fs_root / root_prefix / "user-data").resolve())
+    return str((get_paths().shared_fs_root / root_prefix).resolve())
 
 
 def build_workspace_object_key(root_prefix: str, filename: str, subdir: str | None = None) -> str:
