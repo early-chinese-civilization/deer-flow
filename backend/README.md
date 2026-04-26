@@ -80,6 +80,13 @@ Per-thread isolated execution with virtual path translation:
 - **File-write safety**: `str_replace` serializes read-modify-write per `(sandbox.id, path)` so isolated sandboxes keep concurrency even when virtual paths match
 - **Tools**: `bash`, `ls`, `read_file`, `write_file`, `str_replace` (`bash` is disabled by default when using `LocalSandboxProvider`; use `AioSandboxProvider` for isolated shell access)
 
+### OSS File Protocol
+
+- `oss://...` is the canonical internal file identity persisted in thread state and LangGraph checkpoints.
+- The Gateway uses presigned `PUT` URLs for uploads and presigned `GET` URLs for downloads/previews.
+- Sandbox execution still works with `/mnt/user-data/...` filesystem paths and does not parse `oss://`.
+- LangGraph state keeps `oss://` references and regenerates temporary `https://` links only when content crosses the model boundary.
+
 ### Subagent System
 
 Async task delegation with concurrent execution:
@@ -128,7 +135,7 @@ FastAPI application providing REST endpoints for frontend integration:
 | `GET /api/workspaces/{workspace_id}/uploads/list` | List workspace files |
 | `DELETE /api/workspaces/{workspace_id}/uploads` | Delete a workspace file by JSON body (`filename`, optional `object_key`) |
 | `DELETE /api/threads/{id}` | Delete DeerFlow-managed local thread data after LangGraph thread deletion; unexpected failures are logged server-side and return a generic 500 detail |
-| `GET /api/threads/{id}/artifacts/{path}` | Serve generated artifacts, but only after authenticated thread ownership checks |
+| `GET /api/threads/{id}/artifacts/{path}` | Serve generated artifacts through authenticated ownership checks and short-lived download links |
 | `POST /api/threads/{id}/suggestions` | Generate follow-up suggestions for an owned thread; request body content does not bypass `thread_id` authorization |
 | `POST /api/runs/{stream,wait}` | Authenticated stateless runs; reusing `thread_id` requires ownership and missing `thread_id` creates a user-bound temporary thread first, then cleans up its thread/workspace/checkpoint/store resources on completion by default. Gateway-backed runs overwrite protected runtime context (`thread_id` and user identity) from server-side auth/ownership state before invoking the agent, scrub runtime-only flags like `is_bootstrap` from caller config, preserve client-selected custom agent routing via `configurable.agent_name`, mirror the resolved custom agent back into the canonical thread row (`threads.agent_id`, plus `metadata.agent_name` when available), and only expose a sanitized run config back through run records |
 

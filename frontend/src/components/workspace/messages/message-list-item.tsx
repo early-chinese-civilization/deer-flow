@@ -319,9 +319,10 @@ function RichFileCard({
     );
   }
 
-  if (!file.path) return null;
+  const filePath = file.virtual_path ?? null;
+  if (!filePath) return null;
 
-  const fileUrl = resolveArtifactURL(file.path, threadId);
+  const fileUrl = resolveArtifactURL(filePath, threadId);
 
   if (isImage) {
     return (

@@ -21,6 +21,23 @@ class ViewedImageData(TypedDict):
     mime_type: str
 
 
+class WorkspaceFileState(TypedDict):
+    filename: str
+    size: int
+    path: str
+    virtual_path: str
+    oss_uri: str
+    object_key: str
+    extension: NotRequired[str | None]
+    modified: NotRequired[int | None]
+    original_filename: NotRequired[str]
+    markdown_file: NotRequired[str | None]
+    markdown_path: NotRequired[str | None]
+    markdown_virtual_path: NotRequired[str | None]
+    markdown_object_key: NotRequired[str | None]
+    markdown_oss_uri: NotRequired[str | None]
+
+
 def merge_artifacts(existing: list[str] | None, new: list[str] | None) -> list[str]:
     """Reducer for artifacts list - merges and deduplicates artifacts."""
     if existing is None:
@@ -54,5 +71,5 @@ class ThreadState(AgentState):
     title: NotRequired[str | None]
     artifacts: Annotated[list[str], merge_artifacts]
     todos: NotRequired[list | None]
-    uploaded_files: NotRequired[list[dict] | None]
+    uploaded_files: NotRequired[list[WorkspaceFileState] | None]
     viewed_images: Annotated[dict[str, ViewedImageData], merge_viewed_images]  # image_path -> {base64, mime_type}

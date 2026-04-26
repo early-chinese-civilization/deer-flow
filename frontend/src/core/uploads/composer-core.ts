@@ -17,6 +17,14 @@ export type RetryableComposerUploadAttachment = ComposerUploadAttachment & {
   uploadError?: string | null;
 };
 
+export function getCanonicalUploadedFilePath(file: UploadedFileInfo): string {
+  if (!file.oss_uri) {
+    throw new Error("Uploaded file is missing oss uri.");
+  }
+
+  return file.oss_uri;
+}
+
 export function hasBlockingAttachmentUploads(
   attachments: ComposerUploadAttachment[],
 ): boolean {
@@ -35,7 +43,9 @@ export function buildMessageFilesFromAttachments(
       {
         filename: attachment.uploadedFile.filename,
         size: attachment.uploadedFile.size,
-        path: attachment.uploadedFile.virtual_path,
+        path: getCanonicalUploadedFilePath(attachment.uploadedFile),
+        virtual_path: attachment.uploadedFile.virtual_path,
+        oss_uri: attachment.uploadedFile.oss_uri,
         status: "uploaded" as const,
       },
     ];

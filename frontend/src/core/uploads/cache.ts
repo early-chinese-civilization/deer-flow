@@ -166,9 +166,11 @@ function buildObservedWorkspaceFile(
     virtual_path: virtualPath,
     relative_path: relativePath,
     artifact_url: null,
+    oss_uri: null,
     object_key: `virtual:${relativePath}`,
     signed_url: null,
     extension: extensionIndex >= 0 ? filename.slice(extensionIndex) : null,
+    markdown_oss_uri: null,
   };
 }
 
@@ -239,6 +241,7 @@ function buildFileTree(files: UploadedFileInfo[]): FileTreeNode[] {
       filename: file.filename,
       virtual_path: file.virtual_path,
       artifact_url: file.artifact_url,
+      oss_uri: file.oss_uri,
       object_key: file.object_key,
       signed_url: file.signed_url,
       extension: file.extension,
@@ -246,6 +249,7 @@ function buildFileTree(files: UploadedFileInfo[]): FileTreeNode[] {
       markdown_path: file.markdown_path,
       markdown_virtual_path: file.markdown_virtual_path,
       markdown_artifact_url: file.markdown_artifact_url,
+      markdown_oss_uri: file.markdown_oss_uri,
       markdown_object_key: file.markdown_object_key,
       markdown_signed_url: file.markdown_signed_url,
     };
