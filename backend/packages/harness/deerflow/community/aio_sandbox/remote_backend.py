@@ -118,7 +118,7 @@ class RemoteSandboxBackend(SandboxBackend):
                 "/mnt/user-data",
                 "/tmp/ossfs2-workspaces.conf",
                 "/tmp/ossfs2-log/workspaces",
-                self._mount_prefix(f"workspaces/{workspace_id}/user-data"),
+                self._mount_prefix(f"workspaces/{workspace_id}"),
             )
         )
 
@@ -210,6 +210,12 @@ class RemoteSandboxBackend(SandboxBackend):
                 "--file_mode=0777" \\
                 "--dir_mode=0777" \\
                 "--allow_other=true" \\
+                "" \\
+                "--attr_timeout=1" \\
+                "--negative_timeout=0" \\
+                "--kernel_readdir_cache_timeout=0" \\
+                "--close_to_open=true" \\
+                "--oss_negative_cache_timeout=0" \\
                 "" \\
                 "--log_level=info" \\
                 "--log_dir=$log_dir" \\
