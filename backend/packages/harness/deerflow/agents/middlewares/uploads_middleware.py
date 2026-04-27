@@ -79,6 +79,7 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
                 lines.append("")
 
         lines.append("Use the `virtual_path` values with the `read_file` and `view_image` tools.")
+        lines.append("When referencing files in your final response, prefer `oss_uri` so the client can render presigned URLs.")
         lines.append("</uploaded_files>")
 
         return "\n".join(lines)

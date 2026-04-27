@@ -26,7 +26,11 @@ import {
   stripUploadedFilesTag,
   type FileInMessage,
 } from "@/core/messages/utils";
-import { getBrowserOssSource, useResolvedOssUrl } from "@/core/oss";
+import {
+  getBrowserOssSource,
+  getBrowserOssSourceFromOssUri,
+  useResolvedOssUrl,
+} from "@/core/oss";
 import { useRehypeSplitWordsIntoSpans } from "@/core/rehype";
 import { humanMessagePlugins } from "@/core/streamdown";
 import { cn } from "@/lib/utils";
@@ -88,10 +92,28 @@ function MessageImage({
 }) {
   if (!src) return null;
 
+  const { workspaceId } = useThread();
+  const ossSource =
+    typeof src === "string" && src.startsWith("oss://")
+      ? getBrowserOssSourceFromOssUri(src)
+      : null;
+  const { data: ossUrl } = useResolvedOssUrl(workspaceId, ossSource);
   const imgClassName = cn("overflow-hidden rounded-lg", `max-w-[${maxWidth}]`);
 
   if (typeof src !== "string") {
     return <img className={imgClassName} src={src} alt={alt} {...props} />;
+  }
+
+  if (ossSource && !ossUrl) {
+    return null;
+  }
+
+  if (ossUrl) {
+    return (
+      <a href={ossUrl} target="_blank" rel="noopener noreferrer">
+        <img className={imgClassName} src={ossUrl} alt={alt} {...props} />
+      </a>
+    );
   }
 
   if (src.startsWith("/mnt/")) {

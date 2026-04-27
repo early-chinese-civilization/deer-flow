@@ -4,6 +4,9 @@ import test from "node:test";
 const { getBrowserOssSource } = await import(
   new URL("./source.ts", import.meta.url).href
 );
+const { getBrowserOssSourceFromOssUri } = await import(
+  new URL("./source.ts", import.meta.url).href
+);
 
 void test("maps a file-like object to a browser oss source only when complete", () => {
   assert.deepEqual(
@@ -32,4 +35,17 @@ void test("maps a file-like object to a browser oss source only when complete", 
     }),
     null,
   );
+});
+
+void test("parses an oss uri into a browser oss source", () => {
+  assert.deepEqual(
+    getBrowserOssSourceFromOssUri(
+      "oss://demo-bucket/workspaces/ws-123/uploads/photo%20(1).png",
+    ),
+    {
+      ossUri: "oss://demo-bucket/workspaces/ws-123/uploads/photo%20(1).png",
+      objectKey: "workspaces/ws-123/uploads/photo (1).png",
+    },
+  );
+  assert.equal(getBrowserOssSourceFromOssUri("https://example.test"), null);
 });

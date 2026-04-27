@@ -19,6 +19,9 @@ class ThreadDataState(TypedDict):
 class ViewedImageData(TypedDict):
     base64: str
     mime_type: str
+    virtual_path: NotRequired[str]
+    oss_uri: NotRequired[str]
+    object_key: NotRequired[str]
 
 
 class WorkspaceFileState(TypedDict):

@@ -8,6 +8,29 @@ export interface FileLikeOssSource {
   object_key?: string | null;
 }
 
+function splitOssUri(ossUri: string): { ossUri: string; objectKey: string } | null {
+  if (!ossUri.startsWith("oss://")) {
+    return null;
+  }
+
+  const withoutScheme = ossUri.slice("oss://".length);
+  const firstSlash = withoutScheme.indexOf("/");
+  if (firstSlash < 0) {
+    return null;
+  }
+
+  const bucket = withoutScheme.slice(0, firstSlash);
+  const objectKey = decodeURIComponent(withoutScheme.slice(firstSlash + 1));
+  if (!bucket || !objectKey) {
+    return null;
+  }
+
+  return {
+    ossUri,
+    objectKey,
+  };
+}
+
 export function getBrowserOssSource(
   file: FileLikeOssSource,
 ): BrowserOssSource | null {
@@ -19,4 +42,14 @@ export function getBrowserOssSource(
     ossUri: file.oss_uri,
     objectKey: file.object_key,
   };
+}
+
+export function getBrowserOssSourceFromOssUri(
+  ossUri: string | null | undefined,
+): BrowserOssSource | null {
+  if (!ossUri) {
+    return null;
+  }
+
+  return splitOssUri(ossUri);
 }
