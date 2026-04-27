@@ -1,11 +1,14 @@
 export interface BrowserOssSource {
   ossUri: string;
   objectKey: string;
+  httpUri?: string | null;
 }
 
 export interface FileLikeOssSource {
   oss_uri?: string | null;
   object_key?: string | null;
+  http_uri?: string | null;
+  artifact_url?: string | null;
 }
 
 function splitOssUri(ossUri: string): { ossUri: string; objectKey: string } | null {
@@ -41,6 +44,7 @@ export function getBrowserOssSource(
   return {
     ossUri: file.oss_uri,
     objectKey: file.object_key,
+    httpUri: file.http_uri ?? file.artifact_url ?? null,
   };
 }
 

@@ -21,6 +21,7 @@ class ViewedImageData(TypedDict):
     mime_type: str
     virtual_path: NotRequired[str]
     oss_uri: NotRequired[str]
+    http_uri: NotRequired[str | None]
     object_key: NotRequired[str]
 
 
@@ -30,6 +31,7 @@ class WorkspaceFileState(TypedDict):
     path: str
     virtual_path: str
     oss_uri: str
+    http_uri: NotRequired[str | None]
     object_key: str
     extension: NotRequired[str | None]
     modified: NotRequired[int | None]
@@ -39,6 +41,7 @@ class WorkspaceFileState(TypedDict):
     markdown_virtual_path: NotRequired[str | None]
     markdown_object_key: NotRequired[str | None]
     markdown_oss_uri: NotRequired[str | None]
+    markdown_http_uri: NotRequired[str | None]
 
 
 def merge_artifacts(existing: list[str] | None, new: list[str] | None) -> list[str]:

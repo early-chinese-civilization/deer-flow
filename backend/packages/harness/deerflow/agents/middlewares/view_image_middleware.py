@@ -119,14 +119,17 @@ class ViewImageMiddleware(AgentMiddleware[ViewImageMiddlewareState]):
         for image_path, image_data in viewed_images.items():
             mime_type = image_data.get("mime_type", "unknown")
             base64_data = image_data.get("base64", "")
+            http_uri = image_data.get("http_uri")
             oss_uri = image_data.get("oss_uri")
             virtual_path = image_data.get("virtual_path")
-            display_path = oss_uri or image_path
+            display_path = http_uri or oss_uri or image_path
 
             # Add text description
             content_blocks.append({"type": "text", "text": f"\n- **{display_path}** ({mime_type})"})
             if virtual_path and virtual_path != display_path:
                 content_blocks.append({"type": "text", "text": f"  virtual_path: {virtual_path}"})
+            if http_uri and http_uri != display_path:
+                content_blocks.append({"type": "text", "text": f"  http_uri: {http_uri}"})
             if oss_uri and oss_uri != display_path:
                 content_blocks.append({"type": "text", "text": f"  oss_uri: {oss_uri}"})
 

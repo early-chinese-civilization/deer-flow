@@ -25,6 +25,7 @@ import { StreamingIndicator } from "../streaming-indicator";
 
 import { MarkdownContent } from "./markdown-content";
 import { MessageGroup } from "./message-group";
+import { useThread } from "./context";
 import { MessageListItem } from "./message-list-item";
 import { MessageListSkeleton } from "./skeleton";
 import { SubtaskCard } from "./subtask-card";
@@ -41,6 +42,7 @@ export function MessageList({
   paddingBottom?: number;
 }) {
   const { t } = useI18n();
+  const { workspaceId } = useThread();
   const rehypePlugins = useRehypeSplitWordsIntoSpans(thread.isLoading);
   const updateSubtask = useUpdateSubtask();
   const messages = thread.messages;
@@ -72,6 +74,7 @@ export function MessageList({
                   content={extractContentFromMessage(message)}
                   isLoading={thread.isLoading}
                   rehypePlugins={rehypePlugins}
+                  workspaceId={workspaceId}
                 />
               );
             }
@@ -92,6 +95,7 @@ export function MessageList({
                     isLoading={thread.isLoading}
                     rehypePlugins={rehypePlugins}
                     className="mb-4"
+                    workspaceId={workspaceId}
                   />
                 )}
                 <ArtifactFileList files={files} threadId={threadId} />

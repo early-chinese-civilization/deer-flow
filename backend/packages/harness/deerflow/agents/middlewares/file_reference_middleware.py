@@ -1,17 +1,14 @@
-"""Middleware for rewriting OSS references before the model call."""
+"""Middleware for preserving canonical OSS references before the model call."""
 
 from __future__ import annotations
 
 import re
 from typing import Any, override
-from urllib.parse import unquote, urlsplit
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import BaseMessage
 from langgraph.runtime import Runtime
-
-from deerflow.uploads import OSSStorageBackend
 
 _OSS_URI_RE = re.compile(r"oss://[^\s<>'\")]+")
 
@@ -20,27 +17,8 @@ class FileReferenceMiddlewareState(AgentState):
     """Compatible with the `ThreadState` schema."""
 
 
-def _split_oss_uri(oss_uri: str) -> tuple[str, str] | None:
-    parts = urlsplit(oss_uri)
-    if parts.scheme != "oss" or not parts.netloc:
-        return None
-
-    object_key = unquote(parts.path.lstrip("/"))
-    if not object_key:
-        return None
-
-    return parts.netloc, object_key
-
-
 def _presign_oss_uri(oss_uri: str) -> str:
-    split = _split_oss_uri(oss_uri)
-    if split is None:
-        return oss_uri
-
-    _bucket, object_key = split
-    storage = OSSStorageBackend.from_app_config()
-    presigned_url, _expiration = storage.presign_get_object(key=object_key)
-    return presigned_url
+    return oss_uri
 
 
 def _strip_trailing_punctuation(uri: str) -> tuple[str, str]:
@@ -70,7 +48,7 @@ def _rewrite_content(content: Any) -> Any:
 
 
 class FileReferenceMiddleware(AgentMiddleware[FileReferenceMiddlewareState]):
-    """Rewrite oss:// references into fresh presigned URLs just before model invocation."""
+    """Keep oss:// references intact for downstream runtime resolution."""
 
     state_schema = FileReferenceMiddlewareState
 

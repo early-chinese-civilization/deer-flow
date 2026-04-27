@@ -7,6 +7,10 @@ import {
   MessageResponse,
   type MessageResponseProps,
 } from "@/components/ai-elements/message";
+import {
+  rewriteMarkdownImageUrls,
+  useResolvedOssUrlMap,
+} from "@/core/messages/oss-image";
 import { streamdownPlugins } from "@/core/streamdown";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +25,7 @@ export type MarkdownContentProps = {
   isLoading: boolean;
   rehypePlugins: MessageResponseProps["rehypePlugins"];
   className?: string;
+  workspaceId?: string | null;
   remarkPlugins?: MessageResponseProps["remarkPlugins"];
   components?: MessageResponseProps["components"];
 };
@@ -28,11 +33,22 @@ export type MarkdownContentProps = {
 /** Renders markdown content. */
 export function MarkdownContent({
   content,
+  isLoading,
   rehypePlugins,
   className,
+  workspaceId,
   remarkPlugins = streamdownPlugins.remarkPlugins,
   components: componentsFromProps,
 }: MarkdownContentProps) {
+  const effectiveRemarkPlugins = (
+    remarkPlugins ?? streamdownPlugins.remarkPlugins ?? []
+  ) as NonNullable<MessageResponseProps["remarkPlugins"]>;
+  const resolvedOssUrlMap = useResolvedOssUrlMap(workspaceId, isLoading ? "" : content);
+  const renderedContent = useMemo(
+    () => rewriteMarkdownImageUrls(content, resolvedOssUrlMap),
+    [content, resolvedOssUrlMap],
+  );
+
   const components = useMemo(() => {
     return {
       a: (props: AnchorHTMLAttributes<HTMLAnchorElement>) => {
@@ -44,7 +60,10 @@ export function MarkdownContent({
           }
         }
         const { className, target, rel, ...rest } = props;
-        const external = isExternalUrl(props.href);
+        const resolvedHref =
+          (typeof props.href === "string" && resolvedOssUrlMap[props.href]) ||
+          props.href;
+        const external = isExternalUrl(resolvedHref);
         return (
           <a
             {...rest}
@@ -52,6 +71,7 @@ export function MarkdownContent({
               "text-primary decoration-primary/30 hover:decoration-primary/60 underline underline-offset-2 transition-colors",
               className,
             )}
+            href={resolvedHref}
             target={target ?? (external ? "_blank" : undefined)}
             rel={rel ?? (external ? "noopener noreferrer" : undefined)}
           />
@@ -59,18 +79,18 @@ export function MarkdownContent({
       },
       ...componentsFromProps,
     };
-  }, [componentsFromProps]);
+  }, [componentsFromProps, resolvedOssUrlMap]);
 
   if (!content) return null;
 
   return (
     <MessageResponse
       className={className}
-      remarkPlugins={remarkPlugins}
+      remarkPlugins={effectiveRemarkPlugins}
       rehypePlugins={rehypePlugins}
       components={components}
     >
-      {content}
+      {renderedContent}
     </MessageResponse>
   );
 }

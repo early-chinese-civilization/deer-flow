@@ -2,7 +2,6 @@ from types import SimpleNamespace
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from deerflow.agents.middlewares import file_reference_middleware as file_reference_middleware_module
 from deerflow.agents.middlewares.file_reference_middleware import FileReferenceMiddleware
 from deerflow.agents.middlewares.uploads_middleware import UploadsMiddleware
 
@@ -40,6 +39,7 @@ def test_uploads_middleware_persists_canonical_oss_file_identity(tmp_path):
     assert file_entry["path"] == payload["path"]
     assert file_entry["virtual_path"] == payload["virtual_path"]
     assert file_entry["object_key"] == payload["object_key"]
+    assert file_entry["http_uri"] == payload["artifact_url"]
     assert "artifact_url" not in file_entry
     assert "signed_url" not in file_entry
 
@@ -100,17 +100,13 @@ def test_uploads_middleware_sanitizes_existing_state_entries(tmp_path):
     assert file_entry["virtual_path"] == existing_entry["virtual_path"]
     assert file_entry["path"] == existing_entry["path"]
     assert file_entry["object_key"] == existing_entry["object_key"]
+    assert file_entry["http_uri"] == existing_entry["artifact_url"]
     assert "artifact_url" not in file_entry
     assert "signed_url" not in file_entry
 
 
-def test_file_reference_middleware_rewrites_all_oss_references(monkeypatch):
+def test_file_reference_middleware_preserves_all_oss_references():
     middleware = FileReferenceMiddleware()
-
-    def _fake_presign(oss_uri: str) -> str:
-        return f"https://signed.example/{oss_uri.removeprefix('oss://')}"
-
-    monkeypatch.setattr(file_reference_middleware_module, "_presign_oss_uri", _fake_presign)
 
     state = {
         "messages": [
@@ -122,9 +118,4 @@ def test_file_reference_middleware_rewrites_all_oss_references(monkeypatch):
 
     result = middleware.before_model(state, runtime)
 
-    assert result is not None
-    assert len(result["messages"]) == 2
-    assert "https://signed.example/demo-bucket/workspaces/ws/uploads/policy.md" in result["messages"][0].content
-    assert "https://signed.example/demo-bucket/workspaces/ws/uploads/report.md" in result["messages"][1].content
-    assert "oss://" not in result["messages"][0].content
-    assert "oss://" not in result["messages"][1].content
+    assert result is None

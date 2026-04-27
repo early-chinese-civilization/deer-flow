@@ -51,10 +51,12 @@ def test_build_workspace_file_response_includes_oss_uris(monkeypatch) -> None:
     )
 
     assert response["artifact_url"] == f"/api/workspaces/{WORKSPACE_ID}/uploads/content?object_key=workspaces%2F{WORKSPACE_ID}%2Fuploads%2Freport.md"
+    assert response["http_uri"] == response["artifact_url"]
     assert response["path"] == "uploads/report.md"
     assert response["virtual_path"] == "/mnt/user-data/uploads/report.md"
     assert response["oss_uri"] == f"oss://demo-bucket/workspaces/{WORKSPACE_ID}/uploads/report.md"
     assert response["markdown_oss_uri"] == f"oss://demo-bucket/workspaces/{WORKSPACE_ID}/uploads/report.txt"
+    assert response["markdown_http_uri"] == response["markdown_artifact_url"]
     assert response["markdown_path"] == "uploads/report.txt"
     assert response["markdown_virtual_path"] == "/mnt/user-data/uploads/report.txt"
 
@@ -115,6 +117,7 @@ def test_prepare_upload_includes_oss_uri(monkeypatch) -> None:
     assert file_response["path"] == "uploads/report.md"
     assert file_response["virtual_path"] == "/mnt/user-data/uploads/report.md"
     assert file_response["oss_uri"] == f"oss://demo-bucket/workspaces/{WORKSPACE_ID}/uploads/report.md"
+    assert file_response["http_uri"] == file_response["artifact_url"]
 
 
 def test_finalize_upload_includes_oss_uri(monkeypatch) -> None:
@@ -160,6 +163,7 @@ def test_finalize_upload_includes_oss_uri(monkeypatch) -> None:
     assert response.json()["path"] == "uploads/report.md"
     assert response.json()["virtual_path"] == "/mnt/user-data/uploads/report.md"
     assert response.json()["oss_uri"] == f"oss://demo-bucket/workspaces/{WORKSPACE_ID}/uploads/report.md"
+    assert response.json()["http_uri"] == response.json()["artifact_url"]
 
 
 def test_list_uploaded_files_includes_oss_uri(monkeypatch) -> None:
@@ -199,6 +203,7 @@ def test_list_uploaded_files_includes_oss_uri(monkeypatch) -> None:
     assert file_response["path"] == "uploads/report.md"
     assert file_response["virtual_path"] == "/mnt/user-data/uploads/report.md"
     assert file_response["oss_uri"] == f"oss://demo-bucket/workspaces/{WORKSPACE_ID}/uploads/report.md"
+    assert file_response["http_uri"] == file_response["artifact_url"]
 
 
 def test_download_url_returns_presigned_url(monkeypatch) -> None:

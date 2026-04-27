@@ -8,7 +8,6 @@ import { Loader } from "@/components/ai-elements/loader";
 import {
   Message as AIElementMessage,
   MessageContent as AIElementMessageContent,
-  MessageResponse as AIElementMessageResponse,
   MessageToolbar,
 } from "@/components/ai-elements/message";
 import {
@@ -138,6 +137,7 @@ function MessageContent_({
 }) {
   const rehypePlugins = useRehypeSplitWordsIntoSpans(isLoading);
   const isHuman = message.type === "human";
+  const { workspaceId } = useThread();
   const { thread_id } = useParams<{ thread_id: string }>();
   const components = useMemo(
     () => ({
@@ -201,21 +201,19 @@ function MessageContent_({
   }
 
   if (isHuman) {
-    const messageResponse = contentToDisplay ? (
-      <AIElementMessageResponse
-        remarkPlugins={humanMessagePlugins.remarkPlugins}
-        rehypePlugins={humanMessagePlugins.rehypePlugins}
-        components={components}
-      >
-        {contentToDisplay}
-      </AIElementMessageResponse>
-    ) : null;
     return (
       <div className={cn("ml-auto flex flex-col gap-2", className)}>
         {filesList}
-        {messageResponse && (
+        {contentToDisplay && (
           <AIElementMessageContent className="w-fit">
-            {messageResponse}
+            <MarkdownContent
+              content={contentToDisplay}
+              isLoading={isLoading}
+              remarkPlugins={humanMessagePlugins.remarkPlugins}
+              rehypePlugins={humanMessagePlugins.rehypePlugins}
+              workspaceId={workspaceId}
+              components={components}
+            />
           </AIElementMessageContent>
         )}
       </div>
@@ -230,6 +228,7 @@ function MessageContent_({
         isLoading={isLoading}
         rehypePlugins={[...rehypePlugins, [rehypeKatex, { output: "html" }]]}
         className="my-3"
+        workspaceId={workspaceId}
         components={components}
       />
     </AIElementMessageContent>
@@ -361,11 +360,9 @@ function RichFileCard({
     }
     return (
       <div className="group border-border/40 relative block overflow-hidden rounded-lg border">
-        <img
-          src=""
-          alt={file.filename}
-          className="h-32 w-auto max-w-60 object-cover"
-        />
+        <div className="text-muted-foreground flex h-32 w-60 items-center justify-center text-xs">
+          {file.filename}
+        </div>
       </div>
     );
   }

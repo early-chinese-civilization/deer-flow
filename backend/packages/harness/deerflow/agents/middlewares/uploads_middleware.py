@@ -79,7 +79,7 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
                 lines.append("")
 
         lines.append("Use the `virtual_path` values with the `read_file` and `view_image` tools.")
-        lines.append("When referencing files in your final response, prefer `oss_uri` so the client can render presigned URLs.")
+        lines.append("When referencing files in your final response, prefer `oss_uri`; the client resolves a runtime `http_uri` when it needs to open them.")
         lines.append("</uploaded_files>")
 
         return "\n".join(lines)
@@ -124,6 +124,7 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
             return None
 
         oss_uri = payload.get("oss_uri") or payload.get("path")
+        http_uri = payload.get("http_uri") or payload.get("artifact_url")
         object_key = payload.get("object_key")
         if isinstance(oss_uri, str) and oss_uri.startswith("oss://"):
             object_key = object_key if isinstance(object_key, str) and object_key else self._oss_uri_to_object_key(oss_uri)
@@ -145,6 +146,7 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
             "path": oss_uri,
             "virtual_path": virtual_path,
             "oss_uri": oss_uri,
+            "http_uri": http_uri if isinstance(http_uri, str) and http_uri else None,
             "object_key": object_key,
         }
 
@@ -157,10 +159,15 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
             "markdown_virtual_path",
             "markdown_object_key",
             "markdown_oss_uri",
+            "markdown_http_uri",
         ):
             value = payload.get(key)
             if value is not None:
                 entry[key] = value
+
+        markdown_http_uri = payload.get("markdown_http_uri") or payload.get("markdown_artifact_url")
+        if isinstance(markdown_http_uri, str) and markdown_http_uri:
+            entry["markdown_http_uri"] = markdown_http_uri
 
         return entry
 

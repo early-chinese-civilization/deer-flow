@@ -326,6 +326,7 @@ def build_workspace_file_response(
         "virtual_path": virtual_path,
         "relative_path": relative_path,
         "artifact_url": artifact_url,
+        "http_uri": artifact_url,
         "object_key": object_key,
         "signed_url": signed_url,
         "oss_uri": oss_object_uri(uploads_config.oss.bucket, object_key)
@@ -351,6 +352,7 @@ def build_workspace_file_response(
             if markdown_object_key
             else None
         )
+        response["markdown_http_uri"] = response["markdown_artifact_url"]
         response["markdown_object_key"] = markdown_object_key
         response["markdown_signed_url"] = markdown_signed_url
         response["markdown_oss_uri"] = (

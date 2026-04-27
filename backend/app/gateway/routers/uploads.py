@@ -50,6 +50,7 @@ class WorkspaceFileResponse(BaseModel):
     virtual_path: str
     relative_path: str
     artifact_url: str | None = None
+    http_uri: str | None = None
     object_key: str
     signed_url: str | None = None
     oss_uri: str | None = None
@@ -59,6 +60,7 @@ class WorkspaceFileResponse(BaseModel):
     markdown_path: str | None = None
     markdown_virtual_path: str | None = None
     markdown_artifact_url: str | None = None
+    markdown_http_uri: str | None = None
     markdown_object_key: str | None = None
     markdown_signed_url: str | None = None
     markdown_oss_uri: str | None = None
@@ -77,6 +79,7 @@ class FileTreeNode(BaseModel):
     filename: str | None = None
     virtual_path: str | None = None
     artifact_url: str | None = None
+    http_uri: str | None = None
     object_key: str | None = None
     signed_url: str | None = None
     oss_uri: str | None = None
@@ -85,6 +88,7 @@ class FileTreeNode(BaseModel):
     markdown_path: str | None = None
     markdown_virtual_path: str | None = None
     markdown_artifact_url: str | None = None
+    markdown_http_uri: str | None = None
     markdown_object_key: str | None = None
     markdown_signed_url: str | None = None
     markdown_oss_uri: str | None = None

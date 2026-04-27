@@ -27,6 +27,7 @@ export interface UploadedFileInfo {
   virtual_path: string;
   relative_path: string;
   artifact_url: string | null;
+  http_uri?: string | null;
   oss_uri?: string | null;
   object_key: string;
   signed_url?: string | null;
@@ -36,6 +37,7 @@ export interface UploadedFileInfo {
   markdown_path?: string | null;
   markdown_virtual_path?: string | null;
   markdown_artifact_url?: string | null;
+  markdown_http_uri?: string | null;
   markdown_oss_uri?: string | null;
   markdown_object_key?: string | null;
   markdown_signed_url?: string | null;
@@ -52,6 +54,7 @@ export interface FileTreeNode {
   filename?: string;
   virtual_path?: string;
   artifact_url?: string | null;
+  http_uri?: string | null;
   oss_uri?: string | null;
   object_key?: string;
   signed_url?: string | null;
@@ -60,6 +63,7 @@ export interface FileTreeNode {
   markdown_path?: string | null;
   markdown_virtual_path?: string | null;
   markdown_artifact_url?: string | null;
+  markdown_http_uri?: string | null;
   markdown_oss_uri?: string | null;
   markdown_object_key?: string | null;
   markdown_signed_url?: string | null;

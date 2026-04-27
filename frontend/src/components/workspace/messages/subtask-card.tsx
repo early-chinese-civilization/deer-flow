@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 
 import { CitationLink } from "../citations/citation-link";
 import { FlipDisplay } from "../flip-display";
+import { useThread } from "./context";
 
 import { MarkdownContent } from "./markdown-content";
 
@@ -39,6 +40,7 @@ export function SubtaskCard({
   isLoading: boolean;
 }) {
   const { t } = useI18n();
+  const { workspaceId } = useThread();
   const [collapsed, setCollapsed] = useState(true);
   const rehypePlugins = useRehypeSplitWordsIntoSpans(isLoading);
   const task = useSubtask(taskId)!;
@@ -158,6 +160,7 @@ export function SubtaskCard({
                       content={task.result}
                       isLoading={false}
                       rehypePlugins={rehypePlugins}
+                      workspaceId={workspaceId}
                     />
                   ) : null
                 }

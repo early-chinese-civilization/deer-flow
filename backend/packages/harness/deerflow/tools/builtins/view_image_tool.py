@@ -28,15 +28,18 @@ def _resolve_uploaded_image_entry(
 
         virtual_path = file_entry.get("virtual_path")
         path = file_entry.get("path")
+        http_uri = file_entry.get("http_uri")
         oss_uri = file_entry.get("oss_uri")
         object_key = file_entry.get("object_key")
 
-        if virtual_path not in candidates and path not in candidates and oss_uri not in candidates:
+        if virtual_path not in candidates and path not in candidates and http_uri not in candidates and oss_uri not in candidates:
             continue
 
         result: dict[str, str] = {}
         if isinstance(virtual_path, str) and virtual_path:
             result["virtual_path"] = virtual_path
+        if isinstance(http_uri, str) and http_uri:
+            result["http_uri"] = http_uri
         if isinstance(oss_uri, str) and oss_uri.startswith("oss://"):
             result["oss_uri"] = oss_uri
         if isinstance(object_key, str) and object_key:
@@ -124,7 +127,7 @@ def view_image_tool(
     # Update viewed_images in state
     # The merge_viewed_images reducer will handle merging with existing images
     image_source = _resolve_uploaded_image_entry(runtime, image_path, actual_path)
-    image_key = (image_source or {}).get("oss_uri") or image_path
+    image_key = (image_source or {}).get("http_uri") or (image_source or {}).get("oss_uri") or image_path
     new_viewed_images = {
         image_key: {
             "base64": image_base64,

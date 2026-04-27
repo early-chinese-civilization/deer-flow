@@ -332,8 +332,10 @@ export interface FileInMessage {
   size: number; // bytes
   path: string; // canonical OSS URI when available
   virtual_path?: string; // sandbox path used for artifact viewing
+  http_uri?: string | null;
   oss_uri?: string | null;
   object_key?: string; // object key for OSS URL resolution
+  markdown_http_uri?: string | null;
   status?: "uploading" | "uploaded";
 }
 
