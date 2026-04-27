@@ -330,7 +330,7 @@ def _build_pod(
                             path="/v1/sandbox",
                             port=8080,
                         ),
-                        initial_delay_seconds=5,
+                        initial_delay_seconds=30,
                         period_seconds=5,
                         timeout_seconds=3,
                         failure_threshold=3,
@@ -340,7 +340,7 @@ def _build_pod(
                             path="/v1/sandbox",
                             port=8080,
                         ),
-                        initial_delay_seconds=10,
+                        initial_delay_seconds=300,
                         period_seconds=10,
                         timeout_seconds=3,
                         failure_threshold=3,
@@ -370,7 +370,7 @@ def _build_pod(
 
 
 def _build_service(sandbox_id: str) -> k8s_client.V1Service:
-    """Construct a NodePort Service manifest (port auto-allocated by K8s)."""
+    """Construct a NodePort Service manifest."""
     return k8s_client.V1Service(
         metadata=k8s_client.V1ObjectMeta(
             name=_svc_name(sandbox_id),
@@ -390,7 +390,7 @@ def _build_service(sandbox_id: str) -> k8s_client.V1Service:
                     port=8080,
                     target_port=8080,
                     protocol="TCP",
-                    # nodePort omitted → K8s auto-allocates from the range
+                    # nodePort omitted: K8s auto-allocates from the range.
                 )
             ],
             selector={

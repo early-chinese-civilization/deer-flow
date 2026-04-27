@@ -27,6 +27,8 @@ services:
       args:
         APT_MIRROR: ${APT_MIRROR:-}
     container_name: deer-flow-provisioner
+    ports:
+      - "8002:8002"
     volumes:
       - ~/.kube/config:/root/.kube/config:ro
     environment:
@@ -39,7 +41,7 @@ services:
       - SHARED_FS_HOST_PATH=${K8S_SHARED_FS_HOST_PATH}
       - WORKSPACES_HOST_PATH=${K8S_WORKSPACES_HOST_PATH}
       - KUBECONFIG_PATH=/root/.kube/config
-      - NODE_HOST=host.docker.internal
+      - NODE_HOST=${NODE_HOST:-localhost}
       # Override K8S API server URL since kubeconfig uses 127.0.0.1
       # which is unreachable from inside the container
       - K8S_API_SERVER=${K8S_API_SERVER:-https://kubernetes.docker.internal:6443}

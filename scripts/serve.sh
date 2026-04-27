@@ -16,6 +16,13 @@ if [ -f "$REPO_ROOT/.env" ]; then
     set +a
 fi
 
+export DEER_FLOW_ROOT="${DEER_FLOW_ROOT:-$REPO_ROOT}"
+export K8S_SKILLS_HOST_PATH="${K8S_SKILLS_HOST_PATH:-$REPO_ROOT/backend/.deer-flow/skills}"
+export K8S_SHARED_FS_HOST_PATH="${K8S_SHARED_FS_HOST_PATH:-$REPO_ROOT/backend/.deer-flow}"
+export K8S_WORKSPACES_HOST_PATH="${K8S_WORKSPACES_HOST_PATH:-$REPO_ROOT/backend/.deer-flow/workspaces}"
+export DEER_FLOW_SANDBOX_PROVISIONER_URL="${DEER_FLOW_SANDBOX_PROVISIONER_URL:-http://localhost:8002}"
+export DEER_FLOW_SANDBOX_READY_TIMEOUT="${DEER_FLOW_SANDBOX_READY_TIMEOUT:-300}"
+
 # ---- Argument parsing ----
 
 DEV_MODE=true
@@ -50,6 +57,7 @@ pkill -f "uvicorn app.gateway.app:app" 2>/dev/null || true
 pkill -f "next dev" 2>/dev/null || true
 pkill -f "next-server" 2>/dev/null || true
 nginx -c "$REPO_ROOT/docker/nginx/nginx.local.conf" -p "$REPO_ROOT" -s quit 2>/dev/null || true
+docker compose -f "$REPO_ROOT/docker/docker-compose-dev.yaml" --profile provisioner stop provisioner 2>/dev/null || true
 sleep 1
 pkill -9 nginx 2>/dev/null || true
 killall -9 nginx 2>/dev/null || true
@@ -73,6 +81,7 @@ fi
 echo ""
 echo "Services starting up..."
 echo "  -> Backend: LangGraph + Gateway"
+echo "  -> Provisioner: Sandbox Provisioner"
 echo "  -> Frontend: Next.js"
 echo "  -> Nginx: Reverse Proxy"
 echo ""
@@ -112,6 +121,7 @@ cleanup() {
     pkill -f "next dev" 2>/dev/null || true
     pkill -f "next start" 2>/dev/null || true
     pkill -f "next-server" 2>/dev/null || true
+    docker compose -f "$REPO_ROOT/docker/docker-compose-dev.yaml" --profile provisioner stop provisioner 2>/dev/null || true
     # Kill nginx using the captured PID first (most reliable),
     # then fall back to pkill/killall for any stray nginx workers.
     if [ -n "${NGINX_PID:-}" ] && kill -0 "$NGINX_PID" 2>/dev/null; then
@@ -169,6 +179,20 @@ else
     echo "   Gateway runtime remains available at /api/langgraph/*"
 fi
 
+echo "Starting Sandbox Provisioner..."
+docker compose -f "$REPO_ROOT/docker/docker-compose-dev.yaml" --profile provisioner up -d --build provisioner > logs/provisioner.log 2>&1 || {
+    echo "[ERROR] Sandbox Provisioner failed to start. Last log output:"
+    tail -60 logs/provisioner.log
+    cleanup
+}
+./scripts/wait-for-port.sh 8002 60 "Sandbox Provisioner" || {
+    echo "  See logs/provisioner.log for details"
+    tail -60 logs/provisioner.log
+    docker compose -f "$REPO_ROOT/docker/docker-compose-dev.yaml" --profile provisioner logs --tail=60 provisioner || true
+    cleanup
+}
+echo "[OK] Sandbox Provisioner started on localhost:8002"
+
 echo "Starting Gateway API..."
 (cd backend && PYTHONPATH=. uv run uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001 $GATEWAY_EXTRA_FLAGS > ../logs/gateway.log 2>&1) &
 ./scripts/wait-for-port.sh 8001 30 "Gateway API" || {
@@ -215,6 +239,7 @@ echo "=========================================="
 echo ""
 echo "  Application: http://localhost:2026"
 echo "  API Gateway: http://localhost:2026/api/*"
+echo "  Sandbox Provisioner: http://localhost:8002"
 if [ "${SKIP_LANGGRAPH_SERVER:-0}" = "1" ]; then
     echo "  LangGraph: skipped (SKIP_LANGGRAPH_SERVER=1)"
 else
@@ -224,6 +249,7 @@ fi
 echo ""
 echo "  Logs:"
 echo "     - LangGraph: logs/langgraph.log"
+echo "     - Provisioner: logs/provisioner.log"
 echo "     - Gateway:   logs/gateway.log"
 echo "     - Frontend:  logs/frontend.log"
 echo "     - Nginx:     logs/nginx.log"

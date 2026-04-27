@@ -44,6 +44,7 @@ DEFAULT_PORT = 8080
 DEFAULT_CONTAINER_PREFIX = "deer-flow-sandbox"
 DEFAULT_IDLE_TIMEOUT = 600  # 10 minutes in seconds
 DEFAULT_REPLICAS = 3  # Maximum concurrent sandbox containers
+DEFAULT_READY_TIMEOUT = 60
 IDLE_CHECK_INTERVAL = 60  # Check every 60 seconds
 
 
@@ -157,6 +158,7 @@ class AioSandboxProvider(SandboxProvider):
             "container_prefix": sandbox_config.container_prefix or DEFAULT_CONTAINER_PREFIX,
             "idle_timeout": idle_timeout if idle_timeout is not None else DEFAULT_IDLE_TIMEOUT,
             "replicas": replicas if replicas is not None else DEFAULT_REPLICAS,
+            "ready_timeout": int(os.environ.get("DEER_FLOW_SANDBOX_READY_TIMEOUT", DEFAULT_READY_TIMEOUT)),
             "mounts": sandbox_config.mounts or [],
             "environment": self._resolve_env_vars(sandbox_config.environment or {}),
             # provisioner URL for dynamic pod management (e.g. http://provisioner:8002)
@@ -600,7 +602,8 @@ class AioSandboxProvider(SandboxProvider):
         )
 
         # Wait for sandbox to be ready
-        if not wait_for_sandbox_ready(info.sandbox_url, timeout=60):
+        ready_timeout = self._config["ready_timeout"]
+        if not wait_for_sandbox_ready(info.sandbox_url, timeout=ready_timeout):
             self._backend.destroy(info)
             raise RuntimeError(f"Sandbox {sandbox_id} failed to become ready within timeout at {info.sandbox_url}")
 
