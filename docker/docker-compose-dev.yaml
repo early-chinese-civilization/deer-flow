@@ -27,28 +27,30 @@ services:
       args:
         APT_MIRROR: ${APT_MIRROR:-}
     container_name: deer-flow-provisioner
+    ports:
+      - "8002:8002"
     volumes:
       - ~/.kube/config:/root/.kube/config:ro
+      # Keep the dev provisioner aligned with the working tree even when a
+      # rebuild cannot fetch the base image.
+      - ./provisioner/app.py:/app/app.py:ro
     environment:
       - K8S_NAMESPACE=deer-flow
-      - SANDBOX_IMAGE=enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest
-      # Host paths for K8s hostPath volumes.
-      # For Docker Desktop Kubernetes hostPath mounts, use Linux-side paths that
-      # are visible from the Docker Desktop VM / K8s node, not raw Windows paths.
-      - SKILLS_HOST_PATH=${K8S_SKILLS_HOST_PATH}
-      - SHARED_FS_HOST_PATH=${K8S_SHARED_FS_HOST_PATH}
-      - WORKSPACES_HOST_PATH=${K8S_WORKSPACES_HOST_PATH}
+      - SANDBOX_IMAGE=${DEER_FLOW_SANDBOX_IMAGE:-enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest}
+      # Current remote sandbox mode defers workspace/skills mounts until after
+      # the Pod is ready; the backend initializes them through the OSS config in
+      # config.yaml. Do not pass legacy hostPath mount variables here.
       - KUBECONFIG_PATH=/root/.kube/config
-      - NODE_HOST=host.docker.internal
-      # Override K8S API server URL since kubeconfig uses 127.0.0.1
-      # which is unreachable from inside the container
-      - K8S_API_SERVER=${K8S_API_SERVER:-https://kubernetes.docker.internal:6443}
+      - NODE_HOST=${DEER_FLOW_SANDBOX_NODE_HOST:-host.docker.internal}
+      # Set K8S_API_SERVER in ../.env when the kubeconfig server uses
+      # 127.0.0.1/localhost, which is unreachable from inside the container.
     env_file:
       - ../.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       - deer-flow-dev
+      - deer-flow-k8s
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
@@ -119,7 +121,17 @@ services:
         UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:0.7.20}
         UV_INDEX_URL: ${UV_INDEX_URL:-https://pypi.org/simple}
     container_name: deer-flow-gateway
-    command: sh -c "cd backend && uv sync && PYTHONPATH=. uv run uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001 --reload --reload-include='*.yaml .env' > /app/logs/gateway.log 2>&1"
+    command:
+      - /usr/local/bin/deer-flow-mount-ossfs2-workspaces.sh
+      - sh
+      - -c
+      - cd backend && uv sync && PYTHONPATH=. uv run uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001 --reload --reload-include='*.yaml .env' > /app/logs/gateway.log 2>&1
+    devices:
+      - /dev/fuse:/dev/fuse
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
     volumes:
       - ../backend/:/app/backend/
       - ../backend/.deer-flow:/app/backend/.deer-flow
@@ -159,6 +171,9 @@ services:
       - DEER_FLOW_HOST_BASE_DIR=${DEER_FLOW_ROOT}/backend/.deer-flow
       - DEER_FLOW_HOST_SKILLS_PATH=${DEER_FLOW_ROOT}/backend/.deer-flow/skills
       - DEER_FLOW_SANDBOX_HOST=host.docker.internal
+      - DEER_FLOW_OSSFS2_WORKSPACES_MOUNT=${DEER_FLOW_OSSFS2_WORKSPACES_MOUNT:-true}
+      - DEER_FLOW_OSSFS2_WORKSPACES_MOUNT_POINT=/app/backend/.deer-flow/workspaces
+      - DEER_FLOW_OSSFS2_WORKSPACES_PREFIX=${DEER_FLOW_OSSFS2_WORKSPACES_PREFIX:-workspaces/}
     env_file:
       - ../.env
     extra_hosts:
@@ -166,6 +181,7 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - deer-flow-dev
+      - deer-flow-k8s
     restart: unless-stopped
 
   # Backend - LangGraph Server
@@ -179,7 +195,17 @@ services:
         UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:0.7.20}
         UV_INDEX_URL: ${UV_INDEX_URL:-https://pypi.org/simple}
     container_name: deer-flow-langgraph
-    command: sh -c "cd backend && uv sync && uv run langgraph dev --no-browser --allow-blocking --host 0.0.0.0 --port 2024 --n-jobs-per-worker 10 > /app/logs/langgraph.log 2>&1"
+    command:
+      - /usr/local/bin/deer-flow-mount-ossfs2-workspaces.sh
+      - sh
+      - -c
+      - cd backend && uv sync && uv run langgraph dev --no-browser --allow-blocking --host 0.0.0.0 --port 2024 --n-jobs-per-worker 10 > /app/logs/langgraph.log 2>&1
+    devices:
+      - /dev/fuse:/dev/fuse
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
     volumes:
       - ../backend/:/app/backend/
       # Preserve the .venv built during Docker image build — mounting the full backend/
@@ -218,6 +244,9 @@ services:
       - DEER_FLOW_HOST_BASE_DIR=${DEER_FLOW_ROOT}/backend/.deer-flow
       - DEER_FLOW_HOST_SKILLS_PATH=${DEER_FLOW_ROOT}/backend/.deer-flow/skills
       - DEER_FLOW_SANDBOX_HOST=host.docker.internal
+      - DEER_FLOW_OSSFS2_WORKSPACES_MOUNT=${DEER_FLOW_OSSFS2_WORKSPACES_MOUNT:-true}
+      - DEER_FLOW_OSSFS2_WORKSPACES_MOUNT_POINT=/app/backend/.deer-flow/workspaces
+      - DEER_FLOW_OSSFS2_WORKSPACES_PREFIX=${DEER_FLOW_OSSFS2_WORKSPACES_PREFIX:-workspaces/}
     env_file:
       - ../.env
     extra_hosts:
@@ -225,6 +254,7 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - deer-flow-dev
+      - deer-flow-k8s
     restart: unless-stopped
 
 volumes:
@@ -239,3 +269,6 @@ networks:
     ipam:
       config:
         - subnet: 192.168.200.0/24
+  deer-flow-k8s:
+    external: true
+    name: ${DEER_FLOW_K8S_DOCKER_NETWORK:-kind}

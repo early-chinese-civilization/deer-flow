@@ -1,0 +1,32 @@
+FROM enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest
+
+ARG APT_MIRROR
+ARG OSSFS2_RPM_URL=https://gosspublic.alicdn.com/ossfs/ossfs2_2.0.7_linux_aarch64.rpm
+ARG LIBSSL11_DEB_URL=https://ports.ubuntu.com/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.24_arm64.deb
+
+USER root
+
+RUN if [ -n "${APT_MIRROR}" ]; then \
+      sed -i "s|ports.ubuntu.com|${APT_MIRROR}|g" /etc/apt/sources.list 2>/dev/null || true; \
+      sed -i "s|ports.ubuntu.com|${APT_MIRROR}|g" /etc/apt/sources.list.d/*.list 2>/dev/null || true; \
+    fi \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      cpio \
+      curl \
+      rpm2cpio \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    curl -fsSL "${LIBSSL11_DEB_URL}" -o /tmp/libssl1.1.deb; \
+    dpkg -i /tmp/libssl1.1.deb; \
+    curl -fsSL "${OSSFS2_RPM_URL}" -o /tmp/ossfs2.rpm; \
+    cd /; \
+    rpm2cpio /tmp/ossfs2.rpm | cpio -idmv; \
+    rm -f /tmp/libssl1.1.deb /tmp/ossfs2.rpm; \
+    echo /usr/local/lib64/ossfs2 > /etc/ld.so.conf.d/ossfs2.conf; \
+    ldconfig; \
+    touch /etc/fuse.conf; \
+    grep -qxF user_allow_other /etc/fuse.conf || echo user_allow_other >> /etc/fuse.conf; \
+    /usr/local/bin/ossfs2 --version

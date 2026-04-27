@@ -172,12 +172,11 @@ services:
       - ~/.kube/config:/root/.kube/config:ro
     environment:
       - K8S_NAMESPACE=deer-flow
-      - SANDBOX_IMAGE=enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest
-      - SKILLS_HOST_PATH=${DEER_FLOW_REPO_ROOT}/skills
-      - THREADS_HOST_PATH=${DEER_FLOW_HOME}/threads
+      - SANDBOX_IMAGE=${DEER_FLOW_SANDBOX_IMAGE:-enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest}
       - KUBECONFIG_PATH=/root/.kube/config
-      - NODE_HOST=host.docker.internal
-      - K8S_API_SERVER=https://host.docker.internal:26443
+      - NODE_HOST=${DEER_FLOW_SANDBOX_NODE_HOST:-host.docker.internal}
+      # Set K8S_API_SERVER in ../.env when the kubeconfig server uses
+      # 127.0.0.1/localhost, which is unreachable from inside the container.
     env_file:
       - ../.env
     extra_hosts:
