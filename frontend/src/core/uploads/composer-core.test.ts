@@ -15,6 +15,7 @@ void test("builds message files with canonical oss path and sandbox path", () =>
         path: "workspace/uploads/report.md",
         virtual_path: "/mnt/user-data/uploads/report.md",
         oss_uri: "oss://demo-bucket/workspaces/ws-1/uploads/report.md",
+        object_key: "uploads/report.md",
       },
     },
   ]);
@@ -26,6 +27,7 @@ void test("builds message files with canonical oss path and sandbox path", () =>
       path: "oss://demo-bucket/workspaces/ws-1/uploads/report.md",
       virtual_path: "/mnt/user-data/uploads/report.md",
       oss_uri: "oss://demo-bucket/workspaces/ws-1/uploads/report.md",
+      object_key: "uploads/report.md",
       status: "uploaded",
     },
   ]);

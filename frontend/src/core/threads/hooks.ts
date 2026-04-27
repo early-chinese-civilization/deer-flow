@@ -349,6 +349,7 @@ export function useThreadStream({
         path: getCanonicalUploadedFilePath(info),
         virtual_path: info.virtual_path,
         oss_uri: info.oss_uri,
+        object_key: info.object_key,
         status: "uploaded" as const,
       }));
 
@@ -386,6 +387,7 @@ export function useThreadStream({
           path: getCanonicalUploadedFilePath(info),
           virtual_path: info.virtual_path,
           oss_uri: info.oss_uri,
+          object_key: info.object_key,
           status: "uploaded" as const,
         }));
 

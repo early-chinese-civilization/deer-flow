@@ -46,6 +46,7 @@ export function buildMessageFilesFromAttachments(
         path: getCanonicalUploadedFilePath(attachment.uploadedFile),
         virtual_path: attachment.uploadedFile.virtual_path,
         oss_uri: attachment.uploadedFile.oss_uri,
+        object_key: attachment.uploadedFile.object_key,
         status: "uploaded" as const,
       },
     ];
