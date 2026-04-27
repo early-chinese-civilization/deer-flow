@@ -105,10 +105,23 @@ const UNSUPPORTED_PREVIEW_EXTENSIONS = new Set([
   "xlsx",
 ]);
 const RICH_PREVIEW_EXTENSIONS = new Set(["md", "mdx", "html", "htm", "skill"]);
+const IMAGE_PREVIEW_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "svg",
+  "bmp",
+  "ico",
+  "tiff",
+  "heic",
+]);
 
 export type ArtifactDisplayMode =
   | "code"
   | "rich-preview"
+  | "image-preview"
   | "iframe-preview"
   | "unsupported-preview";
 
@@ -130,6 +143,10 @@ export function getArtifactDisplayMode(filepath: string): ArtifactDisplayMode {
 
   if (RICH_PREVIEW_EXTENSIONS.has(extension)) {
     return "rich-preview";
+  }
+
+  if (IMAGE_PREVIEW_EXTENSIONS.has(extension)) {
+    return "image-preview";
   }
 
   if (CODE_FILE_EXTENSIONS.has(extension)) {

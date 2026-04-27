@@ -247,6 +247,15 @@ export function ArtifactFileDetail({
             readonly
           />
         )}
+        {displayMode === "image-preview" && hasResolvedBrowserOssUrl && (
+          <div className="flex size-full items-center justify-center bg-black/5 p-4">
+            <img
+              className="max-h-full max-w-full rounded-md object-contain"
+              src={artifactViewUrl}
+              alt={getFileName(filepath)}
+            />
+          </div>
+        )}
         {displayMode === "iframe-preview" &&
           hasResolvedBrowserOssUrl && (
             <iframe
