@@ -69,6 +69,7 @@ def test_view_image_middleware_prefers_oss_uri_in_injected_message() -> None:
     assert len(result["messages"]) == 1
     message = result["messages"][0]
     assert isinstance(message, HumanMessage)
-    assert "/api/threads/ws-1/artifacts/mnt/user-data/uploads/photo.png" in str(message.content)
+    assert "Prefer oss_uri when referring to them in model-visible text" in str(message.content)
     assert "oss://demo-bucket/workspaces/ws-1/uploads/photo.png" in str(message.content)
     assert "virtual_path: /mnt/user-data/uploads/photo.png" in str(message.content)
+    assert str(message.content).index("oss://demo-bucket/workspaces/ws-1/uploads/photo.png") < str(message.content).index("virtual_path: /mnt/user-data/uploads/photo.png")

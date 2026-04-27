@@ -7,7 +7,9 @@ from langgraph.types import Command
 from langgraph.typing import ContextT
 
 from deerflow.agents.thread_state import ThreadState
+from deerflow.config import get_app_config
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX, get_paths
+from deerflow.uploads.storage import oss_object_uri, workspace_root_prefix
 
 OUTPUTS_VIRTUAL_PREFIX = f"{VIRTUAL_PATH_PREFIX}/outputs"
 
@@ -55,6 +57,32 @@ def _normalize_presented_filepath(
     return f"{OUTPUTS_VIRTUAL_PREFIX}/{relative_path.as_posix()}"
 
 
+def _presented_filepath_to_oss_uri(
+    runtime: ToolRuntime[ContextT, ThreadState],
+    filepath: str,
+) -> str:
+    if runtime.state is None:
+        raise ValueError("Thread runtime state is not available")
+
+    thread_data = runtime.state.get("thread_data") or {}
+    workspace_id = thread_data.get("workspace_id")
+    if not workspace_id and runtime.context:
+        raw_workspace_id = runtime.context.get("workspace_id")
+        if raw_workspace_id is not None:
+            workspace_id = str(raw_workspace_id)
+
+    if not workspace_id:
+        raise ValueError("Workspace ID is not available in runtime context")
+
+    bucket = get_app_config().uploads.oss.bucket
+    if not bucket:
+        raise ValueError("OSS bucket is not available in app config")
+
+    relative_path = filepath.removeprefix(OUTPUTS_VIRTUAL_PREFIX).lstrip("/")
+    object_key = f"{workspace_root_prefix(str(workspace_id)).rstrip('/')}/outputs/{relative_path}"
+    return oss_object_uri(bucket, object_key)
+
+
 @tool("present_files", parse_docstring=True)
 def present_file_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
@@ -82,6 +110,7 @@ def present_file_tool(
     """
     try:
         normalized_paths = [_normalize_presented_filepath(runtime, filepath) for filepath in filepaths]
+        oss_paths = {filepath: _presented_filepath_to_oss_uri(runtime, filepath) for filepath in normalized_paths}
     except ValueError as exc:
         return Command(
             update={"messages": [ToolMessage(f"Error: {exc}", tool_call_id=tool_call_id)]},
@@ -89,7 +118,7 @@ def present_file_tool(
 
     return Command(
         update={
-            "artifacts": normalized_paths,
+            "artifacts": oss_paths,
             "messages": [ToolMessage("Successfully presented files", tool_call_id=tool_call_id)],
         },
     )

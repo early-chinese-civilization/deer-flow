@@ -43,6 +43,10 @@ def test_uploads_middleware_persists_canonical_oss_file_identity(tmp_path):
     assert "artifact_url" not in file_entry
     assert "signed_url" not in file_entry
 
+    uploaded_message = middleware._create_files_message(result["uploaded_files"], [])
+    assert "Prefer `oss_uri` when referring to files" in uploaded_message
+    assert uploaded_message.index("oss_uri:") < uploaded_message.index("virtual_path:")
+
 
 def test_uploads_middleware_accepts_path_only_virtual_payload(tmp_path, monkeypatch):
     middleware = UploadsMiddleware(base_dir=str(tmp_path))

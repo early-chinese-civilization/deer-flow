@@ -28,12 +28,13 @@ export function ArtifactFileList({
   threadId,
 }: {
   className?: string;
-  files: string[];
+  files: Record<string, string>;
   threadId: string;
 }) {
   const { t } = useI18n();
   const { select: selectArtifact, setOpen } = useArtifacts();
   const [installingFile, setInstallingFile] = useState<string | null>(null);
+  const fileEntries = Object.entries(files);
 
   const handleClick = useCallback(
     (filepath: string) => {
@@ -73,30 +74,30 @@ export function ArtifactFileList({
 
   return (
     <ul className={cn("flex w-full flex-col gap-4", className)}>
-      {files.map((file) => (
+      {fileEntries.map(([filepath, ossUri]) => (
         <Card
-          key={file}
+          key={filepath}
           className="relative cursor-pointer p-3"
-          onClick={() => handleClick(file)}
+          onClick={() => handleClick(filepath)}
         >
           <CardHeader className="pr-2 pl-1">
             <CardTitle className="relative pl-8">
-              <div>{getFileName(file)}</div>
+              <div>{getFileName(filepath)}</div>
               <div className="absolute top-2 -left-0.5">
-                {getFileIcon(file, "size-6")}
+                {getFileIcon(filepath, "size-6")}
               </div>
             </CardTitle>
             <CardDescription className="pl-8 text-xs">
-              {getFileExtensionDisplayName(file)} file
+              {getFileExtensionDisplayName(filepath)} file
             </CardDescription>
             <CardAction>
-              {file.endsWith(".skill") && (
+              {filepath.endsWith(".skill") && (
                 <Button
                   variant="ghost"
-                  disabled={installingFile === file}
-                  onClick={(e) => handleInstallSkill(e, file)}
+                  disabled={installingFile === filepath}
+                  onClick={(e) => handleInstallSkill(e, filepath)}
                 >
-                  {installingFile === file ? (
+                  {installingFile === filepath ? (
                     <LoaderIcon className="size-4 animate-spin" />
                   ) : (
                     <PackageIcon className="size-4" />
@@ -106,7 +107,7 @@ export function ArtifactFileList({
               )}
               <a
                 href={urlOfArtifact({
-                  filepath: file,
+                  filepath,
                   threadId: threadId,
                   download: true,
                 })}

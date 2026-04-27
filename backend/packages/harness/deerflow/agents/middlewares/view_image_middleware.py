@@ -112,7 +112,7 @@ class ViewImageMiddleware(AgentMiddleware[ViewImageMiddlewareState]):
         content_blocks: list[str | dict] = [
             {
                 "type": "text",
-                "text": "Here are the images you've viewed. Prefer oss_uri when referring to them in your response; use virtual_path only with tools:",
+                "text": "Here are the images you've viewed. Prefer oss_uri when referring to them in model-visible text and responses; use virtual_path only when a tool explicitly requires a sandbox path input:",
             }
         ]
 
@@ -126,12 +126,12 @@ class ViewImageMiddleware(AgentMiddleware[ViewImageMiddlewareState]):
 
             # Add text description
             content_blocks.append({"type": "text", "text": f"\n- **{display_path}** ({mime_type})"})
-            if virtual_path and virtual_path != display_path:
-                content_blocks.append({"type": "text", "text": f"  virtual_path: {virtual_path}"})
-            if http_uri and http_uri != display_path:
-                content_blocks.append({"type": "text", "text": f"  http_uri: {http_uri}"})
             if oss_uri and oss_uri != display_path:
                 content_blocks.append({"type": "text", "text": f"  oss_uri: {oss_uri}"})
+            if http_uri and http_uri != display_path:
+                content_blocks.append({"type": "text", "text": f"  http_uri: {http_uri}"})
+            if virtual_path and virtual_path != display_path:
+                content_blocks.append({"type": "text", "text": f"  virtual_path: {virtual_path}"})
 
             # Add the actual image data so LLM can "see" it
             if base64_data:
