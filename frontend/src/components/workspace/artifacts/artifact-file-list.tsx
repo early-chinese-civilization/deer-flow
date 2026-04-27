@@ -74,7 +74,7 @@ export function ArtifactFileList({
 
   return (
     <ul className={cn("flex w-full flex-col gap-4", className)}>
-      {fileEntries.map(([filepath, ossUri]) => (
+      {fileEntries.map(([filepath]) => (
         <Card
           key={filepath}
           className="relative cursor-pointer p-3"
