@@ -302,13 +302,14 @@ Skill responses include version metadata when available:
   "package_version": "1.2.0",
   "release_version": "rel_9b5e0b9a2b6d4e7a9f1c2d3e4f5a6b7c",
   "release_status": "published",
+  "release_notes": "Fix prompt routing and clarify browser tool usage.",
   "published_at": "2026-04-28T08:00:00+00:00",
   "owner_user_id": 42,
   "owner_display_name": "Alice"
 }
 ```
 
-For legacy public skills without a release record, `version`, `package_version`, `release_version`, `release_status`, and `published_at` are `null`. For custom skills, `package_version` is read from that custom copy's `SKILL.md` when available.
+For legacy public skills without a release record, `version`, `package_version`, `release_version`, `release_status`, `release_notes`, and `published_at` are `null`. For custom skills, `package_version` is read from that custom copy's `SKILL.md` when available.
 
 #### List Skills
 
@@ -332,6 +333,7 @@ GET /api/skills
       "package_version": "1.2.0",
       "release_version": "rel_9b5e0b9a2b6d4e7a9f1c2d3e4f5a6b7c",
       "release_status": "published",
+      "release_notes": "Fix prompt routing and clarify browser tool usage.",
       "published_at": "2026-04-28T08:00:00+00:00",
       "owner_user_id": 42,
       "owner_display_name": "Alice"
@@ -350,7 +352,7 @@ The Gateway prefers the current user's custom copy when one exists; otherwise it
 
 #### Check Skill Upload
 
-Check whether an uploaded `.skill` ZIP would conflict with the current user's custom skill names.
+Check whether an uploaded `.skill` ZIP conflicts with the current user's installed package version. Same-name, same-version uploads are treated as duplicates. Same-name, different-version uploads are allowed and update the current custom skill copy instead of creating a second active skill row.
 
 ```http
 POST /api/skills/check-upload
@@ -359,6 +361,19 @@ Content-Type: multipart/form-data
 
 **Request Body:**
 - `file`: `.skill` / ZIP archive containing exactly one skill folder with `SKILL.md`
+
+**Response:**
+```json
+{
+  "filename": "pdf-processing.skill",
+  "skill_name": "pdf-processing",
+  "package_version": "1.3.0",
+  "existing_package_version": "1.2.0",
+  "same_version": false,
+  "exists": false,
+  "message": "Skill 'pdf-processing' will be updated from version '1.2.0' to '1.3.0'"
+}
+```
 
 #### Upload Skills
 
@@ -373,7 +388,7 @@ Content-Type: multipart/form-data
 - `files`: one or more ZIP archives
 - `overwrite_names`: optional repeated form field naming custom skills that may be overwritten
 
-Gateway upload validation accepts standard optional frontmatter keys (`version`, `author`, `compatibility`) and rejects non-string `version` values with a 400 detail.
+Gateway upload validation accepts standard optional frontmatter keys (`version`, `author`, `compatibility`) and rejects non-string `version` values with a 400 detail. When a user uploads the same skill name with a different package version, DeerFlow replaces that user's current custom copy in place and keeps only one active same-name skill. Same-name same-version uploads are rejected unless the client explicitly sends that name in `overwrite_names` to force a reinstall.
 
 #### Publish Custom Skill
 
@@ -381,14 +396,24 @@ Publish the current user's custom skill as public latest.
 
 ```http
 POST /api/skills/{skill_name}/publish
+Content-Type: application/json
 ```
+
+Optional request body:
+```json
+{
+  "release_notes": "Fix prompt routing and clarify browser tool usage."
+}
+```
+
+`release_notes` is publish-event metadata stored on the immutable release record. The package version still comes from `SKILL.md` and is not edited through the publish request.
 
 Publish flow:
 1. Validate the current user's custom skill and parse `SKILL.md` metadata.
 2. Copy the custom skill artifact to the public latest storage path.
 3. Soft-delete previous active public rows for the same skill name.
 4. Create the new public latest `skills` row.
-5. Create a `skill_releases` record with generated `release_version` and optional `package_version`.
+5. Create a `skill_releases` record with generated `release_version`, optional `package_version`, and optional `release_notes`.
 6. Commit once and return the version-aware `SkillResponse`.
 
 User-visible behavior:
