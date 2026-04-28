@@ -4,7 +4,16 @@ import { MoreVerticalIcon, UploadIcon } from "lucide-react";
 import { type ChangeEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,9 +47,34 @@ export function SkillsGallery() {
   const publishSkill = usePublishSkill();
   const uploadSkills = useUploadSkills();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [filter, setFilter] = useState<string>("public");
+  const [filter, setFilter] = useState<Skill["category"]>("public");
+  const [publishCandidate, setPublishCandidate] = useState<Skill | null>(null);
 
   const filteredSkills = skills.filter((skill) => skill.category === filter);
+
+  function getDisplayVersion(skill: Skill) {
+    return skill.package_version ?? skill.release_version ?? null;
+  }
+
+  function getVersionText(skill: Skill) {
+    const displayVersion = getDisplayVersion(skill);
+    if (displayVersion) {
+      return displayVersion;
+    }
+    return t.settings.skills.noPackageVersion;
+  }
+
+  function getVersionDetail(skill: Skill) {
+    const displayVersion = getDisplayVersion(skill);
+    if (skill.category === "public") {
+      return displayVersion
+        ? t.settings.skills.latestVersion(displayVersion)
+        : t.settings.skills.noPackageVersion;
+    }
+    return skill.package_version
+      ? t.settings.skills.packageVersion(skill.package_version)
+      : t.settings.skills.noPackageVersion;
+  }
 
   function openUploadDialog() {
     fileInputRef.current?.click();
@@ -92,10 +126,15 @@ export function SkillsGallery() {
     }
   }
 
-  async function handlePublish(skill: Skill) {
+  async function handlePublishConfirmed() {
+    if (!publishCandidate) {
+      return;
+    }
+
     try {
-      await publishSkill.mutateAsync(skill.name);
-      toast.success(t.settings.skills.publishSuccess(skill.name));
+      await publishSkill.mutateAsync(publishCandidate.name);
+      toast.success(t.settings.skills.publishSuccess(publishCandidate.name));
+      setPublishCandidate(null);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t.settings.skills.uploadError,
@@ -192,7 +231,7 @@ export function SkillsGallery() {
 
       <div className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 flex gap-2">
-          <Tabs defaultValue="public" onValueChange={setFilter}>
+          <Tabs defaultValue="public" onValueChange={(value) => setFilter(value as Skill["category"])}>
             <TabsList variant="line">
               <TabsTrigger value="public">{t.common.public}</TabsTrigger>
               <TabsTrigger value="custom">{t.common.custom}</TabsTrigger>
@@ -221,12 +260,20 @@ export function SkillsGallery() {
                 variant="outline"
               >
                 <ItemContent>
-                  <ItemTitle>{skill.name}</ItemTitle>
-                  {skill.category === "public" && skill.owner_display_name ? (
-                    <div className="text-muted-foreground text-xs">
-                      {t.settings.skills.publishedBy(skill.owner_display_name)}
-                    </div>
-                  ) : null}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ItemTitle>{skill.name}</ItemTitle>
+                    <Badge variant={getDisplayVersion(skill) ? "secondary" : "outline"}>
+                      {getVersionText(skill)}
+                    </Badge>
+                  </div>
+                  <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                    <span>{getVersionDetail(skill)}</span>
+                    {skill.category === "public" && skill.owner_display_name ? (
+                      <span>
+                        {t.settings.skills.publishedBy(skill.owner_display_name)}
+                      </span>
+                    ) : null}
+                  </div>
                   <ItemDescription className="line-clamp-4">
                     {skill.description}
                   </ItemDescription>
@@ -258,7 +305,7 @@ export function SkillsGallery() {
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onSelect={() => {
-                              void handlePublish(skill);
+                              setPublishCandidate(skill);
                             }}
                           >
                             {t.settings.skills.publishSkill}
@@ -273,6 +320,62 @@ export function SkillsGallery() {
           </div>
         )}
       </div>
+
+      <Dialog
+        open={publishCandidate !== null}
+        onOpenChange={(open) => {
+          if (!open && !publishSkill.isPending) {
+            setPublishCandidate(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t.settings.skills.publishDialogTitle}</DialogTitle>
+            <DialogDescription>
+              {t.settings.skills.publishDialogDescription}
+            </DialogDescription>
+          </DialogHeader>
+          {publishCandidate ? (
+            <div className="space-y-4 text-sm">
+              <div className="rounded-md border bg-muted/30 p-3">
+                <div className="font-medium">{publishCandidate.name}</div>
+                <div className="text-muted-foreground mt-1">
+                  {getVersionDetail(publishCandidate)}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted-foreground mb-1 text-xs font-medium uppercase tracking-wide">
+                  {t.settings.skills.publishDescriptionLabel}
+                </div>
+                <p className="text-sm leading-6">{publishCandidate.description}</p>
+              </div>
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+                {t.settings.skills.publishAsLatestNotice}
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={publishSkill.isPending}
+              onClick={() => setPublishCandidate(null)}
+            >
+              {t.common.cancel}
+            </Button>
+            <Button
+              type="button"
+              disabled={publishSkill.isPending}
+              onClick={() => void handlePublishConfirmed()}
+            >
+              {publishSkill.isPending
+                ? t.settings.skills.publishPending
+                : t.settings.skills.confirmPublish}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

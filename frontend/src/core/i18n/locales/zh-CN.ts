@@ -466,7 +466,17 @@ export const zhCN: Translations = {
       downloadSkill: "下载",
       downloadSuccess: (skillName: string) => `技能“${skillName}”下载成功。`,
       publishSuccess: (skillName: string) => `技能“${skillName}”发布成功。`,
+      publishPending: "发布中...",
       publishedBy: (ownerDisplayName: string) => `发布者 ${ownerDisplayName}`,
+      latestVersion: (version: string) => `Latest ${version}`,
+      packageVersion: (version: string) => `Package ${version}`,
+      noPackageVersion: "无 package version",
+      publishDialogTitle: "发布技能",
+      publishDialogDescription: "发布前请确认技能元数据。",
+      publishDescriptionLabel: "描述",
+      publishAsLatestNotice:
+        "这会将该技能发布为 public latest。发布后其他用户可以下载。",
+      confirmPublish: "发布为 public latest",
       deleteBlocked: (agentName: string) =>
         `该技能被智能体“${agentName}”绑定，无法删除。`,
       conflictConfirm: (skillName: string) =>

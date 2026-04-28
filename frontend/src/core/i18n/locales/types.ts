@@ -408,7 +408,16 @@ export interface Translations {
       downloadSkill: string;
       downloadSuccess: (skillName: string) => string;
       publishSuccess: (skillName: string) => string;
+      publishPending: string;
       publishedBy: (ownerDisplayName: string) => string;
+      latestVersion: (version: string) => string;
+      packageVersion: (version: string) => string;
+      noPackageVersion: string;
+      publishDialogTitle: string;
+      publishDialogDescription: string;
+      publishDescriptionLabel: string;
+      publishAsLatestNotice: string;
+      confirmPublish: string;
       deleteBlocked: (agentName: string) => string;
       conflictConfirm: (skillName: string) => string;
       noCustomSkills: string;

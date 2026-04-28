@@ -493,8 +493,19 @@ export const enUS: Translations = {
         `Skill "${skillName}" downloaded successfully.`,
       publishSuccess: (skillName: string) =>
         `Skill "${skillName}" published successfully.`,
+      publishPending: "Publishing...",
       publishedBy: (ownerDisplayName: string) =>
         `Published by ${ownerDisplayName}`,
+      latestVersion: (version: string) => `Latest ${version}`,
+      packageVersion: (version: string) => `Package ${version}`,
+      noPackageVersion: "No package version",
+      publishDialogTitle: "Publish skill",
+      publishDialogDescription:
+        "Review the skill metadata before publishing it to the public catalog.",
+      publishDescriptionLabel: "Description",
+      publishAsLatestNotice:
+        "This will publish the skill as the public latest version. Other users can download it after publishing.",
+      confirmPublish: "Publish as public latest",
       deleteBlocked: (agentName: string) =>
         `This skill is bound to agent "${agentName}" and cannot be deleted.`,
       conflictConfirm: (skillName: string) =>
