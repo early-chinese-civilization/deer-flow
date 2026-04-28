@@ -49,6 +49,7 @@ export function SkillsGallery() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [filter, setFilter] = useState<Skill["category"]>("public");
   const [publishCandidate, setPublishCandidate] = useState<Skill | null>(null);
+  const [releaseNotes, setReleaseNotes] = useState("");
 
   const filteredSkills = skills.filter((skill) => skill.category === filter);
 
@@ -132,9 +133,13 @@ export function SkillsGallery() {
     }
 
     try {
-      await publishSkill.mutateAsync(publishCandidate.name);
+      await publishSkill.mutateAsync({
+        skillName: publishCandidate.name,
+        releaseNotes: releaseNotes.trim() || null,
+      });
       toast.success(t.settings.skills.publishSuccess(publishCandidate.name));
       setPublishCandidate(null);
+      setReleaseNotes("");
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t.settings.skills.uploadError,
@@ -305,6 +310,7 @@ export function SkillsGallery() {
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onSelect={() => {
+                              setReleaseNotes("");
                               setPublishCandidate(skill);
                             }}
                           >
@@ -326,6 +332,7 @@ export function SkillsGallery() {
         onOpenChange={(open) => {
           if (!open && !publishSkill.isPending) {
             setPublishCandidate(null);
+            setReleaseNotes("");
           }
         }}
       >
@@ -349,6 +356,26 @@ export function SkillsGallery() {
                   {t.settings.skills.publishDescriptionLabel}
                 </div>
                 <p className="text-sm leading-6">{publishCandidate.description}</p>
+              </div>
+              <div>
+                <label
+                  htmlFor="skill-release-notes"
+                  className="text-muted-foreground mb-1 block text-xs font-medium uppercase tracking-wide"
+                >
+                  {t.settings.skills.releaseNotesLabel}
+                </label>
+                <textarea
+                  id="skill-release-notes"
+                  value={releaseNotes}
+                  maxLength={4000}
+                  disabled={publishSkill.isPending}
+                  placeholder={t.settings.skills.releaseNotesPlaceholder}
+                  onChange={(event) => setReleaseNotes(event.target.value)}
+                  className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring min-h-24 w-full rounded-md border px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                />
+                <p className="text-muted-foreground mt-1 text-xs">
+                  {t.settings.skills.releaseNotesHelp}
+                </p>
               </div>
               <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
                 {t.settings.skills.publishAsLatestNotice}

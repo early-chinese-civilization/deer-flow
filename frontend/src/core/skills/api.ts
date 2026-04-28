@@ -5,6 +5,9 @@ import type { Skill } from "./type";
 export interface SkillUploadCheckResponse {
   filename: string;
   skill_name: string;
+  package_version?: string | null;
+  existing_package_version?: string | null;
+  same_version: boolean;
   exists: boolean;
   message: string;
 }
@@ -12,6 +15,8 @@ export interface SkillUploadCheckResponse {
 export interface SkillUploadResult {
   filename: string;
   skill_name?: string | null;
+  package_version?: string | null;
+  action?: "created" | "updated" | "skipped" | null;
   success: boolean;
   message: string;
 }
@@ -33,6 +38,10 @@ export interface SkillDownloadCheckResponse {
 export interface SkillDownloadRequest {
   owner_user_id?: number | null;
   overwrite?: boolean;
+}
+
+export interface SkillPublishRequest {
+  release_notes?: string | null;
 }
 
 export async function loadSkills() {
@@ -157,9 +166,16 @@ export async function downloadSkill(
   return response.json() as Promise<Skill>;
 }
 
-export async function publishSkill(skillName: string): Promise<Skill> {
+export async function publishSkill(
+  skillName: string,
+  request: SkillPublishRequest = {},
+): Promise<Skill> {
   const response = await fetch(`${getBackendBaseURL()}/api/skills/${skillName}/publish`, {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
     credentials: "include",
   });
 

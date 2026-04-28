@@ -416,6 +416,9 @@ export interface Translations {
       publishDialogTitle: string;
       publishDialogDescription: string;
       publishDescriptionLabel: string;
+      releaseNotesLabel: string;
+      releaseNotesPlaceholder: string;
+      releaseNotesHelp: string;
       publishAsLatestNotice: string;
       confirmPublish: string;
       deleteBlocked: (agentName: string) => string;

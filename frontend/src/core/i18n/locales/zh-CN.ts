@@ -474,6 +474,9 @@ export const zhCN: Translations = {
       publishDialogTitle: "发布技能",
       publishDialogDescription: "发布前请确认技能元数据。",
       publishDescriptionLabel: "描述",
+      releaseNotesLabel: "发布说明（可选）",
+      releaseNotesPlaceholder: "这次发布改了什么？",
+      releaseNotesHelp: "发布说明会记录在本次 release 上；版本仍然来自 SKILL.md。",
       publishAsLatestNotice:
         "这会将该技能发布为 public latest。发布后其他用户可以下载。",
       confirmPublish: "发布为 public latest",

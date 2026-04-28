@@ -81,7 +81,13 @@ export function useDownloadSkill() {
 export function usePublishSkill() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (skillName: string) => publishSkill(skillName),
+    mutationFn: async ({
+      skillName,
+      releaseNotes,
+    }: {
+      skillName: string;
+      releaseNotes?: string | null;
+    }) => publishSkill(skillName, { release_notes: releaseNotes }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["skills"] });
     },

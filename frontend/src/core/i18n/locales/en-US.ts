@@ -503,6 +503,9 @@ export const enUS: Translations = {
       publishDialogDescription:
         "Review the skill metadata before publishing it to the public catalog.",
       publishDescriptionLabel: "Description",
+      releaseNotesLabel: "Release notes (optional)",
+      releaseNotesPlaceholder: "What changed in this publish?",
+      releaseNotesHelp: "Stored on this release record. Version still comes from SKILL.md.",
       publishAsLatestNotice:
         "This will publish the skill as the public latest version. Other users can download it after publishing.",
       confirmPublish: "Publish as public latest",
