@@ -6,6 +6,7 @@ test_skills_router.py and this module) into a single dedicated module.
 
 from pathlib import Path
 
+from app.gateway.routers.skills import ALLOWED_SKILL_FRONTMATTER_KEYS, _validate_skill_directory
 from deerflow.skills.validation import ALLOWED_FRONTMATTER_PROPERTIES, _validate_skill_frontmatter
 
 
@@ -36,6 +37,39 @@ class TestValidateSkillFrontmatter:
         assert valid is True
         assert msg == "Skill is valid!"
         assert name == "my-skill"
+
+    def test_gateway_accepts_standard_optional_metadata_fields(self, tmp_path):
+        skill_dir = _write_skill(
+            tmp_path,
+            "---\nname: my-skill\ndescription: A skill\nversion: '1.0'\nauthor: test author\ncompatibility: DeerFlow >= 0.1\n---\n\nBody\n",
+        )
+
+        name, description = _validate_skill_directory(skill_dir)
+
+        assert name == "my-skill"
+        assert description == "A skill"
+
+    def test_gateway_allowed_keys_match_harness_metadata_keys(self):
+        assert {"version", "author", "compatibility"}.issubset(ALLOWED_SKILL_FRONTMATTER_KEYS)
+        assert ALLOWED_FRONTMATTER_PROPERTIES == ALLOWED_SKILL_FRONTMATTER_KEYS
+
+    def test_rejects_non_string_version_in_harness_and_gateway(self, tmp_path):
+        skill_dir = _write_skill(
+            tmp_path,
+            "---\nname: my-skill\ndescription: A skill\nversion: 1.0\n---\n\nBody\n",
+        )
+
+        valid, msg, name = _validate_skill_frontmatter(skill_dir)
+        assert valid is False
+        assert "Version must be a string" in msg
+        assert name is None
+
+        try:
+            _validate_skill_directory(skill_dir)
+        except ValueError as exc:
+            assert "Version must be a string" in str(exc)
+        else:
+            raise AssertionError("Gateway validation accepted a non-string version")
 
     def test_missing_skill_md(self, tmp_path):
         valid, msg, name = _validate_skill_frontmatter(tmp_path)

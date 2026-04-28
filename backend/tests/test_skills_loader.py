@@ -6,10 +6,10 @@ from deerflow.config.paths import get_paths
 from deerflow.skills.loader import get_skills_root_path, load_skills
 
 
-def _write_skill(skill_dir: Path, name: str, description: str) -> None:
+def _write_skill(skill_dir: Path, name: str, description: str, extra_frontmatter: str = "") -> None:
     """Write a minimal SKILL.md for tests."""
     skill_dir.mkdir(parents=True, exist_ok=True)
-    content = f"---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n"
+    content = f"---\nname: {name}\ndescription: {description}\n{extra_frontmatter}---\n\n# {name}\n"
     (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
 
 
@@ -44,6 +44,24 @@ def test_load_skills_discovers_public_and_user_scoped_skills_with_virtual_paths(
 
     assert team_skill.skill_path == "7/team-helper"
     assert team_skill.get_container_file_path() == "/mnt/skills/team-helper/SKILL.md"
+
+
+def test_load_skills_parses_optional_package_metadata(tmp_path: Path):
+    """Optional SKILL.md metadata should be available to API/release callers without reparsing."""
+    skills_root = tmp_path / "skills"
+    _write_skill(
+        skills_root / "public" / "versioned-skill",
+        "versioned-skill",
+        "Versioned skill",
+        extra_frontmatter="version: v1.2.3\nauthor: Test Author\ncompatibility: DeerFlow >= 0.1\n",
+    )
+
+    skills = load_skills(skills_path=skills_root, use_config=False, enabled_only=False)
+
+    assert len(skills) == 1
+    assert skills[0].package_version == "v1.2.3"
+    assert skills[0].author == "Test Author"
+    assert skills[0].compatibility == "DeerFlow >= 0.1"
 
 
 def test_load_skills_skips_hidden_directories(tmp_path: Path):

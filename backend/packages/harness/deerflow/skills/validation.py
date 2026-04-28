@@ -12,6 +12,14 @@ import yaml
 ALLOWED_FRONTMATTER_PROPERTIES = {"name", "description", "license", "allowed-tools", "metadata", "compatibility", "version", "author"}
 
 
+def validate_optional_frontmatter_metadata(frontmatter: dict) -> str | None:
+    """Return an error message when optional SKILL.md metadata has an invalid type."""
+    version = frontmatter.get("version")
+    if version is not None and not isinstance(version, str):
+        return f"Version must be a string, got {type(version).__name__}"
+    return None
+
+
 def _validate_skill_frontmatter(skill_dir: Path) -> tuple[bool, str, str | None]:
     """Validate a skill directory's SKILL.md frontmatter.
 
@@ -48,6 +56,10 @@ def _validate_skill_frontmatter(skill_dir: Path) -> tuple[bool, str, str | None]
     unexpected_keys = set(frontmatter.keys()) - ALLOWED_FRONTMATTER_PROPERTIES
     if unexpected_keys:
         return False, f"Unexpected key(s) in SKILL.md frontmatter: {', '.join(sorted(unexpected_keys))}", None
+
+    metadata_error = validate_optional_frontmatter_metadata(frontmatter)
+    if metadata_error:
+        return False, metadata_error, None
 
     # Check required fields
     if "name" not in frontmatter:

@@ -247,6 +247,8 @@ class Skill(Base):
     user = relationship("User", back_populates="skills", foreign_keys=[user_id])
     owner_user = relationship("User", foreign_keys=[owner_user_id])
     agent_skills = relationship("AgentSkill", back_populates="skill", cascade="all, delete-orphan")
+    source_releases = relationship("SkillRelease", foreign_keys="SkillRelease.source_skill_id", back_populates="source_skill")
+    published_releases = relationship("SkillRelease", foreign_keys="SkillRelease.published_skill_id", back_populates="published_skill")
 
     __table_args__ = (
         Index(
@@ -266,6 +268,54 @@ class Skill(Base):
         Index("ix_skills_user_id", "user_id"),
         Index("ix_skills_owner_user_id", "owner_user_id"),
         Index("ix_skills_deleted_at", "deleted_at"),
+    )
+
+
+class SkillRelease(Base):
+    """Immutable record of a skill publish event."""
+
+    __tablename__ = "skill_releases"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="Skill release ID")
+    skill_name = Column(String(255), nullable=False, comment="Published skill name")
+    release_version = Column(String(64), nullable=False, unique=True, comment="System-generated immutable release version")
+    package_version = Column(String(255), nullable=True, comment="Optional SKILL.md package version")
+    description = Column(Text, nullable=True, comment="Skill description at publish time")
+    status = Column(String(50), nullable=False, default="published", comment="Release status")
+    artifact_path = Column(String(500), nullable=False, comment="Published artifact filesystem path")
+    publisher_user_id = Column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Publisher user ID",
+    )
+    source_skill_id = Column(
+        BigInteger,
+        ForeignKey("skills.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Source custom skill ID",
+    )
+    published_skill_id = Column(
+        BigInteger,
+        ForeignKey("skills.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Public latest skill row produced by this release",
+    )
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        comment="Created at",
+    )
+
+    publisher_user = relationship("User", foreign_keys=[publisher_user_id])
+    source_skill = relationship("Skill", foreign_keys=[source_skill_id], back_populates="source_releases")
+    published_skill = relationship("Skill", foreign_keys=[published_skill_id], back_populates="published_releases")
+
+    __table_args__ = (
+        Index("ix_skill_releases_skill_name_created", "skill_name", "created_at"),
+        Index("ix_skill_releases_published_skill_id", "published_skill_id"),
+        Index("ix_skill_releases_status", "status"),
     )
 
 
