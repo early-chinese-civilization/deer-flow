@@ -288,6 +288,15 @@ On Windows, run the local development flow from Git Bash. Native `cmd.exe` and P
    make dev
    ```
 
+   To skip Keycloak login during local development, enable the explicit dev-only auth bypass:
+
+   ```bash
+   DEER_FLOW_DEV_AUTH_BYPASS=1 make dev
+   # or: make dev DEV_AUTH_BYPASS=1
+   ```
+
+   You can also put `DEER_FLOW_DEV_AUTH_BYPASS=1` in the root `.env`. The bypass only works when the service script starts in development mode and uses a synthetic local user (`dev-local-user` by default). Optional `.env` overrides include `DEER_FLOW_DEV_AUTH_USERNAME`, `DEER_FLOW_DEV_AUTH_DISPLAY_NAME`, and `DEER_FLOW_DEV_AUTH_EMAIL`.
+
 6. **Access**: http://localhost:2026
 
 ### Advanced

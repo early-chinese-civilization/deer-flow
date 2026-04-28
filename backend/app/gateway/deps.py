@@ -13,9 +13,10 @@ from ecc_auth.dependencies import (
     get_current_user_optional as get_current_auth_identity_optional,
 )
 from ecc_auth.identity import AuthIdentity
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.auth.dev_bypass import get_dev_auth_identity, is_dev_auth_bypass_enabled
 from app.gateway.auth.service import sync_local_user_from_identity
 from app.gateway.db.models import User
 from deerflow.runtime import RunManager, StreamBridge
@@ -72,9 +73,43 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
+async def get_gateway_auth_identity(
+    request: Request,
+    kc_access_token: str | None = Cookie(default=None),
+    kc_refresh_token: str | None = Cookie(default=None),
+    kc_logout_marker: str | None = Cookie(default=None),
+) -> AuthIdentity:
+    """Resolve the shared auth identity, or the explicit dev identity."""
+    if is_dev_auth_bypass_enabled():
+        return get_dev_auth_identity()
+    return await get_current_auth_identity(
+        request=request,
+        kc_access_token=kc_access_token,
+        kc_refresh_token=kc_refresh_token,
+        kc_logout_marker=kc_logout_marker,
+    )
+
+
+async def get_gateway_auth_identity_optional(
+    request: Request,
+    kc_access_token: str | None = Cookie(default=None),
+    kc_refresh_token: str | None = Cookie(default=None),
+    kc_logout_marker: str | None = Cookie(default=None),
+) -> AuthIdentity | None:
+    """Resolve an optional shared identity, honoring the dev bypass."""
+    if is_dev_auth_bypass_enabled():
+        return get_dev_auth_identity()
+    return await get_current_auth_identity_optional(
+        request=request,
+        kc_access_token=kc_access_token,
+        kc_refresh_token=kc_refresh_token,
+        kc_logout_marker=kc_logout_marker,
+    )
+
+
 async def get_current_user(
     db: AsyncSession = Depends(get_db),
-    identity: AuthIdentity = Depends(get_current_auth_identity),
+    identity: AuthIdentity = Depends(get_gateway_auth_identity),
 ) -> User:
     """Resolve the current DeerFlow user via shared identity verification.
 
@@ -88,7 +123,7 @@ async def get_current_user(
 
 async def get_current_user_optional(
     db: AsyncSession = Depends(get_db),
-    identity: AuthIdentity | None = Depends(get_current_auth_identity_optional),
+    identity: AuthIdentity | None = Depends(get_gateway_auth_identity_optional),
 ) -> User | None:
     """Resolve the current user, returning ``None`` when unauthenticated."""
     if identity is None:
@@ -122,7 +157,7 @@ async def get_db_optional() -> AsyncGenerator[AsyncSession | None, None]:
 
 async def get_current_user_optional_no_db(
     db: AsyncSession | None = Depends(get_db_optional),
-    identity: AuthIdentity | None = Depends(get_current_auth_identity_optional),
+    identity: AuthIdentity | None = Depends(get_gateway_auth_identity_optional),
 ) -> User | None:
     """Resolve the current user when both auth and DB are optional."""
     if db is None or identity is None:
