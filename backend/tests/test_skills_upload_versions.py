@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import tempfile
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
+from fastapi import HTTPException
 
 from app.gateway.db.models import Skill, User
 from app.gateway.routers import skills as skills_router
@@ -36,6 +41,22 @@ def _write_skill_dir(skill_dir: Path, *, version: str | None, description: str =
         f"---\nname: demo-skill\ndescription: {description}\n{version_line}---\n\n# Demo Skill\n",
         encoding="utf-8",
     )
+
+
+def _zip_skill_archive(skill_md: str) -> bytes:
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as zip_ref:
+        zip_ref.writestr("demo-skill/SKILL.md", skill_md)
+    return archive.getvalue()
+
+
+class FakeUploadFile:
+    def __init__(self, filename: str, content: bytes):
+        self.filename = filename
+        self._content = content
+
+    async def read(self) -> bytes:
+        return self._content
 
 
 def test_check_upload_treats_same_name_new_version_as_update(tmp_path, monkeypatch):
@@ -203,3 +224,45 @@ def test_upload_same_name_same_version_requires_overwrite(tmp_path, monkeypatch)
     assert response.results[0].success is False
     assert response.results[0].action == "skipped"
     assert "already exists" in response.results[0].message
+
+
+def test_check_upload_rejects_non_string_package_version():
+    archive = _zip_skill_archive(
+        "---\nname: demo-skill\ndescription: Demo skill\nversion: 1.2\n---\n\n# Demo Skill\n"
+    )
+
+    async def run():
+        with pytest.raises(HTTPException) as exc_info:
+            await skills_router.check_skill_upload(
+                file=FakeUploadFile("demo.zip", archive),
+                current_user=_user(),
+                db=FakeDb(),
+            )
+        return exc_info.value
+
+    exc = asyncio.run(run())
+
+    assert exc.status_code == 400
+    assert "Version must be a string" in exc.detail
+
+
+def test_upload_rejects_non_string_package_version():
+    archive = _zip_skill_archive(
+        "---\nname: demo-skill\ndescription: Demo skill\nversion: 1.2\n---\n\n# Demo Skill\n"
+    )
+    db = FakeDb()
+
+    async def run():
+        return await skills_router.upload_skills(
+            files=[FakeUploadFile("demo.zip", archive)],
+            overwrite_names=None,
+            current_user=_user(),
+            db=db,
+        )
+
+    response = asyncio.run(run())
+
+    assert db.commits == 0
+    assert db.rollbacks == 1
+    assert response.results[0].success is False
+    assert "Version must be a string" in response.results[0].message

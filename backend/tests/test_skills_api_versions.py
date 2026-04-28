@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime
 
 import pytest
 from fastapi import HTTPException
@@ -109,6 +110,33 @@ def test_list_skills_includes_custom_package_version_from_skill_md(tmp_path, mon
     assert response.skills[0].package_version == "custom-v1"
     assert response.skills[0].version == "custom-v1"
     assert response.skills[0].release_version is None
+
+
+def test_list_skills_includes_public_release_published_at_and_owner_display_name(monkeypatch):
+    db = FakeDb()
+    current_user = _user()
+    public = _public_skill(12, "demo-skill")
+    public.owner_user = User(id=7, external_auth_id="sub", username="alice", display_name="Alice")
+    release = _release(12)
+    release.created_at = datetime(2026, 4, 28, 8, 0, tzinfo=UTC)
+
+    async def list_visible_skills(db_arg, *, user_id):
+        return [public]
+
+    async def get_latest_release_for_public_skill(db_arg, *, published_skill_id):
+        return release
+
+    monkeypatch.setattr(skills_router.SkillRepository, "list_visible_skills", list_visible_skills)
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_release_for_public_skill", get_latest_release_for_public_skill)
+
+    async def run():
+        return await skills_router.list_skills(current_user=current_user, db=db)
+
+    response = asyncio.run(run())
+
+    assert response.skills[0].owner_user_id == 7
+    assert response.skills[0].owner_display_name == "Alice"
+    assert response.skills[0].published_at == "2026-04-28T08:00:00+00:00"
 
 
 def test_get_skill_includes_public_latest_release_metadata(monkeypatch):
