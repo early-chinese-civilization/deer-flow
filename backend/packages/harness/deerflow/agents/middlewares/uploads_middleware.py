@@ -61,8 +61,8 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
                 size_kb = file["size"] / 1024
                 size_str = f"{size_kb:.1f} KB" if size_kb < 1024 else f"{size_kb / 1024:.1f} MB"
                 lines.append(f"- {file['filename']} ({size_str})")
-                lines.append(f"  virtual_path: {file['virtual_path']}")
                 lines.append(f"  oss_uri: {file['oss_uri']}")
+                lines.append(f"  virtual_path: {file['virtual_path']}")
                 lines.append("")
         else:
             lines.append("(empty)")
@@ -74,12 +74,12 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
                 size_kb = file["size"] / 1024
                 size_str = f"{size_kb:.1f} KB" if size_kb < 1024 else f"{size_kb / 1024:.1f} MB"
                 lines.append(f"- {file['filename']} ({size_str})")
-                lines.append(f"  virtual_path: {file['virtual_path']}")
                 lines.append(f"  oss_uri: {file['oss_uri']}")
+                lines.append(f"  virtual_path: {file['virtual_path']}")
                 lines.append("")
 
-        lines.append("Use the `virtual_path` values with the `read_file` and `view_image` tools.")
-        lines.append("When referencing files in your final response, prefer `oss_uri`; the client resolves a runtime `http_uri` when it needs to open them.")
+        lines.append("Prefer `oss_uri` when referring to files in model-visible text and final responses.")
+        lines.append("Use `virtual_path` only when a tool explicitly requires a sandbox path input.")
         lines.append("</uploaded_files>")
 
         return "\n".join(lines)

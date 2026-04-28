@@ -333,7 +333,7 @@ export function WorkspaceFilesPanel({
         .map((message) => message.id)
         .filter((messageId): messageId is string => Boolean(messageId)),
     );
-    processedArtifactPathsRef.current = new Set(latestArtifactsRef.current);
+    processedArtifactPathsRef.current = new Set(Object.keys(latestArtifactsRef.current));
   }, [threadId]);
 
   useEffect(() => {
@@ -365,7 +365,7 @@ export function WorkspaceFilesPanel({
       }
     }
 
-    for (const artifactPath of artifacts) {
+    for (const artifactPath of Object.keys(artifacts)) {
       if (processedArtifactPathsRef.current.has(artifactPath)) {
         continue;
       }
@@ -474,11 +474,15 @@ export function WorkspaceFilesPanel({
 
   const handleFileSelect = (file: UploadedFileInfo) => {
     setSelectedFile(file.object_key);
+    const ossUri = file.oss_uri ?? file.virtual_path;
     setArtifacts((currentArtifacts) => {
-      if (currentArtifacts.includes(file.virtual_path)) {
+      if (currentArtifacts[file.virtual_path] === ossUri) {
         return currentArtifacts;
       }
-      return [...currentArtifacts, file.virtual_path];
+      return {
+        ...currentArtifacts,
+        [file.virtual_path]: ossUri,
+      };
     });
 
     if (!artifactsOpen && selectedArtifact === file.virtual_path) {

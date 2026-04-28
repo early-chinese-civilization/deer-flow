@@ -1349,6 +1349,22 @@ class TestExtractArtifacts:
         }
         assert _extract_artifacts(result) == ["/mnt/user-data/outputs/a.txt", "/mnt/user-data/outputs/b.csv"]
 
+    def test_extracts_from_artifacts_map(self):
+        from app.channels.manager import _extract_artifacts
+
+        result = {
+            "messages": [
+                {"type": "human", "content": "generate report"},
+                {"type": "ai", "content": "Here is your report."},
+            ],
+            "artifacts": {
+                "/mnt/user-data/outputs/report.md": "oss://demo-bucket/workspaces/ws-1/outputs/report.md",
+                "/mnt/user-data/outputs/chart.png": "oss://demo-bucket/workspaces/ws-1/outputs/chart.png",
+            },
+        }
+
+        assert _extract_artifacts(result) == ["/mnt/user-data/outputs/report.md", "/mnt/user-data/outputs/chart.png"]
+
 
 class TestFormatArtifactText:
     def test_single_artifact(self):
@@ -1410,6 +1426,50 @@ class TestHandleChatWithArtifacts:
             assert "Here is your report." in outbound_received[0].text
             assert "report.md" in outbound_received[0].text
             assert outbound_received[0].artifacts == ["/mnt/user-data/outputs/report.md"]
+
+        _run(go())
+
+    def test_response_text_rewrites_virtual_paths_to_oss_uris(self):
+        from app.channels.manager import ChannelManager
+
+        async def go():
+            bus = MessageBus()
+            store = ChannelStore(path=Path(tempfile.mkdtemp()) / "store.json")
+            manager = ChannelManager(bus=bus, store=store)
+
+            run_result = {
+                "messages": [
+                    {"type": "human", "content": "generate chart"},
+                    {
+                        "type": "ai",
+                        "content": "![trend](/mnt/user-data/outputs/chart.png)",
+                    },
+                ],
+                "artifacts": {
+                    "/mnt/user-data/outputs/chart.png": "oss://demo-bucket/workspaces/ws-1/outputs/chart.png",
+                },
+            }
+            mock_client = _make_mock_langgraph_client(run_result=run_result)
+            manager._client = mock_client
+
+            outbound_received = []
+            bus.subscribe_outbound(lambda msg: outbound_received.append(msg))
+            await manager.start()
+
+            await bus.publish_inbound(
+                InboundMessage(
+                    channel_name="test",
+                    chat_id="c1",
+                    user_id="u1",
+                    text="generate chart",
+                )
+            )
+            await _wait_for(lambda: len(outbound_received) >= 1)
+            await manager.stop()
+
+            assert len(outbound_received) == 1
+            assert "oss://demo-bucket/workspaces/ws-1/outputs/chart.png" in outbound_received[0].text
+            assert "/mnt/user-data/outputs/chart.png" not in outbound_received[0].text
 
         _run(go())
 

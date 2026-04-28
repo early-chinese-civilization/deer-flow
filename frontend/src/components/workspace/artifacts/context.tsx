@@ -18,8 +18,8 @@ export interface ArtifactSource {
 }
 
 export interface ArtifactsContextType {
-  artifacts: string[];
-  setArtifacts: Dispatch<SetStateAction<string[]>>;
+  artifacts: Record<string, string>;
+  setArtifacts: Dispatch<SetStateAction<Record<string, string>>>;
   setArtifactSourcesForThread: (
     threadId: string,
     sources: ArtifactSource[],
@@ -48,7 +48,7 @@ interface ArtifactsProviderProps {
 }
 
 export function ArtifactsProvider({ children }: ArtifactsProviderProps) {
-  const [artifacts, setArtifacts] = useState<string[]>([]);
+  const [artifacts, setArtifacts] = useState<Record<string, string>>({});
   const [artifactSourcesByThread, setArtifactSourcesByThread] = useState<
     Record<string, Record<string, ArtifactSource>>
   >({});
