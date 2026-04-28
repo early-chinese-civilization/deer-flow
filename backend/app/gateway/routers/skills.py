@@ -45,6 +45,7 @@ class SkillResponse(BaseModel):
     package_version: str | None = Field(default=None, description="Package version from SKILL.md frontmatter")
     release_version: str | None = Field(default=None, description="System-generated immutable release version")
     release_status: str | None = Field(default=None, description="Release status for public latest")
+    release_notes: str | None = Field(default=None, description="Optional notes attached to the publish event")
     published_at: str | None = Field(default=None, description="Release publish timestamp")
 
 
@@ -58,6 +59,16 @@ class SkillUpdateRequest(BaseModel):
     """Request model for updating a skill."""
 
     enabled: bool = Field(..., description="Whether to enable or disable the skill")
+
+
+class SkillPublishRequest(BaseModel):
+    """Request body for publishing a custom skill as public latest."""
+
+    release_notes: str | None = Field(
+        default=None,
+        max_length=4000,
+        description="Optional notes for this publish event",
+    )
 
 
 class SkillInstallRequest(BaseModel):
@@ -79,8 +90,11 @@ class SkillUploadCheckResponse(BaseModel):
     """Response model for skill upload conflict checks."""
 
     filename: str = Field(..., description="Original zip filename")
-    skill_name: str = Field(..., description="Parsed skill folder name")
-    exists: bool = Field(..., description="Whether the current user already has an active skill with this name")
+    skill_name: str = Field(..., description="Parsed skill name from SKILL.md")
+    package_version: str | None = Field(default=None, description="Package version from the uploaded SKILL.md")
+    existing_package_version: str | None = Field(default=None, description="Currently installed package version for this user and skill name")
+    same_version: bool = Field(default=False, description="Whether the uploaded package version matches the installed custom skill")
+    exists: bool = Field(..., description="Whether the current user already has this exact active skill version")
     message: str = Field(..., description="Check result message")
 
 
@@ -88,7 +102,9 @@ class SkillUploadResult(BaseModel):
     """Per-file upload result."""
 
     filename: str = Field(..., description="Original zip filename")
-    skill_name: str | None = Field(default=None, description="Parsed skill folder name")
+    skill_name: str | None = Field(default=None, description="Parsed skill name from SKILL.md")
+    package_version: str | None = Field(default=None, description="Package version from the uploaded SKILL.md")
+    action: str | None = Field(default=None, description="Upload action: created, updated, or skipped")
     success: bool = Field(..., description="Whether the upload succeeded")
     message: str = Field(..., description="Upload result message")
 
@@ -138,6 +154,7 @@ def _skill_to_response(skill: Skill, release=None, package_version: str | None =
     release_version = getattr(release, "release_version", None) if release is not None else None
     release_status = getattr(release, "status", None) if release is not None else None
     release_created_at = getattr(release, "created_at", None) if release is not None else None
+    release_notes = getattr(release, "release_notes", None) if release is not None else None
     published_at = release_created_at.isoformat() if release_created_at is not None else None
 
     return SkillResponse(
@@ -152,6 +169,7 @@ def _skill_to_response(skill: Skill, release=None, package_version: str | None =
         package_version=response_package_version,
         release_version=release_version,
         release_status=release_status,
+        release_notes=release_notes,
         published_at=published_at,
     )
 
@@ -160,9 +178,14 @@ def _extract_package_version_for_skill(skill: Skill) -> str | None:
     """Best-effort package version extraction for custom skill display."""
     try:
         skill_dir = _resolve_skill_record_dir(skill)
-        frontmatter = _extract_frontmatter(skill_dir / "SKILL.md")
+        return _extract_package_version_from_dir(skill_dir)
     except Exception:
         return None
+
+
+def _extract_package_version_from_dir(skill_dir: Path) -> str | None:
+    """Read the optional package version from a skill directory."""
+    frontmatter = _extract_frontmatter(skill_dir / "SKILL.md")
     package_version = frontmatter.get("version")
     return package_version if isinstance(package_version, str) else None
 
@@ -274,6 +297,18 @@ def _extract_publish_metadata(skill_dir: Path, *, expected_name: str) -> dict[st
         "description": description,
         "package_version": package_version,
     }
+
+
+def _normalize_release_notes(release_notes: str | None) -> str | None:
+    """Normalize and validate optional publish-event release notes."""
+    if release_notes is None:
+        return None
+    normalized = release_notes.strip()
+    if not normalized:
+        return None
+    if len(normalized) > 4000:
+        raise ValueError("Release notes are too long. Maximum is 4000 characters.")
+    return normalized
 
 
 def _safe_extract_archive(archive_path: Path, destination_dir: Path) -> None:
@@ -413,7 +448,7 @@ def _log_publish_failure(
     )
 
 
-async def _parse_uploaded_skill_archive(upload_file: UploadFile) -> tuple[str, str, Path, tempfile.TemporaryDirectory[str]]:
+async def _parse_uploaded_skill_archive(upload_file: UploadFile) -> tuple[str, str, str | None, Path, tempfile.TemporaryDirectory[str]]:
     """Persist, extract, and validate an uploaded skill archive."""
     if not upload_file.filename:
         raise ValueError("Uploaded file must have a filename")
@@ -432,8 +467,9 @@ async def _parse_uploaded_skill_archive(upload_file: UploadFile) -> tuple[str, s
     try:
         _safe_extract_archive(archive_path, extracted_dir)
         skill_dir = _resolve_skill_root_dir(extracted_dir)
-        _, description = _validate_skill_directory(skill_dir)
-        return upload_file.filename, skill_dir.name, skill_dir, temp_dir
+        skill_name, _ = _validate_skill_directory(skill_dir)
+        package_version = _extract_package_version_from_dir(skill_dir)
+        return upload_file.filename, skill_name, package_version, skill_dir, temp_dir
     except Exception:
         temp_dir.cleanup()
         raise
@@ -466,15 +502,26 @@ async def check_skill_upload(
 ) -> SkillUploadCheckResponse:
     temp_dir: tempfile.TemporaryDirectory[str] | None = None
     try:
-        filename, skill_name, _, temp_dir = await _parse_uploaded_skill_archive(file)
+        filename, skill_name, package_version, _, temp_dir = await _parse_uploaded_skill_archive(file)
         existing_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
+        existing_package_version = _extract_package_version_for_skill(existing_skill) if existing_skill is not None else None
         target_dir = _resolve_skill_dir(build_private_skill_file_path(current_user.id, skill_name))
-        exists = existing_skill is not None or target_dir.exists()
+        same_version = existing_skill is not None and existing_package_version == package_version
+        exists = same_version or (existing_skill is None and target_dir.exists())
+        if same_version:
+            message = f"Skill '{skill_name}' version '{package_version or 'unversioned'}' already exists"
+        elif existing_skill is not None:
+            message = f"Skill '{skill_name}' will be updated from version '{existing_package_version or 'unversioned'}' to '{package_version or 'unversioned'}'"
+        else:
+            message = "Skill version is available"
         return SkillUploadCheckResponse(
             filename=filename,
             skill_name=skill_name,
+            package_version=package_version,
+            existing_package_version=existing_package_version,
+            same_version=same_version,
             exists=exists,
-            message="Skill name already exists" if exists else "Skill name is available",
+            message=message,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -504,23 +551,28 @@ async def upload_skills(
     for upload_file in files:
         temp_dir: tempfile.TemporaryDirectory[str] | None = None
         try:
-            filename, skill_name, skill_dir, temp_dir = await _parse_uploaded_skill_archive(upload_file)
+            filename, skill_name, package_version, skill_dir, temp_dir = await _parse_uploaded_skill_archive(upload_file)
             description = _extract_frontmatter(skill_dir / "SKILL.md").get("description", "")
             if not isinstance(description, str):
                 description = ""
             description = description.strip()
 
             existing_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
+            existing_package_version = _extract_package_version_for_skill(existing_skill) if existing_skill is not None else None
             target_path = build_private_skill_file_path(current_user.id, skill_name)
             target_dir = _resolve_skill_dir(target_path)
-            already_exists = existing_skill is not None or target_dir.exists()
-            if already_exists and skill_name not in overwrite_set:
+            same_version = existing_skill is not None and existing_package_version == package_version
+            orphaned_target_exists = existing_skill is None and target_dir.exists()
+            if (same_version or orphaned_target_exists) and skill_name not in overwrite_set:
+                version_label = package_version or "unversioned"
                 results.append(
                     SkillUploadResult(
                         filename=filename,
                         skill_name=skill_name,
+                        package_version=package_version,
+                        action="skipped",
                         success=False,
-                        message=f"Skill '{skill_name}' already exists",
+                        message=f"Skill '{skill_name}' version '{version_label}' already exists",
                     )
                 )
                 continue
@@ -528,34 +580,33 @@ async def upload_skills(
             await asyncio.to_thread(_replace_skill_directory, skill_dir, target_dir)
 
             if existing_skill is not None:
-                await SkillRepository.soft_delete_skill(db, skill=existing_skill, commit=False)
-
-            created_skill = await SkillRepository.create_skill(
-                db,
-                user_id=current_user.id,
-                owner_user_id=None,
-                name=skill_name,
-                display_name=skill_name,
-                description=description,
-                file_path=target_path,
-                commit=False,
-            )
-
-            if existing_skill is not None:
-                await SkillRepository.rebind_agent_skills(
+                existing_skill.display_name = skill_name
+                existing_skill.description = description
+                existing_skill.file_path = target_path
+                await db.flush()
+                action = "updated"
+            else:
+                await SkillRepository.create_skill(
                     db,
                     user_id=current_user.id,
-                    old_skill_id=existing_skill.id,
-                    new_skill_id=created_skill.id,
+                    owner_user_id=None,
+                    name=skill_name,
+                    display_name=skill_name,
+                    description=description,
+                    file_path=target_path,
+                    commit=False,
                 )
+                action = "created"
 
             await db.commit()
             results.append(
                 SkillUploadResult(
                     filename=filename,
                     skill_name=skill_name,
+                    package_version=package_version,
+                    action=action,
                     success=True,
-                    message="Skill uploaded successfully",
+                    message="Skill updated successfully" if action == "updated" else "Skill uploaded successfully",
                 )
             )
         except ValueError as exc:
@@ -699,6 +750,7 @@ async def download_skill(
 )
 async def publish_skill(
     skill_name: str,
+    request: SkillPublishRequest | None = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SkillResponse:
@@ -717,6 +769,7 @@ async def publish_skill(
         existing_public_skills = await SkillRepository.list_public_skills_by_name(db, name=skill_name)
         source_dir = _resolve_skill_record_dir(custom_skill)
         publish_metadata = _extract_publish_metadata(source_dir, expected_name=skill_name)
+        release_notes = _normalize_release_notes(request.release_notes if request is not None else None)
         target_path = build_public_skill_file_path(skill_name)
         target_dir = _resolve_skill_dir(target_path)
 
@@ -747,6 +800,7 @@ async def publish_skill(
             skill_name=skill_name,
             package_version=publish_metadata["package_version"],
             description=publish_metadata["description"],
+            release_notes=release_notes,
             artifact_path=target_path,
             publisher_user_id=current_user.id,
             source_skill_id=custom_skill.id,

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.gateway.db.schema_settings import get_gateway_db_schema
 
-REQUIRED_GATEWAY_TABLES = frozenset({"users", "workspaces", "threads"})
+REQUIRED_GATEWAY_TABLES = frozenset({"users", "workspaces", "threads", "skills", "skill_releases"})
 REQUIRED_GATEWAY_COLUMNS = {
     "users": frozenset(
         {
@@ -46,6 +46,36 @@ REQUIRED_GATEWAY_COLUMNS = {
             "metadata",
             "created_at",
             "updated_at",
+        }
+    ),
+    "skills": frozenset(
+        {
+            "id",
+            "user_id",
+            "owner_user_id",
+            "name",
+            "display_name",
+            "description",
+            "file_path",
+            "created_at",
+            "updated_at",
+            "deleted_at",
+        }
+    ),
+    "skill_releases": frozenset(
+        {
+            "id",
+            "skill_name",
+            "release_version",
+            "package_version",
+            "description",
+            "release_notes",
+            "status",
+            "artifact_path",
+            "publisher_user_id",
+            "source_skill_id",
+            "published_skill_id",
+            "created_at",
         }
     ),
 }

@@ -281,6 +281,7 @@ class SkillRelease(Base):
     release_version = Column(String(64), nullable=False, unique=True, comment="System-generated immutable release version")
     package_version = Column(String(255), nullable=True, comment="Optional SKILL.md package version")
     description = Column(Text, nullable=True, comment="Skill description at publish time")
+    release_notes = Column(Text, nullable=True, comment="Optional notes for this publish event")
     status = Column(String(50), nullable=False, default="published", comment="Release status")
     artifact_path = Column(String(500), nullable=False, comment="Published artifact filesystem path")
     publisher_user_id = Column(

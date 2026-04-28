@@ -38,6 +38,7 @@ def _release(published_skill_id: int, package_version: str | None = "v1.2.3") ->
         release_version="rel_fixed",
         package_version=package_version,
         description="Public skill",
+        release_notes="Initial public release",
         status="published",
         artifact_path="public/demo-skill",
         publisher_user_id=7,
@@ -75,6 +76,7 @@ def test_list_skills_includes_public_latest_release_metadata_and_legacy_null(mon
     assert by_name["demo-skill"].package_version == "v1.2.3"
     assert by_name["demo-skill"].release_version == "rel_fixed"
     assert by_name["demo-skill"].release_status == "published"
+    assert by_name["demo-skill"].release_notes == "Initial public release"
     assert by_name["demo-skill"].version == "v1.2.3"
     assert by_name["legacy-skill"].package_version is None
     assert by_name["legacy-skill"].release_version is None

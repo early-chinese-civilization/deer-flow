@@ -50,6 +50,7 @@ def test_skill_release_model_declares_release_contract_columns():
     assert "release_version" in columns
     assert "package_version" in columns
     assert "description" in columns
+    assert "release_notes" in columns
     assert "status" in columns
     assert "artifact_path" in columns
     assert "publisher_user_id" in columns
@@ -69,6 +70,7 @@ def test_create_skill_release_generates_release_version_and_persists_metadata():
             skill_name="demo-skill",
             package_version="v1",
             description="Demo skill",
+            release_notes="Initial release",
             artifact_path="public/demo-skill",
             publisher_user_id=7,
             source_skill_id=11,
@@ -80,6 +82,7 @@ def test_create_skill_release_generates_release_version_and_persists_metadata():
         assert session.committed is True
         assert release.release_version.startswith("rel_")
         assert release.package_version == "v1"
+        assert release.release_notes == "Initial release"
         assert release.status == "published"
         assert release.skill_name == "demo-skill"
         assert release.artifact_path == "public/demo-skill"
@@ -166,3 +169,12 @@ def test_skill_release_migration_creates_release_table():
     assert "release_version" in migration
     assert "package_version" in migration
     assert "published_skill_id" in migration
+
+
+def test_skill_release_notes_migration_adds_release_notes_column():
+    migration_path = Path("alembic/versions/f4b8c3d2a901_add_release_notes_to_skill_releases.py")
+
+    assert migration_path.exists()
+    migration = migration_path.read_text(encoding="utf-8")
+    assert "skill_releases" in migration
+    assert "release_notes" in migration

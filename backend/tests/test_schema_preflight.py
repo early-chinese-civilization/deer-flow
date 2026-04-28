@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.gateway.db.schema_preflight import REQUIRED_GATEWAY_COLUMNS
+
 
 class _ScalarResult:
     def __init__(self, rows):
@@ -16,17 +18,34 @@ class _ScalarResult:
         return list(self._rows)
 
 
+class _RowsResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
 class _FakeConnection:
-    def __init__(self, tables, revisions=None):
+    def __init__(self, tables, revisions=None, columns=None):
         self._tables = tables
         self._revisions = revisions or []
+        self._columns = columns or {}
 
-    async def execute(self, statement):
+    async def execute(self, statement, parameters=None):
         sql = str(statement)
         if "information_schema.tables" in sql:
             return _ScalarResult(self._tables)
         if "alembic_version" in sql:
             return _ScalarResult(self._revisions)
+        if "information_schema.columns" in sql:
+            requested_tables = (parameters or {}).get("tables", [])
+            rows = [
+                (table, column)
+                for table in requested_tables
+                for column in self._columns.get(table, ())
+            ]
+            return _RowsResult(rows)
         raise AssertionError(f"Unexpected SQL: {sql}")
 
 
@@ -41,18 +60,65 @@ class _FakeConnectContext:
         return False
 
 
+def _complete_columns(*tables: str) -> dict[str, tuple[str, ...]]:
+    return {table: tuple(REQUIRED_GATEWAY_COLUMNS[table]) for table in tables}
+
+
 @pytest.mark.anyio
 async def test_assert_gateway_schema_ready_requires_threads_table():
     from app.gateway.db.schema_preflight import assert_gateway_schema_ready
 
+    existing_tables = ["alembic_version", "users", "workspace_files", "workspaces", "skills", "skill_releases"]
     engine = SimpleNamespace(
         connect=lambda: _FakeConnectContext(
             _FakeConnection(
-                tables=["alembic_version", "users", "workspace_files", "workspaces"],
+                tables=existing_tables,
                 revisions=["7b279560c2f2"],
+                columns=_complete_columns("users", "workspaces", "skills", "skill_releases"),
             )
         )
     )
 
     with pytest.raises(RuntimeError, match="Missing tables: threads"):
+        await assert_gateway_schema_ready(engine)
+
+
+@pytest.mark.anyio
+async def test_assert_gateway_schema_ready_requires_skill_releases_table():
+    from app.gateway.db.schema_preflight import assert_gateway_schema_ready
+
+    existing_tables = ["alembic_version", "users", "workspaces", "threads", "skills"]
+    engine = SimpleNamespace(
+        connect=lambda: _FakeConnectContext(
+            _FakeConnection(
+                tables=existing_tables,
+                revisions=["b8f3d0a1c2e4"],
+                columns=_complete_columns("users", "workspaces", "threads", "skills"),
+            )
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="Missing tables: skill_releases"):
+        await assert_gateway_schema_ready(engine)
+
+
+@pytest.mark.anyio
+async def test_assert_gateway_schema_ready_requires_skill_release_columns():
+    from app.gateway.db.schema_preflight import assert_gateway_schema_ready
+
+    columns = _complete_columns("users", "workspaces", "threads", "skills", "skill_releases")
+    columns["skill_releases"] = tuple(
+        column for column in columns["skill_releases"] if column != "release_version"
+    )
+    engine = SimpleNamespace(
+        connect=lambda: _FakeConnectContext(
+            _FakeConnection(
+                tables=["alembic_version", "users", "workspaces", "threads", "skills", "skill_releases"],
+                revisions=["e2a7c9d4f601"],
+                columns=columns,
+            )
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="Missing columns: skill_releases.release_version"):
         await assert_gateway_schema_ready(engine)

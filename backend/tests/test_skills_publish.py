@@ -44,6 +44,7 @@ def test_publish_custom_skill_creates_release_and_returns_versioned_response(tmp
         release_version="rel_fixed",
         package_version="v1.2.3",
         description="Published description",
+        release_notes="Published changelog",
         status="published",
         artifact_path="public/demo-skill",
         publisher_user_id=7,
@@ -116,6 +117,7 @@ def test_publish_custom_skill_creates_release_and_returns_versioned_response(tmp
             "skill_name": "demo-skill",
             "package_version": "v1.2.3",
             "description": "Published description",
+            "release_notes": None,
             "artifact_path": "public/demo-skill",
             "publisher_user_id": 7,
             "source_skill_id": 11,
@@ -128,6 +130,69 @@ def test_publish_custom_skill_creates_release_and_returns_versioned_response(tmp
     assert response.package_version == "v1.2.3"
     assert response.release_version == "rel_fixed"
     assert response.release_status == "published"
+    assert response.release_notes == "Published changelog"
+
+
+def test_publish_custom_skill_accepts_release_notes(tmp_path, monkeypatch):
+    source_dir = tmp_path / "source"
+    target_dir = tmp_path / "public" / "demo-skill"
+    _write_skill_dir(source_dir, version="v1.2.4")
+
+    current_user = User(id=7, external_auth_id="sub", username="alice", display_name="Alice")
+    custom_skill = Skill(id=11, user_id=7, name="demo-skill", display_name="demo-skill", description="Old description", file_path="private/7/demo-skill")
+    published_skill = Skill(id=12, user_id=None, owner_user_id=7, name="demo-skill", display_name="demo-skill", description="Published description", file_path="public/demo-skill")
+    release = SkillRelease(
+        id=31,
+        skill_name="demo-skill",
+        release_version="rel_notes",
+        package_version="v1.2.4",
+        description="Published description",
+        release_notes="Fix prompt routing",
+        status="published",
+        artifact_path="public/demo-skill",
+        publisher_user_id=7,
+        source_skill_id=11,
+        published_skill_id=12,
+    )
+    db = FakeDb()
+    release_kwargs = {}
+
+    async def get_user_skill_by_name(db_arg, *, user_id, name):
+        return custom_skill
+
+    async def list_public_skills_by_name(db_arg, *, name):
+        return []
+
+    async def create_skill(db_arg, **kwargs):
+        return published_skill
+
+    async def create_release(db_arg, **kwargs):
+        release_kwargs.update(kwargs)
+        return release
+
+    async def get_skill_by_id(db_arg, skill_id):
+        return published_skill
+
+    monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_name", get_user_skill_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_public_skills_by_name", list_public_skills_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "create_skill", create_skill)
+    monkeypatch.setattr(skills_router.SkillRepository, "get_skill_by_id", get_skill_by_id)
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "create_release", create_release)
+    monkeypatch.setattr(skills_router, "_resolve_skill_record_dir", lambda skill: source_dir)
+    monkeypatch.setattr(skills_router, "_resolve_skill_dir", lambda raw_path: target_dir)
+
+    async def run():
+        return await skills_router.publish_skill(
+            "demo-skill",
+            request=skills_router.SkillPublishRequest(release_notes="  Fix prompt routing  "),
+            current_user=current_user,
+            db=db,
+        )
+
+    response = asyncio.run(run())
+
+    assert release_kwargs["release_notes"] == "Fix prompt routing"
+    assert response.release_notes == "Fix prompt routing"
 
 
 def test_publish_custom_skill_missing_returns_404(monkeypatch):
