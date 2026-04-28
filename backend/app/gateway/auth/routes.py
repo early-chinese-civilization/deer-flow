@@ -10,7 +10,10 @@ from ecc_auth.identity import AuthIdentity
 from fastapi import APIRouter
 from fastapi.responses import RedirectResponse
 
-from app.gateway.auth.dev_bypass import get_dev_auth_identity, is_dev_auth_bypass_enabled
+from app.gateway.auth.dev_synthetic_auth import (
+    get_dev_synthetic_auth_identity,
+    is_dev_synthetic_auth_enabled,
+)
 from app.gateway.auth.service import build_current_user_payload, sync_local_user_from_identity
 from app.gateway.db.engine import get_db_session
 
@@ -60,7 +63,7 @@ def _safe_return_to(return_to: str | None) -> str:
     return return_to
 
 
-def _create_dev_auth_router() -> APIRouter:
+def _create_dev_synthetic_auth_router() -> APIRouter:
     """Create development-only auth endpoints backed by a synthetic user."""
     router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -75,7 +78,10 @@ def _create_dev_auth_router() -> APIRouter:
     @router.get("/me")
     async def dev_me() -> dict:
         async with get_db_session() as db:
-            user = await build_current_user_payload(db=db, identity=get_dev_auth_identity())
+            user = await build_current_user_payload(
+                db=db,
+                identity=get_dev_synthetic_auth_identity(),
+            )
         return {"user": user}
 
     @router.post("/refresh")
@@ -84,15 +90,15 @@ def _create_dev_auth_router() -> APIRouter:
 
     @router.post("/logout")
     async def dev_logout() -> dict:
-        return {"logoutUrl": "/"}
+        return {"logoutUrl": "/signed-out"}
 
     return router
 
 
 def create_gateway_auth_router(config: KeycloakConfig | None = None) -> APIRouter:
     """Wrap the shared SDK router under DeerFlow's `/api/auth` prefix."""
-    if config is None and is_dev_auth_bypass_enabled():
-        return _create_dev_auth_router()
+    if config is None and is_dev_synthetic_auth_enabled():
+        return _create_dev_synthetic_auth_router()
 
     resolved_config = config or _build_keycloak_config()
     init_dependencies(resolved_config)

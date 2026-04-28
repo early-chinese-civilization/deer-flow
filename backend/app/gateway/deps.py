@@ -16,7 +16,10 @@ from ecc_auth.identity import AuthIdentity
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.auth.dev_bypass import get_dev_auth_identity, is_dev_auth_bypass_enabled
+from app.gateway.auth.dev_synthetic_auth import (
+    get_dev_synthetic_auth_identity,
+    is_dev_synthetic_auth_enabled,
+)
 from app.gateway.auth.service import sync_local_user_from_identity
 from app.gateway.db.models import User
 from deerflow.runtime import RunManager, StreamBridge
@@ -79,9 +82,9 @@ async def get_gateway_auth_identity(
     kc_refresh_token: str | None = Cookie(default=None),
     kc_logout_marker: str | None = Cookie(default=None),
 ) -> AuthIdentity:
-    """Resolve the shared auth identity, or the explicit dev identity."""
-    if is_dev_auth_bypass_enabled():
-        return get_dev_auth_identity()
+    """Resolve the shared auth identity, or the explicit synthetic dev identity."""
+    if is_dev_synthetic_auth_enabled():
+        return get_dev_synthetic_auth_identity()
     return await get_current_auth_identity(
         request=request,
         kc_access_token=kc_access_token,
@@ -96,9 +99,9 @@ async def get_gateway_auth_identity_optional(
     kc_refresh_token: str | None = Cookie(default=None),
     kc_logout_marker: str | None = Cookie(default=None),
 ) -> AuthIdentity | None:
-    """Resolve an optional shared identity, honoring the dev bypass."""
-    if is_dev_auth_bypass_enabled():
-        return get_dev_auth_identity()
+    """Resolve an optional shared identity, honoring synthetic dev auth."""
+    if is_dev_synthetic_auth_enabled():
+        return get_dev_synthetic_auth_identity()
     return await get_current_auth_identity_optional(
         request=request,
         kc_access_token=kc_access_token,

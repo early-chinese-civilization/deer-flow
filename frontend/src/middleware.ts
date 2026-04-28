@@ -3,10 +3,12 @@ import type { NextRequest } from "next/server";
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 
-function isDevAuthBypassEnabled() {
-  const enabled = TRUE_VALUES.has(
-    (process.env.DEER_FLOW_DEV_AUTH_BYPASS ?? "").trim().toLowerCase(),
-  );
+function isTruthy(value: string | undefined) {
+  return TRUE_VALUES.has((value ?? "").trim().toLowerCase());
+}
+
+function isDevSyntheticAuthEnabled() {
+  const enabled = isTruthy(process.env.DEER_FLOW_DEV_SYNTHETIC_AUTH);
   const isDevelopment =
     process.env.DEER_FLOW_SERVER_MODE === "dev" ||
     process.env.NODE_ENV === "development";
@@ -19,7 +21,7 @@ function isDevAuthBypassEnabled() {
  * 保护需要登录才能访问的路由
  */
 export function middleware(request: NextRequest) {
-  if (isDevAuthBypassEnabled()) {
+  if (isDevSyntheticAuthEnabled()) {
     return NextResponse.next();
   }
 

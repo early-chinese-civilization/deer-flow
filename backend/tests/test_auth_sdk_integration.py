@@ -232,10 +232,10 @@ def test_create_gateway_auth_router_rejects_empty_required_keycloak_env(
         auth_routes.create_gateway_auth_router()
 
 
-def test_dev_auth_bypass_router_does_not_require_keycloak_env(
+def test_dev_synthetic_auth_router_does_not_require_keycloak_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("DEER_FLOW_DEV_AUTH_BYPASS", "1")
+    monkeypatch.setenv("DEER_FLOW_DEV_SYNTHETIC_AUTH", "1")
     monkeypatch.setenv("DEER_FLOW_SERVER_MODE", "dev")
     monkeypatch.delenv("KEYCLOAK_URL", raising=False)
     monkeypatch.delenv("KEYCLOAK_REALM", raising=False)
@@ -255,7 +255,10 @@ def test_dev_auth_bypass_router_does_not_require_keycloak_env(
     )
 
     with (
-        patch("app.gateway.auth.routes.get_db_session", return_value=_SessionContext(object())),
+        patch(
+            "app.gateway.auth.routes.get_db_session",
+            return_value=_SessionContext(object()),
+        ),
         patch("app.gateway.auth.routes.build_current_user_payload", payload_mock),
     ):
         response = TestClient(app).get("/api/auth/me")
@@ -265,8 +268,10 @@ def test_dev_auth_bypass_router_does_not_require_keycloak_env(
     payload_mock.assert_awaited_once()
 
 
-def test_dev_auth_bypass_rejects_production_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEER_FLOW_DEV_AUTH_BYPASS", "1")
+def test_dev_synthetic_auth_rejects_production_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEER_FLOW_DEV_SYNTHETIC_AUTH", "1")
     monkeypatch.setenv("DEER_FLOW_SERVER_MODE", "prod")
 
     with pytest.raises(RuntimeError, match="cannot be enabled in production mode"):
@@ -284,7 +289,10 @@ async def test_gateway_dependency_projects_auth_identity_to_local_user() -> None
     )
     user = SimpleNamespace(id=7, external_auth_id="kc-sub")
 
-    with patch("app.gateway.deps.sync_local_user_from_identity", AsyncMock(return_value=user)) as sync_mock:
+    with patch(
+        "app.gateway.deps.sync_local_user_from_identity",
+        AsyncMock(return_value=user),
+    ) as sync_mock:
         result = await gateway_deps.get_current_user(db=object(), identity=identity)
 
     assert result is user
@@ -292,10 +300,10 @@ async def test_gateway_dependency_projects_auth_identity_to_local_user() -> None
 
 
 @pytest.mark.anyio
-async def test_gateway_dependency_uses_dev_identity_when_bypass_enabled(
+async def test_gateway_dependency_uses_dev_synthetic_user_when_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("DEER_FLOW_DEV_AUTH_BYPASS", "1")
+    monkeypatch.setenv("DEER_FLOW_DEV_SYNTHETIC_AUTH", "1")
     monkeypatch.setenv("DEER_FLOW_SERVER_MODE", "dev")
     auth_mock = AsyncMock()
 
@@ -304,3 +312,23 @@ async def test_gateway_dependency_uses_dev_identity_when_bypass_enabled(
 
     assert identity.external_auth_id == "dev-local-user"
     auth_mock.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_current_user_projects_dev_synthetic_identity_to_local_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEER_FLOW_DEV_SYNTHETIC_AUTH", "1")
+    monkeypatch.setenv("DEER_FLOW_SERVER_MODE", "dev")
+    user = SimpleNamespace(id=42, external_auth_id="dev-local-user")
+
+    identity = await gateway_deps.get_gateway_auth_identity(request=object())
+    with patch(
+        "app.gateway.deps.sync_local_user_from_identity",
+        AsyncMock(return_value=user),
+    ) as sync_mock:
+        result = await gateway_deps.get_current_user(db=object(), identity=identity)
+
+    assert result is user
+    synced_identity = sync_mock.await_args.kwargs["identity"]
+    assert synced_identity.external_auth_id == "dev-local-user"

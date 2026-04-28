@@ -13,7 +13,7 @@ export const env = createEnv({
         : z.string().optional(),
     BETTER_AUTH_GITHUB_CLIENT_ID: z.string().optional(),
     BETTER_AUTH_GITHUB_CLIENT_SECRET: z.string().optional(),
-    DEER_FLOW_DEV_AUTH_BYPASS: z.string().optional(),
+    DEER_FLOW_DEV_SYNTHETIC_AUTH: z.string().optional(),
     DEER_FLOW_SERVER_MODE: z.string().optional(),
     GITHUB_OAUTH_TOKEN: z.string().optional(),
     NODE_ENV: z
@@ -41,7 +41,7 @@ export const env = createEnv({
     BETTER_AUTH_GITHUB_CLIENT_ID: process.env.BETTER_AUTH_GITHUB_CLIENT_ID,
     BETTER_AUTH_GITHUB_CLIENT_SECRET:
       process.env.BETTER_AUTH_GITHUB_CLIENT_SECRET,
-    DEER_FLOW_DEV_AUTH_BYPASS: process.env.DEER_FLOW_DEV_AUTH_BYPASS,
+    DEER_FLOW_DEV_SYNTHETIC_AUTH: process.env.DEER_FLOW_DEV_SYNTHETIC_AUTH,
     DEER_FLOW_SERVER_MODE: process.env.DEER_FLOW_SERVER_MODE,
     NODE_ENV: process.env.NODE_ENV,
 

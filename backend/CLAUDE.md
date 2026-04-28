@@ -80,7 +80,7 @@ When making code changes, you MUST update the relevant documentation:
 make check      # Check system requirements
 make install    # Install all dependencies (frontend + backend)
 make dev        # Start all services (LangGraph + Gateway + Frontend + Nginx), with config.yaml preflight
-DEER_FLOW_DEV_AUTH_BYPASS=1 make dev  # Local dev only: skip Keycloak and use synthetic dev-local-user
+DEER_FLOW_DEV_SYNTHETIC_AUTH=1 make dev  # Local dev only: skip external Keycloak redirect and use synthetic dev-local-user
 make stop       # Stop all services
 ```
 
@@ -208,7 +208,7 @@ FastAPI application on port 8001 with health check at `GET /health`.
 
 | Router | Endpoints |
 |--------|-----------|
-| **Auth** (`/api/auth`) | Shared `ecc-auth` SDK routes for `login`, `callback`, `me`, `refresh`, `logout`; the router is created during app construction after config/.env loading, the app also installs the shared auth-session middleware so dependency-based refresh can persist rotated cookies on custom responses, the backend workspace resolves `ecc-auth` from the sibling checkout for local auth integration work, Gateway business deps still project `AuthIdentity -> User`, `/me` is JWKS-first, explicit logout sets `kc_logout_marker` to block silent refresh re-login, `DEER_FLOW_DEV_AUTH_BYPASS=1` can replace the SDK router and dependency identity with a synthetic local user only when `DEER_FLOW_SERVER_MODE=dev`/`NODE_ENV=development`, and legacy handwritten Keycloak/PKCE/cookie helper modules are no longer part of the runtime path |
+| **Auth** (`/api/auth`) | Shared `ecc-auth` SDK routes for `login`, `callback`, `me`, `refresh`, `logout`; the router is created during app construction after config/.env loading, the app also installs the shared auth-session middleware so dependency-based refresh can persist rotated cookies on custom responses, the backend workspace resolves `ecc-auth` from the sibling checkout for local auth integration work, Gateway business deps still project `AuthIdentity -> User`, `/me` is JWKS-first, explicit logout sets `kc_logout_marker` to block silent refresh re-login, `DEER_FLOW_DEV_SYNTHETIC_AUTH=1` can replace the external Keycloak router with a development-only synthetic identity only when `DEER_FLOW_SERVER_MODE=dev`/`NODE_ENV=development`; the synthetic identity is still projected into the local `users` table so skills, uploads, threads, agents, and memory keep user ownership semantics, and legacy handwritten Keycloak/PKCE/cookie helper modules are no longer part of the runtime path |
 | **Models** (`/api/models`) | `GET /` - list models; `GET /{name}` - model details |
 | **MCP** (`/api/mcp`) | `GET /config` - get config; `PUT /config` - update config (saves to extensions_config.json) |
 | **Skills** (`/api/skills`) | `GET /` - list skills; `GET /{name}` - details; `PUT /{name}` - update enabled; `POST /install` - install from .skill archive (accepts standard optional frontmatter like `version`, `author`, `compatibility`) |
