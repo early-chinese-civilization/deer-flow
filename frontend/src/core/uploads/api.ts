@@ -2,7 +2,23 @@
  * API functions for file uploads
  */
 
-import { getBackendBaseURL } from "../config";
+function getBaseOrigin(): string {
+  if (typeof window !== "undefined") {
+    return window.location.origin;
+  }
+
+  return "http://localhost:2026";
+}
+
+function getBackendBaseURL(): string {
+  const backendBaseURL = process.env.NEXT_PUBLIC_BACKEND_BASE_URL;
+
+  if (backendBaseURL) {
+    return new URL(backendBaseURL, getBaseOrigin()).toString().replace(/\/+$/, "");
+  }
+
+  return "";
+}
 
 export interface UploadedFileInfo {
   filename: string;
@@ -11,6 +27,8 @@ export interface UploadedFileInfo {
   virtual_path: string;
   relative_path: string;
   artifact_url: string | null;
+  http_uri?: string | null;
+  oss_uri?: string | null;
   object_key: string;
   signed_url?: string | null;
   extension?: string | null;
@@ -19,6 +37,8 @@ export interface UploadedFileInfo {
   markdown_path?: string | null;
   markdown_virtual_path?: string | null;
   markdown_artifact_url?: string | null;
+  markdown_http_uri?: string | null;
+  markdown_oss_uri?: string | null;
   markdown_object_key?: string | null;
   markdown_signed_url?: string | null;
 }
@@ -34,6 +54,8 @@ export interface FileTreeNode {
   filename?: string;
   virtual_path?: string;
   artifact_url?: string | null;
+  http_uri?: string | null;
+  oss_uri?: string | null;
   object_key?: string;
   signed_url?: string | null;
   extension?: string | null;
@@ -41,8 +63,15 @@ export interface FileTreeNode {
   markdown_path?: string | null;
   markdown_virtual_path?: string | null;
   markdown_artifact_url?: string | null;
+  markdown_http_uri?: string | null;
+  markdown_oss_uri?: string | null;
   markdown_object_key?: string | null;
   markdown_signed_url?: string | null;
+}
+
+export interface WorkspaceDownloadUrlResponse {
+  download_url: string;
+  oss_uri: string;
 }
 
 export interface UploadResponse {
@@ -108,6 +137,11 @@ function buildUploadsUrl(
   suffix = "",
 ): string {
   return `${getBackendBaseURL()}/api/workspaces/${encodeURIComponent(workspaceId)}/uploads${suffix}`;
+}
+
+function buildDownloadUrlUrl(workspaceId: string, objectKey: string): string {
+  const query = new URLSearchParams({ object_key: objectKey }).toString();
+  return `${buildUploadsUrl(workspaceId, "/download-url")}?${query}`;
 }
 
 /**
@@ -258,6 +292,23 @@ export async function listUploadedFiles(
   return response.json();
 }
 
+export async function getWorkspaceDownloadUrl(
+  workspaceId: string,
+  objectKey: string,
+): Promise<WorkspaceDownloadUrlResponse> {
+  const response = await fetch(buildDownloadUrlUrl(workspaceId, objectKey), {
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await readErrorDetail(response, "Failed to get download URL"),
+    );
+  }
+
+  return response.json();
+}
+
 /**
  * Delete an uploaded file
  */
@@ -289,7 +340,6 @@ export async function downloadUploadedFile(
   filename: string,
 ): Promise<void> {
   const response = await fetch(url, {
-    credentials: "include",
   });
 
   if (!response.ok) {

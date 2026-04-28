@@ -6,6 +6,7 @@ import datetime as dt
 import mimetypes
 import re
 from dataclasses import dataclass
+from urllib.parse import quote
 
 from alibabacloud_oss_v2 import (
     Client,
@@ -54,6 +55,11 @@ def workspace_object_key(root_prefix: str, filename: str, subdir: str | None = N
 def oss_root_path(bucket: str, root_prefix: str) -> str:
     """Build an OSS URI-like display path for a workspace prefix."""
     return f"oss://{bucket}/{root_prefix.rstrip('/')}/"
+
+
+def oss_object_uri(bucket: str, object_key: str) -> str:
+    """Build an OSS URI for a canonical object key."""
+    return f"oss://{bucket}/{quote(object_key.strip('/'), safe='/')}"
 
 
 def _derive_region(endpoint: str) -> str | None:

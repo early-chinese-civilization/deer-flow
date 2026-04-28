@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils";
 import { useArtifacts } from "../artifacts";
 import { FlipDisplay } from "../flip-display";
 import { Tooltip } from "../tooltip";
+import { useThread } from "./context";
 
 import { MarkdownContent } from "./markdown-content";
 
@@ -49,6 +50,7 @@ export function MessageGroup({
   isLoading?: boolean;
 }) {
   const { t } = useI18n();
+  const { workspaceId } = useThread();
   const [showAbove, setShowAbove] = useState(
     env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true",
   );
@@ -120,6 +122,7 @@ export function MessageGroup({
                       content={step.reasoning ?? ""}
                       isLoading={isLoading}
                       rehypePlugins={rehypePlugins}
+                      workspaceId={workspaceId}
                     />
                   }
                 ></ChainOfThoughtStep>
@@ -172,6 +175,7 @@ export function MessageGroup({
                     content={lastReasoningStep.reasoning ?? ""}
                     isLoading={isLoading}
                     rehypePlugins={rehypePlugins}
+                    workspaceId={workspaceId}
                   />
                 }
               ></ChainOfThoughtStep>

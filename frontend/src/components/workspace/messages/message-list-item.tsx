@@ -8,7 +8,6 @@ import { Loader } from "@/components/ai-elements/loader";
 import {
   Message as AIElementMessage,
   MessageContent as AIElementMessageContent,
-  MessageResponse as AIElementMessageResponse,
   MessageToolbar,
 } from "@/components/ai-elements/message";
 import {
@@ -18,7 +17,6 @@ import {
 } from "@/components/ai-elements/reasoning";
 import { Task, TaskTrigger } from "@/components/ai-elements/task";
 import { Badge } from "@/components/ui/badge";
-import { resolveArtifactURL } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
 import {
   extractContentFromMessage,
@@ -27,6 +25,11 @@ import {
   stripUploadedFilesTag,
   type FileInMessage,
 } from "@/core/messages/utils";
+import {
+  getBrowserOssSource,
+  getBrowserOssSourceFromOssUri,
+  useResolvedOssUrl,
+} from "@/core/oss";
 import { useRehypeSplitWordsIntoSpans } from "@/core/rehype";
 import { humanMessagePlugins } from "@/core/streamdown";
 import { cn } from "@/lib/utils";
@@ -34,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { CopyButton } from "../copy-button";
 
 import { MarkdownContent } from "./markdown-content";
+import { useThread } from "./context";
 
 export function MessageListItem({
   className,
@@ -80,26 +84,44 @@ export function MessageListItem({
 function MessageImage({
   src,
   alt,
-  threadId,
   maxWidth = "90%",
   ...props
 }: React.ImgHTMLAttributes<HTMLImageElement> & {
-  threadId: string;
   maxWidth?: string;
 }) {
   if (!src) return null;
 
+  const { workspaceId } = useThread();
+  const ossSource =
+    typeof src === "string" && src.startsWith("oss://")
+      ? getBrowserOssSourceFromOssUri(src)
+      : null;
+  const { data: ossUrl } = useResolvedOssUrl(workspaceId, ossSource);
   const imgClassName = cn("overflow-hidden rounded-lg", `max-w-[${maxWidth}]`);
 
   if (typeof src !== "string") {
     return <img className={imgClassName} src={src} alt={alt} {...props} />;
   }
 
-  const url = src.startsWith("/mnt/") ? resolveArtifactURL(src, threadId) : src;
+  if (ossSource && !ossUrl) {
+    return null;
+  }
+
+  if (ossUrl) {
+    return (
+      <a href={ossUrl} target="_blank" rel="noopener noreferrer">
+        <img className={imgClassName} src={ossUrl} alt={alt} {...props} />
+      </a>
+    );
+  }
+
+  if (src.startsWith("/mnt/")) {
+    return <img className={imgClassName} src={src} alt={alt} {...props} />;
+  }
 
   return (
-    <a href={url} target="_blank" rel="noopener noreferrer">
-      <img className={imgClassName} src={url} alt={alt} {...props} />
+    <a href={src} target="_blank" rel="noopener noreferrer">
+      <img className={imgClassName} src={src} alt={alt} {...props} />
     </a>
   );
 }
@@ -115,14 +137,15 @@ function MessageContent_({
 }) {
   const rehypePlugins = useRehypeSplitWordsIntoSpans(isLoading);
   const isHuman = message.type === "human";
+  const { workspaceId } = useThread();
   const { thread_id } = useParams<{ thread_id: string }>();
   const components = useMemo(
     () => ({
       img: (props: ImgHTMLAttributes<HTMLImageElement>) => (
-        <MessageImage {...props} threadId={thread_id} maxWidth="90%" />
+        <MessageImage {...props} maxWidth="90%" />
       ),
     }),
-    [thread_id],
+    [],
   );
 
   const rawContent = extractContentFromMessage(message);
@@ -148,7 +171,7 @@ function MessageContent_({
 
   const filesList =
     files && files.length > 0 && thread_id ? (
-      <RichFilesList files={files} threadId={thread_id} />
+      <RichFilesList files={files} />
     ) : null;
 
   if (message.additional_kwargs?.element === "task") {
@@ -178,21 +201,19 @@ function MessageContent_({
   }
 
   if (isHuman) {
-    const messageResponse = contentToDisplay ? (
-      <AIElementMessageResponse
-        remarkPlugins={humanMessagePlugins.remarkPlugins}
-        rehypePlugins={humanMessagePlugins.rehypePlugins}
-        components={components}
-      >
-        {contentToDisplay}
-      </AIElementMessageResponse>
-    ) : null;
     return (
       <div className={cn("ml-auto flex flex-col gap-2", className)}>
         {filesList}
-        {messageResponse && (
+        {contentToDisplay && (
           <AIElementMessageContent className="w-fit">
-            {messageResponse}
+            <MarkdownContent
+              content={contentToDisplay}
+              isLoading={isLoading}
+              remarkPlugins={humanMessagePlugins.remarkPlugins}
+              rehypePlugins={humanMessagePlugins.rehypePlugins}
+              workspaceId={workspaceId}
+              components={components}
+            />
           </AIElementMessageContent>
         )}
       </div>
@@ -207,6 +228,7 @@ function MessageContent_({
         isLoading={isLoading}
         rehypePlugins={[...rehypePlugins, [rehypeKatex, { output: "html" }]]}
         className="my-3"
+        workspaceId={workspaceId}
         components={components}
       />
     </AIElementMessageContent>
@@ -262,10 +284,8 @@ function formatBytes(bytes: number): string {
 
 function RichFilesList({
   files,
-  threadId,
 }: {
   files: FileInMessage[];
-  threadId: string;
 }) {
   if (files.length === 0) return null;
   return (
@@ -274,7 +294,6 @@ function RichFilesList({
         <RichFileCard
           key={`${file.filename}-${index}`}
           file={file}
-          threadId={threadId}
         />
       ))}
     </div>
@@ -283,12 +302,11 @@ function RichFilesList({
 
 function RichFileCard({
   file,
-  threadId,
 }: {
   file: FileInMessage;
-  threadId: string;
 }) {
   const { t } = useI18n();
+  const { workspaceId } = useThread();
   const isUploading = file.status === "uploading";
   const isImage = isImageFile(file.filename);
 
@@ -319,23 +337,64 @@ function RichFileCard({
     );
   }
 
-  if (!file.path) return null;
-
-  const fileUrl = resolveArtifactURL(file.path, threadId);
+  const source = getBrowserOssSource(file);
+  const urlResult = useResolvedOssUrl(workspaceId, source);
+  const fileUrl = urlResult.data;
 
   if (isImage) {
+    if (fileUrl) {
+      return (
+        <a
+          href={fileUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="group border-border/40 relative block overflow-hidden rounded-lg border"
+        >
+          <img
+            src={fileUrl}
+            alt={file.filename}
+            className="h-32 w-auto max-w-60 object-cover transition-transform group-hover:scale-105"
+          />
+        </a>
+      );
+    }
+    return (
+      <div className="group border-border/40 relative block overflow-hidden rounded-lg border">
+        <div className="text-muted-foreground flex h-32 w-60 items-center justify-center text-xs">
+          {file.filename}
+        </div>
+      </div>
+    );
+  }
+
+  if (fileUrl) {
     return (
       <a
         href={fileUrl}
         target="_blank"
         rel="noopener noreferrer"
-        className="group border-border/40 relative block overflow-hidden rounded-lg border"
+        className="bg-background border-border/40 flex max-w-50 min-w-30 flex-col gap-1 rounded-lg border p-3 shadow-sm"
       >
-        <img
-          src={fileUrl}
-          alt={file.filename}
-          className="h-32 w-auto max-w-60 object-cover transition-transform group-hover:scale-105"
-        />
+        <div className="flex items-start gap-2">
+          <FileIcon className="text-muted-foreground mt-0.5 size-4 shrink-0" />
+          <span
+            className="text-foreground truncate text-sm font-medium"
+            title={file.filename}
+          >
+            {file.filename}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <Badge
+            variant="secondary"
+            className="rounded px-1.5 py-0.5 text-[10px] font-normal"
+          >
+            {getFileTypeLabel(file.filename)}
+          </Badge>
+          <span className="text-muted-foreground text-[10px]">
+            {formatBytes(file.size)}
+          </span>
+        </div>
       </a>
     );
   }

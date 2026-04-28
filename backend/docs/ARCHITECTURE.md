@@ -132,6 +132,15 @@ class ThreadState(AgentState):
     viewed_images: dict       # Vision model image data
 ```
 
+File references stored in state and checkpoints use `oss://...` as the canonical identity. The backend regenerates temporary `https://` links only at the model boundary.
+
+### OSS File Protocol
+
+- `oss://...` is the canonical internal file identity.
+- Uploads use Gateway-issued presigned `PUT` URLs.
+- Downloads and previews use Gateway-issued presigned `GET` URLs.
+- Sandbox execution continues to use `/mnt/user-data/...` paths and never parses `oss://`.
+
 ### Sandbox System
 
 ```
@@ -386,19 +395,20 @@ SKILL.md Format:
    - If document: converts to Markdown via markitdown
 
 3. Returns response
-   {
-     "files": [{
-       "filename": "doc.pdf",
-       "path": ".deer-flow/.../uploads/doc.pdf",
-       "virtual_path": "/mnt/user-data/uploads/doc.pdf",
-       "artifact_url": "/api/threads/.../artifacts/mnt/.../doc.pdf"
-     }]
-   }
+    {
+      "files": [{
+        "filename": "doc.pdf",
+        "path": "oss://demo-bucket/workspaces/ws-123/uploads/doc.pdf",
+        "virtual_path": "/mnt/user-data/uploads/doc.pdf",
+        "oss_uri": "oss://demo-bucket/workspaces/ws-123/uploads/doc.pdf"
+      }]
+    }
 
 4. Next agent run
-   - UploadsMiddleware lists files
-   - Injects file list into messages
-   - Agent can access via virtual_path
+    - UploadsMiddleware lists files
+    - Injects file list into messages
+    - Agent can access via virtual_path
+    - Model-facing links are regenerated as temporary `https://` URLs
 ```
 
 ### Thread Cleanup Flow

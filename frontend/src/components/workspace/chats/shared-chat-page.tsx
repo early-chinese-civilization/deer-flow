@@ -276,7 +276,9 @@ export function SharedChatPage({
     (!isNewThread && !threadDetailQuery.isSuccess);
 
   return (
-    <ThreadContext.Provider value={{ thread, isMock }}>
+    <ThreadContext.Provider
+      value={{ thread, workspaceId: persistedWorkspaceId, isMock }}
+    >
       <div className="flex size-full min-h-0 overflow-hidden">
         <div className="min-w-0 flex-1">
           <ChatBox threadId={threadId}>

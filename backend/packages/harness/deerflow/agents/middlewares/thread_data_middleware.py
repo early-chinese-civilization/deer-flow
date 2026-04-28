@@ -73,6 +73,9 @@ class ThreadDataMiddleware(AgentMiddleware[ThreadDataMiddlewareState]):
         context = runtime.context or {}
         thread_id = context.get("thread_id")
         workspace_id = context.get("workspace_id")
+        if workspace_id is None and thread_id is not None:
+            workspace_id = thread_id
+
         if workspace_id is None or thread_id is None:
             config = get_config()
             configurable = config.get("configurable", {})

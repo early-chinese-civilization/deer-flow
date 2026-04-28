@@ -3,14 +3,17 @@
 import logging
 from pathlib import Path
 from typing import NotRequired, override
+from urllib.parse import unquote, urlsplit
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
-from langgraph.config import get_config
 from langgraph.runtime import Runtime
 
-from deerflow.config.paths import Paths, get_paths
+from deerflow.agents.thread_state import WorkspaceFileState
+from deerflow.config import get_app_config
+from deerflow.config.paths import VIRTUAL_PATH_PREFIX
+from deerflow.uploads import oss_object_uri
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +21,7 @@ logger = logging.getLogger(__name__)
 class UploadsMiddlewareState(AgentState):
     """State schema for uploads middleware."""
 
-    uploaded_files: NotRequired[list[dict] | None]
+    uploaded_files: NotRequired[list[WorkspaceFileState] | None]
 
 
 class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
@@ -38,9 +41,8 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
             base_dir: Base directory for thread data. Defaults to Paths resolution.
         """
         super().__init__()
-        self._paths = Paths(base_dir) if base_dir else get_paths()
 
-    def _create_files_message(self, new_files: list[dict], historical_files: list[dict]) -> str:
+    def _create_files_message(self, new_files: list[WorkspaceFileState], historical_files: list[WorkspaceFileState]) -> str:
         """Create a formatted message listing uploaded files.
 
         Args:
@@ -59,7 +61,8 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
                 size_kb = file["size"] / 1024
                 size_str = f"{size_kb:.1f} KB" if size_kb < 1024 else f"{size_kb / 1024:.1f} MB"
                 lines.append(f"- {file['filename']} ({size_str})")
-                lines.append(f"  Path: {file['path']}")
+                lines.append(f"  virtual_path: {file['virtual_path']}")
+                lines.append(f"  oss_uri: {file['oss_uri']}")
                 lines.append("")
         else:
             lines.append("(empty)")
@@ -71,50 +74,127 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
                 size_kb = file["size"] / 1024
                 size_str = f"{size_kb:.1f} KB" if size_kb < 1024 else f"{size_kb / 1024:.1f} MB"
                 lines.append(f"- {file['filename']} ({size_str})")
-                lines.append(f"  Path: {file['path']}")
+                lines.append(f"  virtual_path: {file['virtual_path']}")
+                lines.append(f"  oss_uri: {file['oss_uri']}")
                 lines.append("")
 
-        lines.append("You can read these files using the `read_file` tool with the paths shown above.")
+        lines.append("Use the `virtual_path` values with the `read_file` and `view_image` tools.")
+        lines.append("When referencing files in your final response, prefer `oss_uri`; the client resolves a runtime `http_uri` when it needs to open them.")
         lines.append("</uploaded_files>")
 
         return "\n".join(lines)
 
-    def _files_from_kwargs(self, message: HumanMessage, uploads_dir: Path | None = None) -> list[dict] | None:
+    def _oss_uri_to_object_key(self, oss_uri: str) -> str | None:
+        parts = urlsplit(oss_uri)
+        if parts.scheme != "oss" or not parts.netloc:
+            return None
+        return unquote(parts.path.lstrip("/")) or None
+
+    def _object_key_to_oss_uri(self, object_key: str) -> str | None:
+        bucket = get_app_config().uploads.oss.bucket
+        if not bucket:
+            return None
+        return oss_object_uri(bucket, object_key)
+
+    def _resolve_virtual_path(self, payload: dict) -> str | None:
+        virtual_path = payload.get("virtual_path")
+        if isinstance(virtual_path, str) and virtual_path:
+            return virtual_path
+
+        path = payload.get("path")
+        if isinstance(path, str) and path.startswith(VIRTUAL_PATH_PREFIX):
+            return path
+
+        return None
+
+    def _sanitize_uploaded_file_entry(self, payload: dict) -> WorkspaceFileState | None:
+        file_entry = self._workspace_file_from_payload(payload)
+        if file_entry is None:
+            return None
+
+        return file_entry
+
+    def _workspace_file_from_payload(self, payload: dict) -> WorkspaceFileState | None:
+        filename = payload.get("filename")
+        if not isinstance(filename, str) or not filename or Path(filename).name != filename:
+            return None
+
+        virtual_path = self._resolve_virtual_path(payload)
+        if virtual_path is None:
+            return None
+
+        oss_uri = payload.get("oss_uri") or payload.get("path")
+        http_uri = payload.get("http_uri") or payload.get("artifact_url")
+        object_key = payload.get("object_key")
+        if isinstance(oss_uri, str) and oss_uri.startswith("oss://"):
+            object_key = object_key if isinstance(object_key, str) and object_key else self._oss_uri_to_object_key(oss_uri)
+        elif isinstance(object_key, str) and object_key:
+            oss_uri = self._object_key_to_oss_uri(object_key)
+        else:
+            object_key = None
+
+        if not isinstance(oss_uri, str) or not oss_uri.startswith("oss://"):
+            return None
+        if not isinstance(object_key, str) or not object_key:
+            object_key = self._oss_uri_to_object_key(oss_uri)
+        if not isinstance(object_key, str) or not object_key:
+            return None
+
+        entry: WorkspaceFileState = {
+            "filename": filename,
+            "size": int(payload.get("size") or 0),
+            "path": oss_uri,
+            "virtual_path": virtual_path,
+            "oss_uri": oss_uri,
+            "http_uri": http_uri if isinstance(http_uri, str) and http_uri else None,
+            "object_key": object_key,
+        }
+
+        for key in (
+            "extension",
+            "modified",
+            "original_filename",
+            "markdown_file",
+            "markdown_path",
+            "markdown_virtual_path",
+            "markdown_object_key",
+            "markdown_oss_uri",
+            "markdown_http_uri",
+        ):
+            value = payload.get(key)
+            if value is not None:
+                entry[key] = value
+
+        markdown_http_uri = payload.get("markdown_http_uri") or payload.get("markdown_artifact_url")
+        if isinstance(markdown_http_uri, str) and markdown_http_uri:
+            entry["markdown_http_uri"] = markdown_http_uri
+
+        return entry
+
+    def _files_from_kwargs(self, message: HumanMessage) -> list[WorkspaceFileState] | None:
         """Extract file info from message additional_kwargs.files.
 
         The frontend sends uploaded file metadata in additional_kwargs.files
-        after a successful upload. Each entry has: filename, size (bytes),
-        path (virtual path), status.
+        after a successful upload. Each entry includes the canonical OSS URI,
+        the sandbox virtual path, and related metadata needed by the model.
 
         Args:
             message: The human message to inspect.
-            uploads_dir: Physical uploads directory used to verify file existence.
-                         When provided, entries whose files no longer exist are skipped.
 
         Returns:
-            List of file dicts with virtual paths, or None if the field is absent or empty.
+            List of canonical file dicts, or None if the field is absent or empty.
         """
         kwargs_files = (message.additional_kwargs or {}).get("files")
         if not isinstance(kwargs_files, list) or not kwargs_files:
             return None
 
-        files = []
+        files: list[WorkspaceFileState] = []
         for f in kwargs_files:
             if not isinstance(f, dict):
                 continue
-            filename = f.get("filename") or ""
-            if not filename or Path(filename).name != filename:
-                continue
-            if uploads_dir is not None and not (uploads_dir / filename).is_file():
-                continue
-            files.append(
-                {
-                    "filename": filename,
-                    "size": int(f.get("size") or 0),
-                    "path": f"/mnt/user-data/uploads/{filename}",
-                    "extension": Path(filename).suffix,
-                }
-            )
+            file_entry = self._workspace_file_from_payload(f)
+            if file_entry is not None:
+                files.append(file_entry)
         return files if files else None
 
     @override
@@ -122,8 +202,8 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
         """Inject uploaded files information before agent execution.
 
         New files come from the current message's additional_kwargs.files.
-        Historical files are scanned from the thread's uploads directory,
-        excluding the new ones.
+        Historical files are read from the persisted thread state and merged with
+        any uploads in the current message.
 
         Prepends <uploaded_files> context to the last human message content.
         The original additional_kwargs (including files metadata) is preserved
@@ -146,33 +226,29 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
         if not isinstance(last_message, HumanMessage):
             return None
 
-        # Resolve uploads directory for existence checks
-        workspace_id = (runtime.context or {}).get("workspace_id")
-        if workspace_id is None:
-            configurable = get_config().get("configurable", {})
-            workspace_id = configurable.get("workspace_id") or configurable.get("thread_id")
-        if workspace_id is None:
-            workspace_id = (runtime.context or {}).get("thread_id")
-        uploads_dir = self._paths.workspace_uploads_dir(str(workspace_id)) if workspace_id else None
-
         # Get newly uploaded files from the current message's additional_kwargs.files
-        new_files = self._files_from_kwargs(last_message, uploads_dir) or []
+        new_files = self._files_from_kwargs(last_message) or []
 
-        # Collect historical files from the uploads directory (all except the new ones)
-        new_filenames = {f["filename"] for f in new_files}
-        historical_files: list[dict] = []
-        if uploads_dir and uploads_dir.exists():
-            for file_path in sorted(uploads_dir.iterdir()):
-                if file_path.is_file() and file_path.name not in new_filenames:
-                    stat = file_path.stat()
-                    historical_files.append(
-                        {
-                            "filename": file_path.name,
-                            "size": stat.st_size,
-                            "path": f"/mnt/user-data/uploads/{file_path.name}",
-                            "extension": file_path.suffix,
-                        }
-                    )
+        existing_files = []
+        for file_entry in state.get("uploaded_files") or []:
+            if not isinstance(file_entry, dict):
+                continue
+            sanitized = self._sanitize_uploaded_file_entry(file_entry)
+            if sanitized is not None:
+                existing_files.append(sanitized)
+
+        seen_keys = {f.get("object_key") or f.get("oss_uri") for f in existing_files if isinstance(f.get("object_key") or f.get("oss_uri"), str)}
+        merged_files = list(existing_files)
+        for file_entry in new_files:
+            key = file_entry.get("object_key") or file_entry.get("oss_uri")
+            if isinstance(key, str) and key in seen_keys:
+                continue
+            merged_files.append(file_entry)
+            if isinstance(key, str):
+                seen_keys.add(key)
+
+        new_keys = {f.get("object_key") or f.get("oss_uri") for f in new_files if isinstance(f.get("object_key") or f.get("oss_uri"), str)}
+        historical_files = [f for f in existing_files if (f.get("object_key") or f.get("oss_uri")) not in new_keys]
 
         if not new_files and not historical_files:
             return None
@@ -205,6 +281,6 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
         messages[last_message_index] = updated_message
 
         return {
-            "uploaded_files": new_files,
+            "uploaded_files": merged_files,
             "messages": messages,
         }

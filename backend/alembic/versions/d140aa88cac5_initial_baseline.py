@@ -23,6 +23,8 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Create the full Gateway-owned PostgreSQL schema."""
+    op.execute(sa.text('CREATE SCHEMA IF NOT EXISTS "deer-flow"'))
+
     op.create_table(
         "users",
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False, comment="User ID"),

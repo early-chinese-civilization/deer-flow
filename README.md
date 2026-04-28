@@ -257,6 +257,7 @@ If you prefer running services locally:
 
 Prerequisite: complete the "Configuration" steps above first (`make config` and model API keys). `make dev` requires a valid configuration file (defaults to `config.yaml` in the project root; can be overridden via `DEER_FLOW_CONFIG_PATH`).
 When using `AioSandboxProvider` with a provisioner during local development, set `DEER_FLOW_SANDBOX_PROVISIONER_URL=http://localhost:8002` in the root `.env`. Do not use `http://provisioner:8002` for `make dev` because that hostname only exists inside Docker Compose.
+If you want sandbox writes to persist in OSS during local development, mount the OSS `workspaces/` prefix on the host to `backend/.deer-flow/workspaces` with `ossfs` before starting `make dev`. The sandbox paths stay the same (`/mnt/user-data/workspace`, `/mnt/user-data/uploads`, `/mnt/user-data/outputs`); only the host-side storage backing changes.
 On Windows, run the local development flow from Git Bash. Native `cmd.exe` and PowerShell shells are not supported for the bash-based service scripts, and WSL is not guaranteed because some scripts rely on Git for Windows utilities such as `cygpath`.
 
 1. **Check prerequisites**:
@@ -544,6 +545,8 @@ This is how DeerFlow handles tasks that take minutes to hours: a research task m
 DeerFlow doesn't just *talk* about doing things. It has its own computer.
 
 Each task gets its own execution environment with a full filesystem view — skills, workspace, uploads, outputs. The agent reads, writes, and edits files. It can view images and, when configured safely, execute shell commands.
+
+File identity inside DeerFlow is `oss://...`: that is what gets stored in thread state and checkpoints. The Gateway mints presigned `PUT` URLs for uploads and presigned `GET` URLs for downloads/previews, while sandbox code keeps using `/mnt/user-data/...` paths and never parses `oss://`. Temporary `https://` links only exist at the model boundary.
 
 With `AioSandboxProvider`, shell execution runs inside isolated containers. With `LocalSandboxProvider`, file tools still map to per-thread directories on the host, but host `bash` is disabled by default because it is not a secure isolation boundary. Re-enable host bash only for fully trusted local workflows.
 

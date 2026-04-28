@@ -28,7 +28,6 @@ import {
 } from "@/components/ui/input-group";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
 import { extractPresentFilesFromMessage } from "@/core/messages/utils";
 import type { ThreadRecord } from "@/core/threads";
@@ -43,6 +42,10 @@ import {
 import { addObservedWorkspaceFilesToList } from "@/core/uploads/cache";
 import { getFileIcon } from "@/core/utils/files";
 import { cn } from "@/lib/utils";
+import {
+  getBrowserOssSource,
+  useResolvedOssUrl,
+} from "@/core/oss";
 
 import { useArtifacts } from "./artifacts/context";
 import { useThread } from "./messages/context";
@@ -116,15 +119,11 @@ function WorkspaceDirectoryNode({
   selectedFile,
   downloadLabel,
   onFileSelect,
-  onFileDownload,
-  threadId,
 }: {
   node: FileTreeNode;
   selectedFile: string | null;
   downloadLabel: string;
   onFileSelect: (file: UploadedFileInfo) => void;
-  onFileDownload: (file: UploadedFileInfo, downloadHref: string) => void;
-  threadId: string;
 }) {
   const [isExpanded, setIsExpanded] = useState(true);
 
@@ -153,42 +152,13 @@ function WorkspaceDirectoryNode({
                 selectedFile={selectedFile}
                 downloadLabel={downloadLabel}
                 onFileSelect={onFileSelect}
-                onFileDownload={onFileDownload}
-                threadId={threadId}
               />
             ) : (
               <WorkspaceFileRow
                 key={child.object_key}
-                file={{
-                  filename: child.filename!,
-                  size: child.size!,
-                  path: child.path,
-                  virtual_path: child.virtual_path!,
-                  relative_path: child.path,
-                  artifact_url: child.artifact_url!,
-                  object_key: child.object_key!,
-                  signed_url: child.signed_url,
-                  extension: child.extension,
-                  modified: child.modified,
-                  markdown_file: child.markdown_file,
-                  markdown_path: child.markdown_path,
-                  markdown_virtual_path: child.markdown_virtual_path,
-                  markdown_artifact_url: child.markdown_artifact_url,
-                  markdown_object_key: child.markdown_object_key,
-                  markdown_signed_url: child.markdown_signed_url,
-                }}
-                downloadHref={
-                  child.artifact_url
-                    ? `${child.artifact_url}${child.artifact_url.includes("?") ? "&" : "?"}download=true`
-                    : urlOfArtifact({
-                        filepath: child.virtual_path!,
-                        threadId,
-                        download: true,
-                      })
-                }
+                file={child as unknown as UploadedFileInfo}
                 downloadLabel={downloadLabel}
                 selected={selectedFile === child.object_key}
-                onDownload={onFileDownload}
                 onSelect={onFileSelect}
               />
             ),
@@ -201,19 +171,19 @@ function WorkspaceDirectoryNode({
 
 function WorkspaceFileRow({
   file,
-  downloadHref,
   downloadLabel,
   selected,
-  onDownload,
   onSelect,
 }: {
   file: UploadedFileInfo;
-  downloadHref: string;
   downloadLabel: string;
   selected: boolean;
-  onDownload: (file: UploadedFileInfo, downloadHref: string) => void;
   onSelect: (file: UploadedFileInfo) => void;
 }) {
+  const { workspaceId } = useThread();
+  const source = useMemo(() => getBrowserOssSource(file), [file]);
+  const urlResult = useResolvedOssUrl(workspaceId, source);
+
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Enter" && event.key !== " ") {
       return;
@@ -221,6 +191,19 @@ function WorkspaceFileRow({
 
     event.preventDefault();
     onSelect(file);
+  };
+
+  const handleDownload = () => {
+    const url = urlResult.data;
+    if (!url) {
+      toast.error("Download URL not ready");
+      return;
+    }
+    downloadUploadedFile(url, file.filename).catch((error) => {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to download file",
+      );
+    });
   };
 
   return (
@@ -255,7 +238,7 @@ function WorkspaceFileRow({
           aria-label={downloadLabel}
           onClick={(event) => {
             event.stopPropagation();
-            onDownload(file, downloadHref);
+            handleDownload();
           }}
         >
           <span aria-hidden="true">
@@ -279,7 +262,7 @@ export function WorkspaceFilesPanel({
   const [query, setQuery] = useState("");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const { t } = useI18n();
-  const { thread } = useThread();
+  const { thread, workspaceId } = useThread();
   const queryClient = useQueryClient();
   const {
     artifacts,
@@ -315,8 +298,6 @@ export function WorkspaceFilesPanel({
     refetchOnWindowFocus: false,
   });
 
-  const workspaceId = threadQuery.data?.workspace_id;
-
   const filesQuery = useQuery({
     queryKey: ["uploads", "list", workspaceId],
     queryFn: () => listUploadedFiles(workspaceId!),
@@ -327,14 +308,10 @@ export function WorkspaceFilesPanel({
   const workspaceArtifactSources = useMemo(() => {
     const files = filesQuery.data?.files ?? [];
     return files
-      .filter((file) => file.artifact_url)
-      .map((file) => {
-        const viewUrl = file.artifact_url!;
-        return {
-          filepath: file.virtual_path,
-          viewUrl,
-        };
-      });
+      .map((file) => ({
+        filepath: file.virtual_path,
+        browserOssSource: getBrowserOssSource(file),
+      }));
   }, [filesQuery.data?.files]);
 
   useEffect(() => {
@@ -517,14 +494,6 @@ export function WorkspaceFilesPanel({
     setArtifactsOpen(true);
   };
 
-  const handleFileDownload = (file: UploadedFileInfo, downloadHref: string) => {
-    void downloadUploadedFile(downloadHref, file.filename).catch((error) => {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to download file",
-      );
-    });
-  };
-
   return (
     <aside
       className={cn(
@@ -600,42 +569,13 @@ export function WorkspaceFilesPanel({
                     selectedFile={selectedFile}
                     downloadLabel={t.common.download}
                     onFileSelect={handleFileSelect}
-                    onFileDownload={handleFileDownload}
-                    threadId={threadId}
                   />
                 ) : (
                   <WorkspaceFileRow
                     key={node.object_key}
-                    file={{
-                      filename: node.filename!,
-                      size: node.size!,
-                      path: node.path,
-                      virtual_path: node.virtual_path!,
-                      relative_path: node.path,
-                      artifact_url: node.artifact_url!,
-                      object_key: node.object_key!,
-                      signed_url: node.signed_url,
-                      extension: node.extension,
-                      modified: node.modified,
-                      markdown_file: node.markdown_file,
-                      markdown_path: node.markdown_path,
-                      markdown_virtual_path: node.markdown_virtual_path,
-                      markdown_artifact_url: node.markdown_artifact_url,
-                      markdown_object_key: node.markdown_object_key,
-                      markdown_signed_url: node.markdown_signed_url,
-                    }}
-                    downloadHref={
-                      node.artifact_url
-                        ? `${node.artifact_url}${node.artifact_url.includes("?") ? "&" : "?"}download=true`
-                        : urlOfArtifact({
-                            filepath: node.virtual_path!,
-                            threadId,
-                            download: true,
-                          })
-                    }
+                    file={node as unknown as UploadedFileInfo}
                     downloadLabel={t.common.download}
                     selected={selectedFile === node.object_key}
-                    onDownload={handleFileDownload}
                     onSelect={handleFileSelect}
                   />
                 ),

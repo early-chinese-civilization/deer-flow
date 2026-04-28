@@ -34,6 +34,7 @@ import { useArtifactContent } from "@/core/artifacts/hooks";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
 import { installSkill } from "@/core/skills/api";
+import { useResolvedOssUrl } from "@/core/oss";
 import { streamdownPlugins } from "@/core/streamdown";
 import {
   checkCodeFile,
@@ -102,15 +103,21 @@ export function ArtifactFileDetail({
     }
     return getArtifactSource(threadId, filepath);
   }, [filepath, getArtifactSource, isWriteFile, threadId]);
-  const { isMock } = useThread();
-  const artifactViewUrl =
-    artifactSource?.viewUrl ??
-    urlOfArtifact({ filepath, threadId, isMock });
+  const { isMock, workspaceId } = useThread();
+  const browserOssSource = artifactSource?.browserOssSource ?? null;
+  const { data: resolvedOssUrl } = useResolvedOssUrl(
+    workspaceId,
+    browserOssSource,
+  );
+  const hasResolvedBrowserOssUrl = !browserOssSource || Boolean(resolvedOssUrl);
+  const artifactViewUrl = browserOssSource
+    ? resolvedOssUrl
+    : urlOfArtifact({ filepath, threadId, isMock });
   const { content, url } = useArtifactContent({
     threadId,
     filepath: filepathFromProps,
-    enabled: isCodeFile && !isWriteFile,
-    urlOverride: artifactSource?.viewUrl,
+    enabled: isCodeFile && !isWriteFile && hasResolvedBrowserOssUrl,
+    urlOverride: browserOssSource ? resolvedOssUrl : undefined,
   });
 
   const displayContent = content ?? "";
@@ -240,12 +247,22 @@ export function ArtifactFileDetail({
             readonly
           />
         )}
-        {displayMode === "iframe-preview" && (
-          <iframe
-            className="size-full"
-            src={artifactViewUrl}
-          />
+        {displayMode === "image-preview" && hasResolvedBrowserOssUrl && (
+          <div className="flex size-full items-center justify-center bg-black/5 p-4">
+            <img
+              className="max-h-full max-w-full rounded-md object-contain"
+              src={artifactViewUrl}
+              alt={getFileName(filepath)}
+            />
+          </div>
         )}
+        {displayMode === "iframe-preview" &&
+          hasResolvedBrowserOssUrl && (
+            <iframe
+              className="size-full"
+              src={artifactViewUrl}
+            />
+          )}
         {displayMode === "unsupported-preview" && (
           <ArtifactUnsupportedPreview
             fileType={getFileExtensionDisplayName(filepath)}

@@ -68,12 +68,17 @@ class Paths:
         │       ├── config.yaml
         │       ├── SOUL.md  <-- agent personality/identity (injected alongside lead prompt)
         │       └── memory.json
+        ├── workspaces/
+        │   └── {workspace_id}/
+        │       ├── workspace/         <-- /mnt/user-data/workspace/
+        │       ├── uploads/           <-- /mnt/user-data/uploads/
+        │       └── outputs/           <-- /mnt/user-data/outputs/
         └── threads/
             └── {thread_id}/
-                └── user-data/         <-- mounted as /mnt/user-data/ inside sandbox
-                    ├── workspace/     <-- /mnt/user-data/workspace/
-                    ├── uploads/       <-- /mnt/user-data/uploads/
-                    └── outputs/       <-- /mnt/user-data/outputs/
+                └── user-data/         <-- thread-local sandbox data mounted as /mnt/user-data/ inside sandbox
+                    ├── workspace/
+                    ├── uploads/
+                    └── outputs/
 
     BaseDir resolution (in priority order):
         1. Constructor argument `base_dir`
@@ -190,20 +195,20 @@ class Paths:
         return self.workspaces_dir / _validate_workspace_id(workspace_id)
 
     def workspace_user_data_dir(self, workspace_id: str) -> Path:
-        """Workspace-scoped user-data root mounted into bash sandboxes."""
-        return self.workspace_dir(workspace_id) / "user-data"
+        """Workspace-scoped root directory mounted into bash sandboxes."""
+        return self.workspace_dir(workspace_id)
 
     def workspace_work_dir(self, workspace_id: str) -> Path:
         """Workspace-backed workspace directory exposed as `/mnt/user-data/workspace/`."""
-        return self.workspace_user_data_dir(workspace_id) / "workspace"
+        return self.workspace_dir(workspace_id) / "workspace"
 
     def workspace_uploads_dir(self, workspace_id: str) -> Path:
         """Workspace-backed uploads directory exposed as `/mnt/user-data/uploads/`."""
-        return self.workspace_user_data_dir(workspace_id) / "uploads"
+        return self.workspace_dir(workspace_id) / "uploads"
 
     def workspace_outputs_dir(self, workspace_id: str) -> Path:
         """Workspace-backed outputs directory exposed as `/mnt/user-data/outputs/`."""
-        return self.workspace_user_data_dir(workspace_id) / "outputs"
+        return self.workspace_dir(workspace_id) / "outputs"
 
     def sandbox_work_dir(self, thread_id: str) -> Path:
         """
@@ -273,20 +278,20 @@ class Paths:
         return _join_host_path(self._host_shared_fs_root_str(), "workspaces", _validate_workspace_id(workspace_id))
 
     def host_workspace_user_data_dir(self, workspace_id: str) -> str:
-        """Host path for a workspace's user-data root."""
-        return _join_host_path(self.host_workspace_dir(workspace_id), "user-data")
+        """Host path for a workspace root."""
+        return self.host_workspace_dir(workspace_id)
 
     def host_workspace_work_dir(self, workspace_id: str) -> str:
         """Host path for the workspace mount source."""
-        return _join_host_path(self.host_workspace_user_data_dir(workspace_id), "workspace")
+        return _join_host_path(self.host_workspace_dir(workspace_id), "workspace")
 
     def host_workspace_uploads_dir(self, workspace_id: str) -> str:
         """Host path for the uploads mount source."""
-        return _join_host_path(self.host_workspace_user_data_dir(workspace_id), "uploads")
+        return _join_host_path(self.host_workspace_dir(workspace_id), "uploads")
 
     def host_workspace_outputs_dir(self, workspace_id: str) -> str:
         """Host path for the outputs mount source."""
-        return _join_host_path(self.host_workspace_user_data_dir(workspace_id), "outputs")
+        return _join_host_path(self.host_workspace_dir(workspace_id), "outputs")
 
     def host_acp_workspace_dir(self, thread_id: str) -> str:
         """Host path for the ACP workspace mount source."""
@@ -377,7 +382,7 @@ class Paths:
             raise ValueError(f"Path must start with /{prefix}")
 
         relative = stripped[len(prefix) :].lstrip("/")
-        base = self.workspace_user_data_dir(workspace_id).resolve()
+        base = self.workspace_dir(workspace_id).resolve()
         actual = (base / relative).resolve()
 
         try:
