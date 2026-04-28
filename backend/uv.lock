@@ -773,7 +773,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.13.0" },
     { name = "cryptography", specifier = ">=42.0.0" },
     { name = "deerflow-harness", editable = "packages/harness" },
-    { name = "ecc-auth", specifier = ">=0.1.2" },
+    { name = "ecc-auth", specifier = ">=0.1.3" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "itsdangerous", specifier = ">=2.1.0" },
@@ -946,7 +946,7 @@ wheels = [
 
 [[package]]
 name = "ecc-auth"
-version = "0.1.2"
+version = "0.1.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "authlib" },
@@ -955,9 +955,9 @@ dependencies = [
     { name = "pyjwt", extra = ["crypto"] },
     { name = "starlette" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/54/fa/206a73b09566977f7e9f70b36552f6f90b6e5ed892fe922385991dbbd9fe/ecc_auth-0.1.2.tar.gz", hash = "sha256:004758480c7b1528c201836890280ba6cad00f6335cff57aee89d74cf62eee7f", size = 18631, upload-time = "2026-04-24T06:32:46.659Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9d/59/90b56adc16378f74583ed2bc4b6675b98bc99a438e34a80e4aa49936abd8/ecc_auth-0.1.3.tar.gz", hash = "sha256:70a5f6ab06220bab54147389c126683270ee4f61d8ccfa469b467242bc05beb9", size = 20488, upload-time = "2026-04-28T09:14:33.129Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/42/4c/4d0beafbd11fdcc54738a204f70f044fe286e0c0ced6c7fd6f8ce8f6c624/ecc_auth-0.1.2-py3-none-any.whl", hash = "sha256:9f2fb17b9be072e973a4258b2d5692adbfe3f46d14e87651565ac9fe5cc819ad", size = 19160, upload-time = "2026-04-24T06:32:45.153Z" },
+    { url = "https://files.pythonhosted.org/packages/39/93/a73f44d7147fdb2dbb852b6c2ee00dcefe9105cee97d22e7dc195ec9b01d/ecc_auth-0.1.3-py3-none-any.whl", hash = "sha256:2fe921bb2cb106b6df80680ce6c46a91298b0a472fdb6ed6a7dd4d675d44fbf2", size = 20574, upload-time = "2026-04-28T09:14:31.734Z" },
 ]
 
 [[package]]

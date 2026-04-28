@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
+const DEV_SYNTHETIC_MODES = new Set(["dev", "development", "local", "test"]);
 
 function isTruthy(value: string | undefined) {
   return TRUE_VALUES.has((value ?? "").trim().toLowerCase());
@@ -9,10 +10,8 @@ function isTruthy(value: string | undefined) {
 
 function isDevSyntheticAuthEnabled() {
   const enabled = isTruthy(process.env.DEER_FLOW_DEV_SYNTHETIC_AUTH);
-  const isDevelopment =
-    process.env.DEER_FLOW_SERVER_MODE === "dev" ||
-    process.env.NODE_ENV === "development";
-  return enabled && isDevelopment;
+  const mode = process.env.DEER_FLOW_SERVER_MODE ?? process.env.NODE_ENV;
+  return enabled && DEV_SYNTHETIC_MODES.has((mode ?? "").trim().toLowerCase());
 }
 
 /**
