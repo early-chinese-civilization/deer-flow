@@ -375,7 +375,9 @@ Skills 是 DeerFlow 能做“几乎任何事”的关键。
 
 Skills 采用按需渐进加载，不会一次性把所有内容都塞进上下文。只有任务确实需要时才加载，这样能把上下文窗口控制得更干净，也更适合对 token 比较敏感的模型。
 
-通过 Gateway 安装 `.skill` 压缩包时，DeerFlow 会接受标准的可选 frontmatter 元数据，比如 `version`、`author`、`compatibility`，不会把本来合法的外部 skill 拒之门外。
+通过 Gateway 安装 `.skill` 压缩包时，DeerFlow 会接受标准的可选 frontmatter 元数据，比如 `version`、`author`、`compatibility`，不会把本来合法的外部 skill 拒之门外。如果提供 `version`，它必须是字符串；DeerFlow 会把它作为用户可读的 package version 展示，但不会强制 SemVer。
+
+自定义 skill 可以发布到公共目录，成为当前 public latest。每次发布都会创建一条不可变的系统 release 记录，包含系统生成的 `release_version`，以及来自 `SKILL.md` 的可选 package `version`。`skills` 表仍然表示当前可见、可下载、可绑定的副本；release 记录用于追踪这份 public latest 是哪一次发布产生的。Skills Gallery 会优先展示 package version，没有时回退到 release version，并且发布自定义 skill 前会要求确认“发布为 public latest”。
 
 Tools 也是同样的思路。DeerFlow 自带一组核心工具：网页搜索、网页抓取、文件操作、bash 执行；同时也支持通过 MCP Server 和 Python 函数扩展自定义工具。你可以替换任何一项，也可以继续往里加。
 

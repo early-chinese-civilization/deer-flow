@@ -210,7 +210,7 @@ FastAPI application on port 8001 with health check at `GET /health`.
 | **Auth** (`/api/auth`) | Shared `ecc-auth` SDK routes for `login`, `callback`, `me`, `refresh`, `logout`; the router is created during app construction after config/.env loading, the app also installs the shared auth-session middleware so dependency-based refresh can persist rotated cookies on custom responses, the backend workspace resolves `ecc-auth` from the sibling checkout for local auth integration work, Gateway business deps still project `AuthIdentity -> User`, `/me` is JWKS-first, explicit logout sets `kc_logout_marker` to block silent refresh re-login, and legacy handwritten Keycloak/PKCE/cookie helper modules are no longer part of the runtime path |
 | **Models** (`/api/models`) | `GET /` - list models; `GET /{name}` - model details |
 | **MCP** (`/api/mcp`) | `GET /config` - get config; `PUT /config` - update config (saves to extensions_config.json) |
-| **Skills** (`/api/skills`) | `GET /` - list skills; `GET /{name}` - details; `PUT /{name}` - update enabled; `POST /install` - install from .skill archive (accepts standard optional frontmatter like `version`, `author`, `compatibility`) |
+| **Skills** (`/api/skills`) | `GET /` - list visible skills with version metadata; `GET /{name}` - details; `PUT /{name}` - refresh/update current user skill; `POST /install` - install from `.skill` archive; `POST /{name}/publish` - publish a custom skill as public latest and create a release record; `POST /{name}/download` - copy public latest into the current user's custom skills; `POST /check-upload` / `POST /{name}/check-download` - conflict checks. Optional SKILL.md frontmatter includes `version`, `author`, `compatibility`; non-string `version` is rejected. |
 | **Memory** (`/api/memory`) | `GET /` - memory data; `POST /reload` - force reload; `GET /config` - config; `GET /status` - config + data |
 | **Uploads** (`/api/workspaces/{workspace_id}/uploads`) | `POST /` - upload workspace files (auto-converts PDF/PPT/Excel/Word, mirrors into the bound thread when `thread_id` is provided); `GET /list` - list canonical workspace files plus a nested tree; `DELETE /` - delete by JSON body (`filename`, optional `object_key`) |
 | **Threads** (`/api/threads/{id}`) | `DELETE /` - remove DeerFlow-managed local thread data after LangGraph thread deletion; unexpected failures are logged server-side and return a generic 500 detail |
@@ -285,10 +285,12 @@ Proxied through nginx: `/api/langgraph/*` → Gateway-backed LangGraph runtime, 
 ### Skills System (`packages/harness/deerflow/skills/`)
 
 - **Location**: `deer-flow/skills/{public,custom}/`
-- **Format**: Directory with `SKILL.md` (YAML frontmatter: name, description, license, allowed-tools)
-- **Loading**: `load_skills()` recursively scans `skills/{public,custom}` for `SKILL.md`, parses metadata, and reads enabled state from extensions_config.json
-- **Injection**: Enabled skills listed in agent system prompt with container paths
-- **Installation**: `POST /api/skills/install` extracts .skill ZIP archive to custom/ directory
+- **Format**: Directory with `SKILL.md` (YAML frontmatter: `name`, `description`, `license`, `allowed-tools`, optional `version`, `author`, `compatibility`)
+- **Loading**: `load_skills()` recursively scans `skills/{public,custom}` for `SKILL.md`, parses metadata including optional package version/author/compatibility, and reads enabled state from extensions_config.json
+- **Injection**: Enabled skills listed in agent system prompt with container paths. Runtime injection still uses current skill copy metadata (`name`, `description`, `file_path`, `virtual_path`) and does not pin historical release versions.
+- **Installation**: `POST /api/skills/install` extracts `.skill` ZIP archive to the current user's custom skills directory
+- **Publishing**: `POST /api/skills/{name}/publish` validates the current user's custom skill, copies it to public latest storage, creates a new public `skills` row, creates an immutable `skill_releases` row, then commits once. The system-generated `release_version` is for audit/ordering; the optional package `version` from `SKILL.md` is for display and is not SemVer-enforced. In-process publish failures roll back DB work and restore the previous public artifact directory when possible.
+- **Release persistence**: `skills` rows continue to answer “which current copy is visible/downloadable/bindable”; `skill_releases` rows answer “which publish produced this public latest copy.” Legacy public skills without release rows remain listable and downloadable with null version fields.
 
 ### Model Factory (`packages/harness/deerflow/models/factory.py`)
 

@@ -280,9 +280,39 @@ Content-Type: application/json
 
 ### Skills
 
+Skills use two related persistence concepts:
+
+- `skills` rows are the current visible/installable copies: user-owned custom skills and public latest catalog skills.
+- `skill_releases` rows are immutable publish records. They track which publish produced a public latest skill copy.
+
+`package_version` comes from `SKILL.md` frontmatter `version` and is optional, non-unique, and not SemVer-enforced. If present, it must be a string. `release_version` is system-generated and immutable.
+
+#### Skill Response Shape
+
+Skill responses include version metadata when available:
+
+```json
+{
+  "name": "pdf-processing",
+  "description": "Handle PDF documents efficiently",
+  "category": "public",
+  "enabled": true,
+  "license": "MIT",
+  "version": "1.2.0",
+  "package_version": "1.2.0",
+  "release_version": "rel_9b5e0b9a2b6d4e7a9f1c2d3e4f5a6b7c",
+  "release_status": "published",
+  "published_at": "2026-04-28T08:00:00+00:00",
+  "owner_user_id": 42,
+  "owner_display_name": "Alice"
+}
+```
+
+For legacy public skills without a release record, `version`, `package_version`, `release_version`, `release_status`, and `published_at` are `null`. For custom skills, `package_version` is read from that custom copy's `SKILL.md` when available.
+
 #### List Skills
 
-Get all available skills.
+Get the current user's custom skills plus public latest skills.
 
 ```http
 GET /api/skills
@@ -294,19 +324,17 @@ GET /api/skills
   "skills": [
     {
       "name": "pdf-processing",
-      "display_name": "PDF Processing",
       "description": "Handle PDF documents efficiently",
+      "category": "public",
       "enabled": true,
       "license": "MIT",
-      "path": "public/pdf-processing"
-    },
-    {
-      "name": "frontend-design",
-      "display_name": "Frontend Design",
-      "description": "Design and build frontend interfaces",
-      "enabled": false,
-      "license": "MIT",
-      "path": "public/frontend-design"
+      "version": "1.2.0",
+      "package_version": "1.2.0",
+      "release_version": "rel_9b5e0b9a2b6d4e7a9f1c2d3e4f5a6b7c",
+      "release_status": "published",
+      "published_at": "2026-04-28T08:00:00+00:00",
+      "owner_user_id": 42,
+      "owner_display_name": "Alice"
     }
   ]
 }
@@ -318,70 +346,141 @@ GET /api/skills
 GET /api/skills/{skill_name}
 ```
 
-**Response:**
-```json
-{
-  "name": "pdf-processing",
-  "display_name": "PDF Processing",
-  "description": "Handle PDF documents efficiently",
-  "enabled": true,
-  "license": "MIT",
-  "path": "public/pdf-processing",
-  "allowed_tools": ["read_file", "write_file", "bash"],
-  "content": "# PDF Processing\n\nInstructions for the agent..."
-}
-```
+The Gateway prefers the current user's custom copy when one exists; otherwise it returns public latest. The response uses the same `SkillResponse` shape as list.
 
-#### Enable Skill
+#### Check Skill Upload
+
+Check whether an uploaded `.skill` ZIP would conflict with the current user's custom skill names.
 
 ```http
-POST /api/skills/{skill_name}/enable
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Skill 'pdf-processing' enabled"
-}
-```
-
-#### Disable Skill
-
-```http
-POST /api/skills/{skill_name}/disable
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Skill 'pdf-processing' disabled"
-}
-```
-
-#### Install Skill
-
-Install a skill from a `.skill` file.
-
-```http
-POST /api/skills/install
+POST /api/skills/check-upload
 Content-Type: multipart/form-data
 ```
 
 **Request Body:**
-- `file`: The `.skill` file to install
+- `file`: `.skill` / ZIP archive containing exactly one skill folder with `SKILL.md`
+
+#### Upload Skills
+
+Upload one or more custom skill ZIP archives.
+
+```http
+POST /api/skills/uploads
+Content-Type: multipart/form-data
+```
+
+**Request Body:**
+- `files`: one or more ZIP archives
+- `overwrite_names`: optional repeated form field naming custom skills that may be overwritten
+
+Gateway upload validation accepts standard optional frontmatter keys (`version`, `author`, `compatibility`) and rejects non-string `version` values with a 400 detail.
+
+#### Publish Custom Skill
+
+Publish the current user's custom skill as public latest.
+
+```http
+POST /api/skills/{skill_name}/publish
+```
+
+Publish flow:
+1. Validate the current user's custom skill and parse `SKILL.md` metadata.
+2. Copy the custom skill artifact to the public latest storage path.
+3. Soft-delete previous active public rows for the same skill name.
+4. Create the new public latest `skills` row.
+5. Create a `skill_releases` record with generated `release_version` and optional `package_version`.
+6. Commit once and return the version-aware `SkillResponse`.
+
+User-visible behavior:
+- Missing custom skill returns 404.
+- Invalid metadata returns 400 with actionable detail.
+- System failures return a generic 500 detail. Publish phase logs include skill name, publisher user ID, phase, release_version when known, and sanitized error type/message.
+- In-process failures before commit roll back DB changes and restore the previous public artifact directory when possible.
+
+#### Check Skill Download
+
+Check whether downloading public latest would overwrite the current user's custom skill.
+
+```http
+POST /api/skills/{skill_name}/check-download
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "owner_user_id": null
+}
+```
+
+`owner_user_id` is accepted for compatibility but public lookup uses the skill name.
+
+#### Download Public Skill
+
+Copy public latest into the current user's custom skills.
+
+```http
+POST /api/skills/{skill_name}/download
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "owner_user_id": null,
+  "overwrite": false
+}
+```
+
+If a same-name custom skill exists and `overwrite` is false, the endpoint returns 409. On success, the response includes the source public latest release/package metadata when available.
+
+#### Update Skill
+
+```http
+PUT /api/skills/{skill_name}
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "enabled": true
+}
+```
+
+For user-owned custom skills, this refreshes the current skill row. Public skills are read-only.
+
+#### Delete Skill
+
+```http
+DELETE /api/skills/{skill_name}
+```
+
+Soft-deletes the current user's custom skill. Public skills cannot be deleted, and custom skills currently bound to an agent return 409.
+
+#### Install Skill
+
+Install a skill from a `.skill` file already present in a thread's user-data path.
+
+```http
+POST /api/skills/install
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "thread_id": "abc123",
+  "path": "mnt/user-data/outputs/my-skill.skill"
+}
+```
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "Skill 'my-skill' installed successfully",
-  "skill": {
-    "name": "my-skill",
-    "display_name": "My Skill",
-    "path": "custom/my-skill"
-  }
+  "skill_name": "my-skill",
+  "message": "Skill installed successfully"
 }
 ```
 
