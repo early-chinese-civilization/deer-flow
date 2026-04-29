@@ -3,6 +3,11 @@
 .PHONY: help config config-upgrade check install migrate dev dev-daemon start stop up down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway
 
 BASH ?= bash
+DEV_SYNTHETIC_AUTH ?=
+ifneq ($(strip $(DEV_SYNTHETIC_AUTH)),)
+override DEER_FLOW_DEV_SYNTHETIC_AUTH := $(DEV_SYNTHETIC_AUTH)
+endif
+export DEER_FLOW_DEV_SYNTHETIC_AUTH
 
 # Detect OS for Windows compatibility
 ifeq ($(OS),Windows_NT)
@@ -21,6 +26,7 @@ help:
 	@echo "  make migrate         - Apply backend database migrations"
 	@echo "  make setup-sandbox   - Pre-pull sandbox container image (recommended)"
 	@echo "  make dev             - Start all services in development mode (with hot-reloading)"
+	@echo "                         Set DEER_FLOW_DEV_SYNTHETIC_AUTH=1 to use synthetic local-user auth in dev"
 	@echo "  make dev-daemon      - Start all services in background (daemon mode)"
 	@echo "  make start           - Start all services in production mode (optimized, no hot-reloading)"
 	@echo "  make stop            - Stop all running services"

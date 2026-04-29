@@ -23,6 +23,48 @@ export interface LogoutResponse {
   logoutUrl: string;
 }
 
+type AuthErrorPayload = {
+  detail?: unknown;
+};
+
+const EXPECTED_UNAUTHENTICATED_DETAILS = new Set([
+  'Not authenticated',
+  'Session expired',
+  'Logged out',
+]);
+
+async function readAuthErrorDetail(response: Response): Promise<string> {
+  const body = await response.text();
+  if (!body) {
+    return response.statusText || 'Unknown auth error';
+  }
+
+  try {
+    const payload = JSON.parse(body) as AuthErrorPayload;
+    if (typeof payload.detail === 'string') {
+      return payload.detail;
+    }
+    if (payload.detail != null) {
+      return JSON.stringify(payload.detail);
+    }
+  } catch {
+    // Fall through to the raw response body below.
+  }
+
+  return body;
+}
+
+function shouldLogAuthFailure(status: number, detail: string): boolean {
+  if (status >= 500) {
+    return true;
+  }
+  return !EXPECTED_UNAUTHENTICATED_DETAILS.has(detail);
+}
+
+function formatAuthError(action: string, status: number, detail: string): string {
+  return `${action} failed (${status}): ${detail}`;
+}
+
 /**
  * 获取当前用户信息
  *
@@ -35,6 +77,12 @@ export async function getCurrentUser(): Promise<User | null> {
     });
 
     if (!res.ok) {
+      const detail = await readAuthErrorDetail(res);
+      if (shouldLogAuthFailure(res.status, detail)) {
+        console.error(
+          formatAuthError('Current user lookup', res.status, detail),
+        );
+      }
       return null;
     }
 
@@ -59,7 +107,8 @@ export async function logout(): Promise<string> {
     });
 
     if (!res.ok) {
-      throw new Error('Logout failed');
+      const detail = await readAuthErrorDetail(res);
+      throw new Error(formatAuthError('Logout', res.status, detail));
     }
 
     const data: LogoutResponse = await res.json();
@@ -83,7 +132,15 @@ export async function refreshToken(): Promise<boolean> {
       credentials: 'include',
     });
 
-    return res.ok;
+    if (!res.ok) {
+      const detail = await readAuthErrorDetail(res);
+      if (shouldLogAuthFailure(res.status, detail)) {
+        console.error(formatAuthError('Token refresh', res.status, detail));
+      }
+      return false;
+    }
+
+    return true;
   } catch (error) {
     console.error('Token refresh failed:', error);
     return false;

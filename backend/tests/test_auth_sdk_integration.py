@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import importlib
+import logging
 from http.cookies import SimpleCookie
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import jwt
 import pytest
 from ecc_auth import AuthSessionMiddleware
 from ecc_auth.config import KeycloakConfig
 from ecc_auth.identity import AuthIdentity
-from ecc_auth.routes import _decode_auth_state
+from ecc_auth.routes import _decode_auth_state, _encode_auth_state
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
@@ -85,6 +87,102 @@ def test_login_uses_origin_and_return_to_contract() -> None:
         "origin": "http://frontend.local",
     }
     assert response.cookies["pkce_verifier"] == "pkce-verifier"
+
+
+def test_callback_forwards_ecc_auth_exchange_error_code_and_logs_redacted_detail(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = _make_client()
+    state = _encode_auth_state(
+        nonce="csrf-nonce",
+        return_to="/workspace",
+        origin="http://frontend.local",
+    )
+    request = httpx.Request("POST", "https://keycloak.example.com/token")
+    response = httpx.Response(
+        400,
+        text='{"error":"invalid_grant","client_secret":"super-secret","refresh_token":"refresh-secret"}',
+        request=request,
+    )
+    exchange_error = httpx.HTTPStatusError(
+        "token endpoint rejected callback",
+        request=request,
+        response=response,
+    )
+    exchange_mock = AsyncMock(side_effect=exchange_error)
+
+    caplog.set_level(logging.WARNING, logger="ecc_auth.callback_errors")
+    with patch("ecc_auth.routes.exchange_code_for_token", exchange_mock):
+        client.cookies.set("csrf_nonce", "csrf-nonce")
+        client.cookies.set("pkce_verifier", "pkce-verifier")
+        callback_response = client.get(
+            "/api/auth/callback",
+            params={"code": "auth-code", "state": state},
+            follow_redirects=False,
+        )
+
+    assert callback_response.status_code == 302
+    assert (
+        callback_response.headers["location"]
+        == "http://frontend.local/?error=token_exchange_failed"
+    )
+    assert "status_code=400" in caplog.text
+    assert "response_body=" in caplog.text
+    assert "super-secret" not in caplog.text
+    assert "refresh-secret" not in caplog.text
+    assert "<redacted>" in caplog.text
+
+
+def test_callback_forwards_ecc_auth_user_sync_error_code() -> None:
+    client = _make_client()
+    state = _encode_auth_state(
+        nonce="csrf-nonce",
+        return_to="/workspace",
+        origin="http://frontend.local",
+    )
+    exchange_mock = AsyncMock(
+        return_value={
+            "access_token": "access-token",
+            "refresh_token": "refresh-token",
+            "id_token": "id-token",
+            "expires_in": 300,
+            "refresh_expires_in": 1800,
+        }
+    )
+    userinfo_mock = AsyncMock(
+        return_value={
+            "sub": "kc-sub",
+            "name": "Alice",
+            "preferred_username": "alice",
+            "email": "alice@example.com",
+            "email_verified": True,
+        }
+    )
+    sync_mock = AsyncMock(side_effect=RuntimeError("local user projection failed"))
+
+    with (
+        patch("ecc_auth.routes.exchange_code_for_token", exchange_mock),
+        patch("ecc_auth.routes.fetch_user_info", userinfo_mock),
+        patch(
+            "app.gateway.auth.routes.get_db_session",
+            return_value=_SessionContext(object()),
+        ),
+        patch("app.gateway.auth.routes.sync_local_user_from_identity", sync_mock),
+    ):
+        client.cookies.set("csrf_nonce", "csrf-nonce")
+        client.cookies.set("pkce_verifier", "pkce-verifier")
+        callback_response = client.get(
+            "/api/auth/callback",
+            params={"code": "auth-code", "state": state},
+            follow_redirects=False,
+        )
+
+    assert callback_response.status_code == 302
+    assert (
+        callback_response.headers["location"]
+        == "http://frontend.local/?error=user_sync_failed"
+    )
+    sync_mock.assert_awaited_once()
 
 
 def test_me_hydrates_deerflow_payload_via_shared_refresh_flow() -> None:
@@ -232,6 +330,52 @@ def test_create_gateway_auth_router_rejects_empty_required_keycloak_env(
         auth_routes.create_gateway_auth_router()
 
 
+def test_dev_synthetic_auth_router_does_not_require_keycloak_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEER_FLOW_DEV_SYNTHETIC_AUTH", "1")
+    monkeypatch.setenv("DEER_FLOW_SERVER_MODE", "dev")
+    monkeypatch.delenv("KEYCLOAK_URL", raising=False)
+    monkeypatch.delenv("KEYCLOAK_REALM", raising=False)
+    monkeypatch.delenv("KEYCLOAK_CLIENT_ID", raising=False)
+
+    app = FastAPI()
+    app.include_router(auth_routes.create_gateway_auth_router())
+    payload_mock = AsyncMock(
+        return_value={
+            "id": 1,
+            "externalAuthId": "dev-local-user",
+            "username": "dev",
+            "displayName": "DeerFlow Dev",
+            "email": "dev@localhost",
+            "emailVerified": True,
+        }
+    )
+
+    with (
+        patch(
+            "app.gateway.auth.routes.get_db_session",
+            return_value=_SessionContext(object()),
+        ),
+        patch("app.gateway.auth.routes.build_current_user_payload", payload_mock),
+    ):
+        response = TestClient(app).get("/api/auth/me")
+
+    assert response.status_code == 200
+    assert response.json()["user"]["externalAuthId"] == "dev-local-user"
+    payload_mock.assert_awaited_once()
+
+
+def test_dev_synthetic_auth_rejects_production_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEER_FLOW_DEV_SYNTHETIC_AUTH", "1")
+    monkeypatch.setenv("DEER_FLOW_SERVER_MODE", "prod")
+
+    with pytest.raises(RuntimeError, match="cannot be enabled in production mode"):
+        auth_routes.create_gateway_auth_router()
+
+
 @pytest.mark.anyio
 async def test_gateway_dependency_projects_auth_identity_to_local_user() -> None:
     identity = AuthIdentity(
@@ -243,8 +387,46 @@ async def test_gateway_dependency_projects_auth_identity_to_local_user() -> None
     )
     user = SimpleNamespace(id=7, external_auth_id="kc-sub")
 
-    with patch("app.gateway.deps.sync_local_user_from_identity", AsyncMock(return_value=user)) as sync_mock:
+    with patch(
+        "app.gateway.deps.sync_local_user_from_identity",
+        AsyncMock(return_value=user),
+    ) as sync_mock:
         result = await gateway_deps.get_current_user(db=object(), identity=identity)
 
     assert result is user
     sync_mock.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_gateway_dependency_uses_dev_synthetic_user_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEER_FLOW_DEV_SYNTHETIC_AUTH", "1")
+    monkeypatch.setenv("DEER_FLOW_SERVER_MODE", "dev")
+    auth_mock = AsyncMock()
+
+    with patch("app.gateway.deps.get_current_auth_identity", auth_mock):
+        identity = await gateway_deps.get_gateway_auth_identity(request=object())
+
+    assert identity.external_auth_id == "dev-local-user"
+    auth_mock.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_current_user_projects_dev_synthetic_identity_to_local_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEER_FLOW_DEV_SYNTHETIC_AUTH", "1")
+    monkeypatch.setenv("DEER_FLOW_SERVER_MODE", "dev")
+    user = SimpleNamespace(id=42, external_auth_id="dev-local-user")
+
+    identity = await gateway_deps.get_gateway_auth_identity(request=object())
+    with patch(
+        "app.gateway.deps.sync_local_user_from_identity",
+        AsyncMock(return_value=user),
+    ) as sync_mock:
+        result = await gateway_deps.get_current_user(db=object(), identity=identity)
+
+    assert result is user
+    synced_identity = sync_mock.await_args.kwargs["identity"]
+    assert synced_identity.external_auth_id == "dev-local-user"

@@ -288,6 +288,15 @@ On Windows, run the local development flow from Git Bash. Native `cmd.exe` and P
    make dev
    ```
 
+   To skip the external Keycloak redirect during local development, enable dev synthetic auth:
+
+   ```bash
+   DEER_FLOW_DEV_SYNTHETIC_AUTH=1 make dev
+   # or: make dev DEV_SYNTHETIC_AUTH=1
+   ```
+
+   You can also put `DEER_FLOW_DEV_SYNTHETIC_AUTH=1` in the root `.env`. This mode only works when the service script starts in development mode. It still creates a stable local user (`dev-local-user` by default), so user-bound features such as skills, uploads, threads, agents, and memory keep working. Optional `.env` overrides include `DEER_FLOW_DEV_AUTH_EXTERNAL_ID`, `DEER_FLOW_DEV_AUTH_USERNAME`, `DEER_FLOW_DEV_AUTH_DISPLAY_NAME`, and `DEER_FLOW_DEV_AUTH_EMAIL`.
+
 6. **Access**: http://localhost:2026
 
 ### Advanced
