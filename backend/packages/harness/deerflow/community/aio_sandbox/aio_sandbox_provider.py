@@ -201,12 +201,10 @@ class AioSandboxProvider(SandboxProvider):
         """Collect all extra mounts for a sandbox (workspace/thread-specific + skills)."""
         mounts: list[tuple[str, str, bool]] = []
 
-        if workspace_id:
-            mounts.extend(self._get_workspace_mounts(workspace_id, thread_id))
-            logger.info(f"Adding workspace mounts for workspace {workspace_id}: {mounts}")
-        elif thread_id:
-            mounts.extend(self._get_thread_mounts(thread_id))
-            logger.info(f"Adding thread mounts for thread {thread_id}: {mounts}")
+        resolved_workspace_id = workspace_id or thread_id
+        if resolved_workspace_id:
+            mounts.extend(self._get_workspace_mounts(resolved_workspace_id))
+            logger.info(f"Adding workspace mounts for workspace {resolved_workspace_id}: {mounts}")
 
         skills_mount = self._get_skills_mount(skill_scope)
         if skills_mount:
@@ -216,38 +214,15 @@ class AioSandboxProvider(SandboxProvider):
         return mounts
 
     @staticmethod
-    def _get_workspace_mounts(workspace_id: str, thread_id: str | None = None) -> list[tuple[str, str, bool]]:
+    def _get_workspace_mounts(workspace_id: str) -> list[tuple[str, str, bool]]:
         """Get volume mounts for a workspace's shared user-data directories."""
         paths = get_paths()
         paths.ensure_workspace_dirs(workspace_id)
 
-        mounts = [
+        return [
             (paths.host_workspace_work_dir(workspace_id), f"{VIRTUAL_PATH_PREFIX}/workspace", False),
             (paths.host_workspace_uploads_dir(workspace_id), f"{VIRTUAL_PATH_PREFIX}/uploads", False),
             (paths.host_workspace_outputs_dir(workspace_id), f"{VIRTUAL_PATH_PREFIX}/outputs", False),
-        ]
-        if thread_id:
-            mounts.append((paths.host_acp_workspace_dir(thread_id), "/mnt/acp-workspace", True))
-        return mounts
-
-    @staticmethod
-    def _get_thread_mounts(thread_id: str) -> list[tuple[str, str, bool]]:
-        """Get volume mounts for a thread's data directories.
-
-        Creates directories if they don't exist (lazy initialization).
-        Mount sources use host_base_dir so that when running inside Docker with a
-        mounted Docker socket (DooD), the host Docker daemon can resolve the paths.
-        """
-        paths = get_paths()
-        paths.ensure_thread_dirs(thread_id)
-
-        return [
-            (paths.host_sandbox_work_dir(thread_id), f"{VIRTUAL_PATH_PREFIX}/workspace", False),
-            (paths.host_sandbox_uploads_dir(thread_id), f"{VIRTUAL_PATH_PREFIX}/uploads", False),
-            (paths.host_sandbox_outputs_dir(thread_id), f"{VIRTUAL_PATH_PREFIX}/outputs", False),
-            # ACP workspace: read-only inside the sandbox (lead agent reads results;
-            # the ACP subprocess writes from the host side, not from within the container).
-            (paths.host_acp_workspace_dir(thread_id), "/mnt/acp-workspace", True),
         ]
 
     @staticmethod

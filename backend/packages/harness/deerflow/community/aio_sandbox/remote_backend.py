@@ -63,23 +63,14 @@ class RemoteSandboxBackend(SandboxBackend):
         workspace_id: str | None = None,
         skill_scope: str | None = None,
     ) -> None:
-        """Mount OSS-backed skills and workspace data after the pod is ready."""
-        del thread_id
-        resolved_workspace_id = workspace_id
-        if not resolved_workspace_id:
-            raise RuntimeError("workspace_id is required to initialize remote sandbox mounts")
-
-        command = self._build_mount_command(
-            workspace_id=resolved_workspace_id,
-            skill_scope=skill_scope,
-        )
+        """Remote sandboxes receive mounts in the provisioner-created Pod spec."""
         logger.info(
-            "Initializing remote sandbox mounts for %s workspace=%s skill_scope=%s",
+            "Skipping post-ready remote sandbox mount initialization for %s thread=%s workspace=%s skill_scope=%s",
             info.sandbox_id,
-            resolved_workspace_id,
+            thread_id,
+            workspace_id,
             skill_scope,
         )
-        self._provisioner_exec(info.sandbox_id, command)
 
     @staticmethod
     def _quote_shell(value: str) -> str:
@@ -118,7 +109,7 @@ class RemoteSandboxBackend(SandboxBackend):
                 "/mnt/user-data",
                 "/tmp/ossfs2-workspaces.conf",
                 "/tmp/ossfs2-log/workspaces",
-                self._mount_prefix(f"workspaces/{workspace_id}/user-data"),
+                    self._mount_prefix(f"workspaces/{workspace_id}"),
             )
         )
 

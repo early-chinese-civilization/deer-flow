@@ -89,12 +89,7 @@ def join_host_path(base: str, *parts: str) -> str:
             result /= part
         return str(result)
 
-    from pathlib import Path
-
-    result = Path(base)
-    for part in parts:
-        result /= part
-    return str(result)
+    return "/".join([base.rstrip("/"), *(part.strip("/") for part in parts)])
 
 
 if WORKSPACES_HOST_PATH is None:
@@ -285,6 +280,73 @@ def _sandbox_url(node_port: int) -> str:
     return f"http://{NODE_HOST}:{node_port}"
 
 
+def _build_startup_mounts(
+    workspace_id: str,
+    skill_scope: str | None,
+) -> tuple[list[k8s_client.V1Volume], list[k8s_client.V1VolumeMount]]:
+    """Build hostPath volumes mounted when the sandbox Pod starts."""
+    volumes = [
+        k8s_client.V1Volume(
+            name="workspace-work",
+            host_path=k8s_client.V1HostPathVolumeSource(
+                path=join_host_path(WORKSPACES_HOST_PATH, workspace_id, "workspace"),
+                type="DirectoryOrCreate",
+            ),
+        ),
+        k8s_client.V1Volume(
+            name="workspace-uploads",
+            host_path=k8s_client.V1HostPathVolumeSource(
+                path=join_host_path(WORKSPACES_HOST_PATH, workspace_id, "uploads"),
+                type="DirectoryOrCreate",
+            ),
+        ),
+        k8s_client.V1Volume(
+            name="workspace-outputs",
+            host_path=k8s_client.V1HostPathVolumeSource(
+                path=join_host_path(WORKSPACES_HOST_PATH, workspace_id, "outputs"),
+                type="DirectoryOrCreate",
+            ),
+        )
+    ]
+    volume_mounts = [
+        k8s_client.V1VolumeMount(
+            name="workspace-work",
+            mount_path="/mnt/user-data/workspace",
+            read_only=False,
+        ),
+        k8s_client.V1VolumeMount(
+            name="workspace-uploads",
+            mount_path="/mnt/user-data/uploads",
+            read_only=False,
+        ),
+        k8s_client.V1VolumeMount(
+            name="workspace-outputs",
+            mount_path="/mnt/user-data/outputs",
+            read_only=False,
+        )
+    ]
+
+    if skill_scope:
+        volumes.append(
+            k8s_client.V1Volume(
+                name="skills",
+                host_path=k8s_client.V1HostPathVolumeSource(
+                    path=join_host_path(SKILLS_HOST_PATH, skill_scope),
+                    type="DirectoryOrCreate",
+                ),
+            )
+        )
+        volume_mounts.append(
+            k8s_client.V1VolumeMount(
+                name="skills",
+                mount_path="/mnt/skills",
+                read_only=True,
+            )
+        )
+
+    return volumes, volume_mounts
+
+
 def _build_pod(
     sandbox_id: str,
     thread_id: str,
@@ -301,6 +363,7 @@ def _build_pod(
         workspace_id,
         skill_scope,
     )
+    volumes, volume_mounts = _build_startup_mounts(workspace_id, skill_scope)
     return k8s_client.V1Pod(
         metadata=k8s_client.V1ObjectMeta(
             name=_pod_name(sandbox_id),
@@ -325,6 +388,7 @@ def _build_pod(
                             protocol="TCP",
                         )
                     ],
+                    volume_mounts=volume_mounts,
                     readiness_probe=k8s_client.V1Probe(
                         http_get=k8s_client.V1HTTPGetAction(
                             path="/v1/sandbox",
@@ -364,6 +428,7 @@ def _build_pod(
                     ),
                 )
             ],
+            volumes=volumes,
             restart_policy="Always",
         ),
     )

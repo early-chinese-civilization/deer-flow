@@ -44,10 +44,7 @@ def _join_host_path(base: str, *parts: str) -> str:
             result /= part
         return str(result)
 
-    result = Path(base)
-    for part in parts:
-        result /= part
-    return str(result)
+    return "/".join([base.rstrip("/"), *(part.strip("/") for part in parts)])
 
 
 def join_host_path(base: str, *parts: str) -> str:
