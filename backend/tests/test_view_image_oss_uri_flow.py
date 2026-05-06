@@ -60,7 +60,7 @@ def test_view_image_middleware_prefers_oss_uri_in_injected_message() -> None:
                 "oss_uri": "oss://demo-bucket/workspaces/ws-1/uploads/photo.png",
                 "object_key": "workspaces/ws-1/uploads/photo.png",
             }
-        }
+        },
     }
 
     result = middleware.before_model(state, SimpleNamespace())

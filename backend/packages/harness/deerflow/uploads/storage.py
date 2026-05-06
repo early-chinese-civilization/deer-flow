@@ -109,7 +109,7 @@ class OSSStorageBackend:
         )
 
     @classmethod
-    def from_app_config(cls) -> "OSSStorageBackend":
+    def from_app_config(cls) -> OSSStorageBackend:
         """Build the OSS storage backend from the current app config."""
         uploads_config = get_app_config().uploads
         if uploads_config.backend != "oss":

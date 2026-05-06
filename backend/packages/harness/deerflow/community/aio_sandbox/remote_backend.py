@@ -16,6 +16,7 @@ from .sandbox_info import SandboxInfo
 
 logger = logging.getLogger(__name__)
 
+
 class RemoteSandboxBackend(SandboxBackend):
     """Backend that delegates sandbox lifecycle to the provisioner service."""
 
@@ -95,11 +96,7 @@ class RemoteSandboxBackend(SandboxBackend):
             raise RuntimeError("Remote sandbox OSS mounts require uploads.backend=oss")
 
         oss_config = uploads_config.oss
-        missing = [
-            name
-            for name in ("endpoint", "bucket", "access_key_id", "access_key_secret")
-            if not getattr(oss_config, name)
-        ]
+        missing = [name for name in ("endpoint", "bucket", "access_key_id", "access_key_secret") if not getattr(oss_config, name)]
         if missing:
             raise RuntimeError(f"OSS mount configuration is incomplete: missing {', '.join(missing)}")
 

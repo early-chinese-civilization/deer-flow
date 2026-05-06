@@ -12,18 +12,14 @@ _SAFE_FS_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9._\-]+$")
 def _validate_thread_id(thread_id: str) -> str:
     """Validate a thread ID before using it in filesystem paths."""
     if not _SAFE_FS_IDENTIFIER_RE.match(thread_id):
-        raise ValueError(
-            f"Invalid thread_id {thread_id!r}: only alphanumeric characters, dots, hyphens, and underscores are allowed."
-        )
+        raise ValueError(f"Invalid thread_id {thread_id!r}: only alphanumeric characters, dots, hyphens, and underscores are allowed.")
     return thread_id
 
 
 def _validate_workspace_id(workspace_id: str) -> str:
     """Validate a workspace ID before using it in filesystem paths."""
     if not _SAFE_FS_IDENTIFIER_RE.match(workspace_id):
-        raise ValueError(
-            f"Invalid workspace_id {workspace_id!r}: only alphanumeric characters, dots, hyphens, and underscores are allowed."
-        )
+        raise ValueError(f"Invalid workspace_id {workspace_id!r}: only alphanumeric characters, dots, hyphens, and underscores are allowed.")
     return workspace_id
 
 

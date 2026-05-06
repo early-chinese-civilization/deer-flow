@@ -50,4 +50,5 @@ if sys.platform == "win32":
 # Now import and run langgraph CLI
 if __name__ == "__main__":
     from langgraph_cli.cli import cli
+
     cli()

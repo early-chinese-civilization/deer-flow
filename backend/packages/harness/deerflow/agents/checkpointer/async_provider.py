@@ -53,10 +53,7 @@ def _ensure_compatible_event_loop():
             loop = asyncio.get_running_loop()
             # Check if we're using ProactorEventLoop
             if isinstance(loop, asyncio.ProactorEventLoop):
-                logger.warning(
-                    "Detected ProactorEventLoop on Windows. psycopg requires SelectorEventLoop. "
-                    "This should be fixed at application startup by setting the event loop policy."
-                )
+                logger.warning("Detected ProactorEventLoop on Windows. psycopg requires SelectorEventLoop. This should be fixed at application startup by setting the event loop policy.")
         except RuntimeError:
             # No running loop yet - set policy for future loops
             if isinstance(asyncio.get_event_loop_policy(), asyncio.WindowsProactorEventLoopPolicy):

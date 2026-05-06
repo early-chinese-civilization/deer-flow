@@ -18,7 +18,7 @@ def format_search_path(schema: str | None = None) -> str:
     value = schema or get_gateway_db_schema()
     if _IDENTIFIER_RE.fullmatch(value):
         return value
-    return f'"{value.replace("\"", "\"\"")}"'
+    return f'"{value.replace('"', '""')}"'
 
 
 def get_gateway_db_connect_args() -> dict[str, dict[str, str]]:
