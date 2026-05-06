@@ -757,6 +757,7 @@ class SkillInstallRepository:
             select(SkillInstall)
             .options(
                 selectinload(SkillInstall.definition),
+                selectinload(SkillInstall.installed_version),
                 selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition),
             )
             .where(
@@ -779,6 +780,7 @@ class SkillInstallRepository:
             .join(SkillDefinition, SkillDefinition.id == SkillInstall.skill_definition_id)
             .options(
                 selectinload(SkillInstall.definition),
+                selectinload(SkillInstall.installed_version),
                 selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition),
             )
             .where(
@@ -815,6 +817,20 @@ class SkillInstallRepository:
         else:
             install.current_version_id = version.id
             install.updated_at = now
+        await db.flush()
+        await db.refresh(install)
+        return install
+
+    @staticmethod
+    async def update_current_version(
+        db: AsyncSession,
+        *,
+        install: SkillInstall,
+        version: SkillVersion,
+    ) -> SkillInstall:
+        """Update only the runtime-selected version for an existing install."""
+        install.current_version_id = version.id
+        install.updated_at = datetime.now(UTC)
         await db.flush()
         await db.refresh(install)
         return install
@@ -883,7 +899,77 @@ class SkillReleaseRepository:
                 SkillRelease.status == "published",
                 SkillRelease.skill_version_id.is_not(None),
             )
-            .order_by(SkillRelease.created_at.desc(), SkillVersion.version_number.desc())
+            .order_by(SkillVersion.version_number.desc(), SkillRelease.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_latest_published_release_by_name(
+        db: AsyncSession,
+        *,
+        skill_name: str,
+    ) -> SkillRelease | None:
+        """Load the latest published release with version and publisher metadata."""
+        result = await db.execute(
+            select(SkillRelease)
+            .join(SkillVersion, SkillVersion.id == SkillRelease.skill_version_id)
+            .options(
+                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition),
+                selectinload(SkillRelease.publisher_user),
+            )
+            .where(
+                SkillRelease.skill_name == skill_name,
+                SkillRelease.status == "published",
+                SkillRelease.skill_version_id.is_not(None),
+            )
+            .order_by(SkillVersion.version_number.desc(), SkillRelease.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_latest_published_release_for_definition(
+        db: AsyncSession,
+        *,
+        skill_definition_id: int,
+    ) -> SkillRelease | None:
+        """Load the latest published release for a concrete skill definition."""
+        result = await db.execute(
+            select(SkillRelease)
+            .join(SkillVersion, SkillVersion.id == SkillRelease.skill_version_id)
+            .options(
+                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition),
+                selectinload(SkillRelease.publisher_user),
+            )
+            .where(
+                SkillVersion.skill_definition_id == skill_definition_id,
+                SkillRelease.status == "published",
+                SkillRelease.skill_version_id.is_not(None),
+            )
+            .order_by(SkillVersion.version_number.desc(), SkillRelease.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_published_release_by_version_id(
+        db: AsyncSession,
+        *,
+        skill_version_id: int,
+    ) -> SkillRelease | None:
+        """Load a published release for a selected immutable skill version."""
+        result = await db.execute(
+            select(SkillRelease)
+            .options(
+                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition),
+                selectinload(SkillRelease.publisher_user),
+            )
+            .where(
+                SkillRelease.skill_version_id == skill_version_id,
+                SkillRelease.status == "published",
+            )
+            .order_by(SkillRelease.created_at.desc())
             .limit(1)
         )
         return result.scalar_one_or_none()
@@ -1091,6 +1177,28 @@ class SkillRepository:
                 Agent.deleted_at.is_(None),
                 AgentSkill.skill_id == skill_id,
                 AgentSkill.deleted_at.is_(None),
+            )
+            .order_by(Agent.name.asc())
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def list_bound_agents_for_install(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        skill_install_id: int,
+    ) -> list[Agent]:
+        """List active user-owned agents currently bound to an install."""
+        result = await db.execute(
+            select(Agent)
+            .join(AgentSkill, AgentSkill.agent_id == Agent.id)
+            .where(
+                Agent.user_id == user_id,
+                Agent.deleted_at.is_(None),
+                AgentSkill.skill_install_id == skill_install_id,
+                AgentSkill.deleted_at.is_(None),
+                AgentSkill.enabled.is_(True),
             )
             .order_by(Agent.name.asc())
         )

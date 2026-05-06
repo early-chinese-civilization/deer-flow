@@ -27,6 +27,10 @@ function collectSkillsCopy(skillsCopy: typeof enUS.settings.skills): string[] {
     skillsCopy.installError,
     skillsCopy.publishSuccess("demo-skill"),
     skillsCopy.publishPending,
+    skillsCopy.viewUpdate,
+    skillsCopy.updateSuccess("demo-skill"),
+    skillsCopy.updateError,
+    skillsCopy.updatePending,
     skillsCopy.publishedBy("Demo Publisher"),
     skillsCopy.skillHubTab,
     skillsCopy.mySkillsTab,
@@ -52,6 +56,19 @@ function collectSkillsCopy(skillsCopy: typeof enUS.settings.skills): string[] {
     skillsCopy.releaseNotesHelp,
     skillsCopy.publishAsLatestNotice,
     skillsCopy.confirmPublish,
+    skillsCopy.updateDialogTitle,
+    skillsCopy.updateDialogDescription,
+    skillsCopy.updatePreviewLoading,
+    skillsCopy.currentVersionLabel,
+    skillsCopy.availableVersionLabel,
+    skillsCopy.sourceLabel,
+    skillsCopy.publisherLabel,
+    skillsCopy.publishedAtLabel,
+    skillsCopy.unknownPublisher,
+    skillsCopy.affectedAgentsLabel,
+    skillsCopy.noAffectedAgents,
+    skillsCopy.noReleaseNotes,
+    skillsCopy.confirmUpdate,
     skillsCopy.deleteBlocked("demo-agent"),
     skillsCopy.conflictConfirm("demo-skill"),
     skillsCopy.noMySkills,
@@ -89,4 +106,22 @@ void test("publish copy avoids release/package internals in user-facing text", (
   assert.doesNotMatch(englishPublishCopy, /SKILL\.md|public latest|download/i);
   assert.match(englishPublishCopy, /SkillHub/);
   assert.match(englishPublishCopy, /platform version/);
+});
+
+void test("update confirmation copy avoids public latest and package internals", () => {
+  const englishUpdateCopy = [
+    enUS.settings.skills.updateDialogTitle,
+    enUS.settings.skills.updateDialogDescription,
+    enUS.settings.skills.currentVersionLabel,
+    enUS.settings.skills.availableVersionLabel,
+    enUS.settings.skills.affectedAgentsLabel,
+    enUS.settings.skills.publishedAtLabel,
+    enUS.settings.skills.confirmUpdate,
+  ].join(" ");
+
+  assert.doesNotMatch(
+    englishUpdateCopy,
+    /public latest|package version|release version|artifact/i,
+  );
+  assert.match(englishUpdateCopy, /version/i);
 });

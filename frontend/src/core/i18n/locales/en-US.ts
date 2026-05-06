@@ -496,6 +496,11 @@ export const enUS: Translations = {
       publishSuccess: (skillName: string) =>
         `Skill "${skillName}" published successfully.`,
       publishPending: "Publishing...",
+      viewUpdate: "View update",
+      updateSuccess: (skillName: string) =>
+        `Skill "${skillName}" updated successfully.`,
+      updateError: "Failed to update installed Skill.",
+      updatePending: "Updating...",
       publishedBy: (ownerDisplayName: string) =>
         `Published by ${ownerDisplayName}`,
       skillHubTab: "SkillHub",
@@ -530,6 +535,20 @@ export const enUS: Translations = {
       publishAsLatestNotice:
         "Publishing creates a SkillHub version snapshot that other users can install.",
       confirmPublish: "Publish to SkillHub",
+      updateDialogTitle: "Review Skill update",
+      updateDialogDescription:
+        "Confirming changes the installed version for future Agent runs.",
+      updatePreviewLoading: "Loading update preview...",
+      currentVersionLabel: "Current version",
+      availableVersionLabel: "Available version",
+      sourceLabel: "Source",
+      publisherLabel: "Publisher",
+      publishedAtLabel: "Published",
+      unknownPublisher: "Unknown publisher",
+      affectedAgentsLabel: "Affected Agents",
+      noAffectedAgents: "No Agents are currently bound to this Skill.",
+      noReleaseNotes: "No release notes were provided.",
+      confirmUpdate: "Update installed Skill",
       deleteBlocked: (agentName: string) =>
         `This skill is bound to agent "${agentName}" and cannot be deleted.`,
       conflictConfirm: (skillName: string) =>

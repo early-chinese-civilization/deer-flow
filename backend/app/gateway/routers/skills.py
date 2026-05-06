@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.db.models import Skill, SkillDefinition, SkillInstall, SkillRelease, SkillVersion, User
+from app.gateway.db.models import Agent, Skill, SkillDefinition, SkillInstall, SkillRelease, SkillVersion, User
 from app.gateway.db.repository import (
     SkillDefinitionRepository,
     SkillInstallRepository,
@@ -53,6 +53,10 @@ class SkillResponse(BaseModel):
     skill_definition_id: int | None = Field(default=None, description="Stable platform skill definition ID")
     skill_version_id: int | None = Field(default=None, description="Immutable platform skill version ID")
     skill_install_id: int | None = Field(default=None, description="Current user's install ID when installed")
+    current_platform_version: int | None = Field(default=None, description="Current installed platform version")
+    installed_platform_version: int | None = Field(default=None, description="Initially installed platform version")
+    latest_platform_version: int | None = Field(default=None, description="Newest published platform version available to this install")
+    update_available: bool | None = Field(default=None, description="Whether the current install can be updated")
     source_package_version: str | None = Field(default=None, description="Optional SKILL.md source package version metadata")
     package_version: str | None = Field(default=None, description="Deprecated alias for source_package_version; not platform version")
     release_version: str | None = Field(default=None, description="System-generated publish-event identifier")
@@ -166,12 +170,39 @@ class SkillInstallUpdateRequest(BaseModel):
     skill_version_id: int | None = Field(default=None, description="Specific platform SkillVersion ID; latest published version is used when omitted")
 
 
+class SkillUpdateAffectedAgent(BaseModel):
+    """Agent affected by an installed Skill update."""
+
+    id: int = Field(..., description="Agent ID")
+    name: str = Field(..., description="Agent name")
+
+
+class SkillInstallUpdatePreviewResponse(BaseModel):
+    """Read-only preview for an installed Skill update."""
+
+    skill_name: str = Field(..., description="Skill name")
+    skill_install_id: int = Field(..., description="Install ID that would be updated")
+    current_skill_version_id: int = Field(..., description="Current installed SkillVersion ID")
+    target_skill_version_id: int | None = Field(default=None, description="Target SkillVersion ID when available")
+    current_platform_version: int = Field(..., description="Current installed platform version")
+    target_platform_version: int | None = Field(default=None, description="Available platform version when update can proceed")
+    update_available: bool = Field(..., description="Whether the target version differs from the install current version")
+    status: str = Field(..., description="available, up_to_date, or unavailable")
+    message: str = Field(..., description="User-correctable update state")
+    release_notes: str | None = Field(default=None, description="Publish notes attached to the target version")
+    published_at: str | None = Field(default=None, description="Publish timestamp for the target version")
+    publisher: str | None = Field(default=None, description="Publisher display name")
+    source: str = Field(..., description="Skill source label")
+    affected_agents: list[SkillUpdateAffectedAgent] = Field(default_factory=list, description="Agents bound to this install")
+
+
 def _skill_to_response(
     skill: Skill,
     release: SkillRelease | None = None,
     package_version: str | None = None,
     skill_version: SkillVersion | None = None,
     skill_install: SkillInstall | None = None,
+    latest_skill_version: SkillVersion | None = None,
 ) -> SkillResponse:
     """Convert a database skill row to the API response model."""
     owner_display_name = None
@@ -190,6 +221,12 @@ def _skill_to_response(
     release_notes = getattr(release, "release_notes", None) if release is not None else None
     published_at = release_created_at.isoformat() if release_created_at is not None else None
     platform_version = skill_version.version_number if skill_version is not None else None
+    current_platform_version = skill_install.current_version.version_number if skill_install is not None and skill_install.current_version is not None else None
+    installed_platform_version = skill_install.installed_version.version_number if skill_install is not None and skill_install.installed_version is not None else current_platform_version
+    latest_platform_version = latest_skill_version.version_number if latest_skill_version is not None else None
+    update_available = None
+    if skill_install is not None and latest_skill_version is not None:
+        update_available = skill_install.current_version_id != latest_skill_version.id
 
     return SkillResponse(
         name=skill.name,
@@ -204,6 +241,10 @@ def _skill_to_response(
         skill_definition_id=skill_version.skill_definition_id if skill_version is not None else None,
         skill_version_id=skill_version.id if skill_version is not None else None,
         skill_install_id=skill_install.id if skill_install is not None else None,
+        current_platform_version=current_platform_version,
+        installed_platform_version=installed_platform_version,
+        latest_platform_version=latest_platform_version,
+        update_available=update_available,
         source_package_version=response_package_version,
         package_version=response_package_version,
         release_version=release_version,
@@ -229,17 +270,31 @@ def _extract_package_version_from_dir(skill_dir: Path) -> str | None:
     return package_version if isinstance(package_version, str) else None
 
 
-async def _skill_to_response_with_metadata(db: AsyncSession, skill: Skill) -> SkillResponse:
+async def _skill_to_response_with_metadata(db: AsyncSession, skill: Skill, *, current_user_id: int | None = None) -> SkillResponse:
     """Convert a skill row to API response with best-effort version metadata."""
     if skill.user_id is None and skill.id is not None:
         release = await SkillReleaseRepository.get_latest_release_for_public_skill(db, published_skill_id=skill.id)
         skill_version = None
         if release is not None and release.skill_version_id is not None:
             skill_version = await SkillVersionRepository.get_by_id(db, skill_version_id=release.skill_version_id)
-        return _skill_to_response(skill, release=release, skill_version=skill_version)
+        install = (
+            await SkillInstallRepository.get_by_user_and_definition(
+                db,
+                user_id=current_user_id,
+                skill_definition_id=skill_version.skill_definition_id,
+            )
+            if current_user_id is not None and skill_version is not None
+            else None
+        )
+        return _skill_to_response(skill, release=release, skill_version=skill_version, skill_install=install, latest_skill_version=skill_version)
     install = await SkillInstallRepository.get_by_user_and_name(db, user_id=skill.user_id, name=skill.name) if skill.user_id is not None else None
     if install is not None:
-        return _skill_to_response(skill, skill_version=install.current_version, skill_install=install)
+        latest_release = await SkillReleaseRepository.get_latest_published_release_for_definition(
+            db,
+            skill_definition_id=install.skill_definition_id,
+        )
+        latest_version = latest_release.skill_version if latest_release is not None else None
+        return _skill_to_response(skill, release=latest_release, skill_version=install.current_version, skill_install=install, latest_skill_version=latest_version)
     return _skill_to_response(skill, package_version=_extract_package_version_for_skill(skill))
 
 
@@ -419,6 +474,124 @@ def _resolve_skill_record_dir(skill: Skill) -> Path:
             user_id=skill.user_id,
             skill_name=skill.name,
         )
+    )
+
+
+def _is_skill_version_artifact_available(version: SkillVersion) -> bool:
+    """Return whether an immutable SkillVersion artifact can be used exactly."""
+    try:
+        artifact_dir = _resolve_skill_dir(version.artifact_uri)
+    except Exception:
+        return False
+    return artifact_dir.is_dir() and (artifact_dir / "SKILL.md").is_file()
+
+
+def _format_publisher(release: SkillRelease | None) -> str | None:
+    publisher = release.publisher_user if release is not None else None
+    if publisher is None:
+        return None
+    display_name = (publisher.display_name or "").strip()
+    return display_name or publisher.username
+
+
+def _affected_agent_to_response(agent: Agent) -> SkillUpdateAffectedAgent:
+    return SkillUpdateAffectedAgent(id=agent.id, name=agent.name)
+
+
+async def _build_skill_update_preview(
+    db: AsyncSession,
+    *,
+    skill_name: str,
+    current_user: User,
+    target_version: SkillVersion | None = None,
+    target_release: SkillRelease | None = None,
+) -> SkillInstallUpdatePreviewResponse:
+    """Build a read-only update preview for the current user's install."""
+    install = await SkillInstallRepository.get_by_user_and_name(db, user_id=current_user.id, name=skill_name)
+    if install is None:
+        raise HTTPException(status_code=404, detail=f"Skill install '{skill_name}' not found")
+    if install.current_version is None:
+        raise HTTPException(status_code=409, detail=f"Skill install '{skill_name}' has no current version")
+
+    release = target_release
+    if target_version is None:
+        release = await SkillReleaseRepository.get_latest_published_release_for_definition(
+            db,
+            skill_definition_id=install.skill_definition_id,
+        )
+        target_version = release.skill_version if release is not None else None
+    elif target_version.skill_definition_id != install.skill_definition_id:
+        raise HTTPException(status_code=404, detail=f"Skill version '{target_version.id}' not found for '{skill_name}'")
+
+    affected_agents = [
+        _affected_agent_to_response(agent)
+        for agent in await SkillRepository.list_bound_agents_for_install(
+            db,
+            user_id=current_user.id,
+            skill_install_id=install.id,
+        )
+    ]
+
+    current_artifact_available = _is_skill_version_artifact_available(install.current_version)
+
+    if target_version is None:
+        if not current_artifact_available:
+            return SkillInstallUpdatePreviewResponse(
+                skill_name=skill_name,
+                skill_install_id=install.id,
+                current_skill_version_id=install.current_version.id,
+                target_skill_version_id=None,
+                current_platform_version=install.current_version.version_number,
+                target_platform_version=None,
+                update_available=False,
+                status="unavailable",
+                message=f"Current installed version {install.current_version.version_number} is unavailable.",
+                source="SkillHub",
+                affected_agents=affected_agents,
+            )
+        return SkillInstallUpdatePreviewResponse(
+            skill_name=skill_name,
+            skill_install_id=install.id,
+            current_skill_version_id=install.current_version.id,
+            target_skill_version_id=None,
+            current_platform_version=install.current_version.version_number,
+            target_platform_version=None,
+            update_available=False,
+            status="unavailable",
+            message=f"No published update found for '{skill_name}'",
+            source="SkillHub",
+            affected_agents=affected_agents,
+        )
+
+    target_artifact_available = _is_skill_version_artifact_available(target_version)
+    update_available = install.current_version_id != target_version.id
+    artifact_available = current_artifact_available and target_artifact_available
+    status = "available" if update_available and artifact_available else "up_to_date"
+    message = f"Version {target_version.version_number} is available."
+    if not current_artifact_available:
+        status = "unavailable"
+        message = f"Current installed version {install.current_version.version_number} is unavailable."
+    elif not update_available:
+        message = f"Skill '{skill_name}' is already on version {install.current_version.version_number}."
+    elif not target_artifact_available:
+        status = "unavailable"
+        message = f"Version {target_version.version_number} is unavailable."
+
+    return SkillInstallUpdatePreviewResponse(
+        skill_name=skill_name,
+        skill_install_id=install.id,
+        current_skill_version_id=install.current_version.id,
+        target_skill_version_id=target_version.id,
+        current_platform_version=install.current_version.version_number,
+        target_platform_version=target_version.version_number,
+        update_available=update_available and artifact_available,
+        status=status,
+        message=message,
+        release_notes=release.release_notes if release is not None else None,
+        published_at=release.created_at.isoformat() if release is not None and release.created_at is not None else None,
+        publisher=_format_publisher(release),
+        source="SkillHub",
+        affected_agents=affected_agents,
     )
 
 
@@ -964,7 +1137,7 @@ async def download_skill(
 
 @router.post(
     "/skills/{skill_name}/update-install",
-    response_model=SkillResponse,
+    response_model=SkillInstallUpdatePreviewResponse,
     summary="Update Installed Skill",
     description="Explicitly update the current user's install to a platform SkillVersion.",
 )
@@ -973,52 +1146,48 @@ async def update_skill_install(
     request: SkillInstallUpdateRequest | None = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> SkillResponse:
+) -> SkillInstallUpdatePreviewResponse:
     try:
         install = await SkillInstallRepository.get_by_user_and_name(db, user_id=current_user.id, name=skill_name)
         if install is None:
             raise HTTPException(status_code=404, detail=f"Skill install '{skill_name}' not found")
 
+        release: SkillRelease | None = None
         if request is not None and request.skill_version_id is not None:
-            version = await SkillVersionRepository.get_by_id(db, skill_version_id=request.skill_version_id)
+            release = await SkillReleaseRepository.get_published_release_by_version_id(
+                db,
+                skill_version_id=request.skill_version_id,
+            )
+            version = release.skill_version if release is not None else None
             if version is None or version.skill_definition_id != install.skill_definition_id:
                 raise HTTPException(status_code=404, detail=f"Skill version '{request.skill_version_id}' not found for '{skill_name}'")
         else:
-            version = await SkillReleaseRepository.get_latest_published_version_by_name(db, skill_name=skill_name)
+            release = await SkillReleaseRepository.get_latest_published_release_for_definition(
+                db,
+                skill_definition_id=install.skill_definition_id,
+            )
+            version = release.skill_version if release is not None else None
             if version is None:
                 raise HTTPException(status_code=404, detail=f"No published update found for '{skill_name}'")
 
-        updated_install = await SkillInstallRepository.upsert_install(
+        preview = await _build_skill_update_preview(
             db,
-            user_id=current_user.id,
-            definition=install.definition,
-            version=version,
+            skill_name=skill_name,
+            current_user=current_user,
+            target_version=version,
+            target_release=release,
         )
-        user_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
-        if user_skill is None:
-            user_skill = await SkillRepository.create_skill(
+        if preview.status == "unavailable":
+            raise HTTPException(status_code=409, detail=preview.message)
+        if preview.update_available:
+            await SkillInstallRepository.update_current_version(
                 db,
-                user_id=current_user.id,
-                owner_user_id=None,
-                name=skill_name,
-                display_name=skill_name,
-                description=version.description,
-                file_path=version.artifact_uri,
-                commit=False,
+                install=install,
+                version=version,
             )
-        else:
-            user_skill.description = version.description or user_skill.description
-            user_skill.file_path = version.artifact_uri
-            await db.flush()
 
         await db.commit()
-        refreshed_install = await SkillInstallRepository.get_by_user_and_definition(
-            db,
-            user_id=current_user.id,
-            skill_definition_id=version.skill_definition_id,
-        )
-        release = await SkillReleaseRepository.get_latest_release_for_public_skill(db, published_skill_id=user_skill.id) if user_skill.user_id is None else None
-        return _skill_to_response(user_skill, release=release, skill_version=version, skill_install=refreshed_install or updated_install)
+        return preview
     except HTTPException:
         await db.rollback()
         raise
@@ -1026,6 +1195,26 @@ async def update_skill_install(
         await db.rollback()
         logger.error("Failed to update skill install %s: %s", skill_name, exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to update skill install: {exc}")
+
+
+@router.get(
+    "/skills/{skill_name}/update-install/preview",
+    response_model=SkillInstallUpdatePreviewResponse,
+    summary="Preview Installed Skill Update",
+    description="Read-only preview of an installed Skill update and affected Agents.",
+)
+async def preview_skill_install_update(
+    skill_name: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SkillInstallUpdatePreviewResponse:
+    try:
+        return await _build_skill_update_preview(db, skill_name=skill_name, current_user=current_user)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to preview skill install update %s: %s", skill_name, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to preview skill install update: {exc}")
 
 
 @router.post(
@@ -1143,7 +1332,7 @@ async def list_skills(
 ) -> SkillsListResponse:
     try:
         skills = await SkillRepository.list_visible_skills(db, user_id=current_user.id)
-        return SkillsListResponse(skills=[await _skill_to_response_with_metadata(db, skill) for skill in skills])
+        return SkillsListResponse(skills=[await _skill_to_response_with_metadata(db, skill, current_user_id=current_user.id) for skill in skills])
     except Exception as exc:
         logger.error("Failed to load skills: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to load skills: {exc}")
@@ -1165,7 +1354,7 @@ async def get_skill(
         if skill is None:
             raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
 
-        return await _skill_to_response_with_metadata(db, skill)
+        return await _skill_to_response_with_metadata(db, skill, current_user_id=current_user.id)
     except HTTPException:
         raise
     except Exception as exc:

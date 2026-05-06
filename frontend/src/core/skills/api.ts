@@ -3,6 +3,8 @@ import { getBackendBaseURL } from "@/core/config";
 import {
   buildSkillHubInstallCheckRequest,
   buildSkillHubInstallRequest,
+  buildSkillInstallUpdateConfirmRequest,
+  buildSkillInstallUpdatePreviewRequest,
   getSkillHubInstallCheckFallbackError,
   getSkillHubInstallFallbackError,
 } from "./request";
@@ -48,6 +50,32 @@ export interface SkillHubInstallRequest {
 
 export interface SkillPublishRequest {
   release_notes?: string | null;
+}
+
+export interface SkillInstallUpdateRequest {
+  skill_version_id?: number | null;
+}
+
+export interface SkillUpdateAffectedAgent {
+  id: number;
+  name: string;
+}
+
+export interface SkillInstallUpdatePreview {
+  skill_name: string;
+  skill_install_id: number;
+  current_skill_version_id: number;
+  target_skill_version_id?: number | null;
+  current_platform_version: number;
+  target_platform_version?: number | null;
+  update_available: boolean;
+  status: "available" | "up_to_date" | "unavailable";
+  message: string;
+  release_notes?: string | null;
+  published_at?: string | null;
+  publisher?: string | null;
+  source: string;
+  affected_agents: SkillUpdateAffectedAgent[];
 }
 
 export async function loadSkills() {
@@ -201,6 +229,51 @@ export async function installSkillHubSkill(
 
 export const checkSkillDownload = checkSkillHubInstall;
 export const downloadSkill = installSkillHubSkill;
+
+export async function previewSkillInstallUpdate(
+  skillName: string,
+): Promise<SkillInstallUpdatePreview> {
+  const response = await fetch(
+    ...buildSkillInstallUpdatePreviewRequest(getBackendBaseURL(), skillName),
+  );
+
+  if (!response.ok) {
+    const errorData = (await response.json().catch(() => ({}))) as {
+      detail?: string;
+    };
+    throw new Error(
+      errorData.detail ??
+        `Failed to preview Skill update: ${response.statusText}`,
+    );
+  }
+
+  return response.json() as Promise<SkillInstallUpdatePreview>;
+}
+
+export async function confirmSkillInstallUpdate(
+  skillName: string,
+  request: SkillInstallUpdateRequest = {},
+): Promise<SkillInstallUpdatePreview> {
+  const response = await fetch(
+    ...buildSkillInstallUpdateConfirmRequest(
+      getBackendBaseURL(),
+      skillName,
+      request,
+    ),
+  );
+
+  if (!response.ok) {
+    const errorData = (await response.json().catch(() => ({}))) as {
+      detail?: string;
+    };
+    throw new Error(
+      errorData.detail ??
+        `Failed to update installed Skill: ${response.statusText}`,
+    );
+  }
+
+  return response.json() as Promise<SkillInstallUpdatePreview>;
+}
 
 export async function publishSkill(
   skillName: string,

@@ -4,6 +4,8 @@ import test from "node:test";
 const {
   buildSkillHubInstallCheckRequest,
   buildSkillHubInstallRequest,
+  buildSkillInstallUpdateConfirmRequest,
+  buildSkillInstallUpdatePreviewRequest,
   getSkillHubInstallCheckFallbackError,
   getSkillHubInstallFallbackError,
 } = await import(new URL("./request.ts", import.meta.url).href);
@@ -43,4 +45,26 @@ void test("SkillHub install fallback errors use install semantics", () => {
     getSkillHubInstallFallbackError("Conflict"),
     "Failed to install skill: Conflict",
   );
+});
+
+void test("builds read-only Skill install update preview request", () => {
+  const [url, init] = buildSkillInstallUpdatePreviewRequest("", "demo-skill");
+
+  assert.match(url, /\/api\/skills\/demo-skill\/update-install\/preview$/);
+  assert.equal(init.method, "GET");
+  assert.equal(init.credentials, "include");
+  assert.equal(init.body, undefined);
+});
+
+void test("builds Skill install update confirm request for selected version", () => {
+  const [url, init] = buildSkillInstallUpdateConfirmRequest("", "demo-skill", {
+    skill_version_id: 202,
+  });
+
+  assert.match(url, /\/api\/skills\/demo-skill\/update-install$/);
+  assert.deepEqual(JSON.parse(String(init.body)), {
+    skill_version_id: 202,
+  });
+  assert.equal(init.method, "POST");
+  assert.equal(init.credentials, "include");
 });

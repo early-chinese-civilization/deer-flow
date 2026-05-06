@@ -32,9 +32,12 @@ import { useI18n } from "@/core/i18n/hooks";
 import {
   checkSkillHubInstall,
   checkSkillUpload,
+  getSkillInstallUpdateDialogState,
+  useConfirmSkillInstallUpdate,
   useDeleteSkill,
   useInstallSkillHubSkill,
   usePublishSkill,
+  usePreviewSkillInstallUpdate,
   useSkills,
   useUploadSkills,
 } from "@/core/skills";
@@ -55,12 +58,24 @@ export function SkillsGallery() {
   const { skills, isLoading, error } = useSkills();
   const deleteSkill = useDeleteSkill();
   const installSkillHubSkill = useInstallSkillHubSkill();
+  const confirmSkillUpdate = useConfirmSkillInstallUpdate();
   const publishSkill = usePublishSkill();
   const uploadSkills = useUploadSkills();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [filter, setFilter] = useState<SkillsSurface>("skillhub");
   const [publishCandidate, setPublishCandidate] = useState<Skill | null>(null);
+  const [updateCandidate, setUpdateCandidate] = useState<Skill | null>(null);
   const [releaseNotes, setReleaseNotes] = useState("");
+  const updatePreview = usePreviewSkillInstallUpdate(
+    updateCandidate?.name ?? null,
+  );
+  const updateDialogState = getSkillInstallUpdateDialogState(
+    updatePreview.data ?? null,
+    {
+      isPreviewLoading: updatePreview.isLoading,
+      isConfirming: confirmSkillUpdate.isPending,
+    },
+  );
 
   const filteredSkills = skills.filter((skill) =>
     filter === "skillhub"
@@ -126,6 +141,13 @@ export function SkillsGallery() {
     return t.settings.skills.notInstalled;
   }
 
+  function getAffectedAgentsText(agentNames: string[]) {
+    if (agentNames.length === 0) {
+      return t.settings.skills.noAffectedAgents;
+    }
+    return agentNames.join(", ");
+  }
+
   function openUploadDialog() {
     fileInputRef.current?.click();
   }
@@ -172,6 +194,27 @@ export function SkillsGallery() {
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t.settings.skills.installError,
+      );
+    }
+  }
+
+  async function handleUpdateConfirmed() {
+    if (!updateCandidate || !updatePreview.data?.target_skill_version_id) {
+      return;
+    }
+
+    try {
+      await confirmSkillUpdate.mutateAsync({
+        skillName: updateCandidate.name,
+        skillVersionId: updatePreview.data.target_skill_version_id,
+      });
+      toast.success(t.settings.skills.updateSuccess(updateCandidate.name));
+      setUpdateCandidate(null);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t.settings.skills.updateError,
       );
     }
   }
@@ -325,7 +368,8 @@ export function SkillsGallery() {
                   ? getSkillHubLatestPlatformVersion(skill)
                   : getSkillPlatformVersion(skill);
               const isInstallDisabled =
-                installState !== "not-installed" ||
+                (installState !== "not-installed" &&
+                  installState !== "update-available") ||
                 installSkillHubSkill.isPending;
 
               return (
@@ -382,7 +426,13 @@ export function SkillsGallery() {
                             : "outline"
                         }
                         disabled={isInstallDisabled}
-                        onClick={() => void handleInstall(skill)}
+                        onClick={() => {
+                          if (installState === "update-available") {
+                            setUpdateCandidate(installedSkill ?? skill);
+                            return;
+                          }
+                          void handleInstall(skill);
+                        }}
                       >
                         {installSkillHubSkill.isPending
                           ? t.settings.skills.installPending
@@ -409,6 +459,15 @@ export function SkillsGallery() {
                           >
                             {t.common.delete}
                           </DropdownMenuItem>
+                          {installState === "update-available" ? (
+                            <DropdownMenuItem
+                              onSelect={() => {
+                                setUpdateCandidate(skill);
+                              }}
+                            >
+                              {t.settings.skills.viewUpdate}
+                            </DropdownMenuItem>
+                          ) : null}
                           <DropdownMenuItem
                             onSelect={() => {
                               setReleaseNotes("");
@@ -502,6 +561,130 @@ export function SkillsGallery() {
               {publishSkill.isPending
                 ? t.settings.skills.publishPending
                 : t.settings.skills.confirmPublish}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={updateCandidate !== null}
+        onOpenChange={(open) => {
+          if (!open && !confirmSkillUpdate.isPending) {
+            setUpdateCandidate(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t.settings.skills.updateDialogTitle}</DialogTitle>
+            <DialogDescription>
+              {t.settings.skills.updateDialogDescription}
+            </DialogDescription>
+          </DialogHeader>
+          {updatePreview.isLoading ? (
+            <div className="text-muted-foreground text-sm">
+              {t.settings.skills.updatePreviewLoading}
+            </div>
+          ) : updatePreview.error ? (
+            <div className="text-destructive text-sm">
+              {updatePreview.error.message}
+            </div>
+          ) : updatePreview.data ? (
+            <div className="space-y-4 text-sm">
+              <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
+                <div>
+                  <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                    {t.settings.skills.currentVersionLabel}
+                  </div>
+                  <div className="mt-1 font-medium">
+                    {t.settings.skills.platformVersion(
+                      updatePreview.data.current_platform_version,
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                    {t.settings.skills.availableVersionLabel}
+                  </div>
+                  <div className="mt-1 font-medium">
+                    {updatePreview.data.target_platform_version != null
+                      ? t.settings.skills.platformVersion(
+                          updatePreview.data.target_platform_version,
+                        )
+                      : t.settings.skills.noPlatformVersion}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <div className="text-muted-foreground mb-1 text-xs font-medium tracking-wide uppercase">
+                  {t.settings.skills.releaseNotesLabel}
+                </div>
+                <p className="text-sm leading-6">
+                  {updatePreview.data.release_notes ??
+                    t.settings.skills.noReleaseNotes}
+                </p>
+              </div>
+              <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-3">
+                <div>
+                  <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                    {t.settings.skills.sourceLabel}
+                  </div>
+                  <div className="mt-1">{updatePreview.data.source}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                    {t.settings.skills.publisherLabel}
+                  </div>
+                  <div className="mt-1">
+                    {updatePreview.data.publisher ??
+                      t.settings.skills.unknownPublisher}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                    {t.settings.skills.publishedAtLabel}
+                  </div>
+                  <div className="mt-1">
+                    {updatePreview.data.published_at ?? "-"}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <div className="text-muted-foreground mb-1 text-xs font-medium tracking-wide uppercase">
+                  {t.settings.skills.affectedAgentsLabel}
+                </div>
+                <p className="text-sm leading-6">
+                  {getAffectedAgentsText(
+                    updatePreview.data.affected_agents.map(
+                      (agent) => agent.name,
+                    ),
+                  )}
+                </p>
+              </div>
+              {updatePreview.data.status !== "available" ? (
+                <div className="bg-muted/30 text-muted-foreground rounded-md border p-3">
+                  {updatePreview.data.message}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={updateDialogState.cancelDisabled}
+              onClick={() => setUpdateCandidate(null)}
+            >
+              {t.common.cancel}
+            </Button>
+            <Button
+              type="button"
+              disabled={updateDialogState.confirmDisabled}
+              onClick={() => void handleUpdateConfirmed()}
+            >
+              {confirmSkillUpdate.isPending
+                ? t.settings.skills.updatePending
+                : t.settings.skills.confirmUpdate}
             </Button>
           </DialogFooter>
         </DialogContent>

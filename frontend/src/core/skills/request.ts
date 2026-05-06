@@ -1,6 +1,7 @@
 import type {
   SkillHubInstallCheckRequest,
   SkillHubInstallRequest,
+  SkillInstallUpdateRequest,
 } from "./api";
 
 function buildSkillRoute(baseUrl: string, skillName: string, suffix: string) {
@@ -32,6 +33,37 @@ export function buildSkillHubInstallRequest(
 ): [string, RequestInit] {
   return [
     buildSkillRoute(baseUrl, skillName, "download"),
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+      credentials: "include",
+    },
+  ];
+}
+
+export function buildSkillInstallUpdatePreviewRequest(
+  baseUrl: string,
+  skillName: string,
+): [string, RequestInit] {
+  return [
+    buildSkillRoute(baseUrl, skillName, "update-install/preview"),
+    {
+      method: "GET",
+      credentials: "include",
+    },
+  ];
+}
+
+export function buildSkillInstallUpdateConfirmRequest(
+  baseUrl: string,
+  skillName: string,
+  request: SkillInstallUpdateRequest,
+): [string, RequestInit] {
+  return [
+    buildSkillRoute(baseUrl, skillName, "update-install"),
     {
       method: "POST",
       headers: {
