@@ -46,19 +46,23 @@ def _get_public_base_path() -> str:
 
 def _with_public_base_path(origin: str) -> str:
     base_path = _get_public_base_path()
+    print("base_path:", base_path)
+    print("origin:", origin)
+
     if not base_path:
         return origin
     if not base_path.startswith("/"):
         base_path = f"/{base_path}"
     if origin.endswith(base_path):
         return origin
-    return f"{origin.rstrip('/')}{base_path}"
+
+    str_origin = f"{origin.rstrip('/')}{base_path}"
+    print("str_origin:", str_origin)
+    return str_origin
 
 
 def _patch_ecc_auth_public_origin() -> None:
     original_get_public_origin = ecc_auth_routes.get_public_origin
-    print("ecc_auth_routes.get_public_origin:", ecc_auth_routes.get_public_origin)
-    print("ecc_auth_routes:", ecc_auth_routes)
     def get_public_origin_with_base_path(request: Request) -> str:
         return _with_public_base_path(original_get_public_origin(request))
 
@@ -133,7 +137,6 @@ def create_gateway_auth_router(config: KeycloakConfig | None = None) -> APIRoute
 
     resolved_config = config or _build_keycloak_config()
     init_dependencies(resolved_config)
-    print("resolved_config:", resolved_config)
     _patch_ecc_auth_public_origin()
 
     router = APIRouter(prefix="/api/auth", tags=["auth"])
