@@ -79,6 +79,9 @@ services:
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-}
       - DEER_FLOW_INTERNAL_GATEWAY_BASE_URL=http://gateway:8001
       - DEER_FLOW_INTERNAL_LANGGRAPH_BASE_URL=http://gateway:8001
+      - NEXT_PUBLIC_BASE_PATH=/deer-flow
+      - NEXT_PUBLIC_BACKEND_BASE_URL=/deer-flow
+      - NEXT_PUBLIC_LANGGRAPH_BASE_URL=/deer-flow/api/langgraph
     env_file:
       - ../frontend/.env
     networks:
