@@ -105,16 +105,22 @@ cmd_up() {
         psql -U "${PG_USER:-deerflow}" -d "${PG_DB:-flow}" \
         -c "CREATE DATABASE check_point;" 2>/dev/null || log_warn "check_point DB may already exist"
 
-    # Start remaining services
-    log_step "Starting all services..."
-    docker compose -f "$COMPOSE_FILE" up -d --build
+    # Build all images first (without starting services that depend on DB)
+    log_step "Building images..."
+    docker compose -f "$COMPOSE_FILE" build
 
-    # Run migrations
+    # Run migrations BEFORE starting gateway (gateway requires tables at startup)
     log_step "Running database migrations..."
-    sleep 5
-    docker compose -f "$COMPOSE_FILE" exec -T gateway sh -c "cd /app/backend && uv run alembic upgrade head" || {
-        log_warn "Migration may have failed or already applied. Check logs."
+    docker compose -f "$COMPOSE_FILE" run --rm \
+        -e CI=true \
+        gateway sh -c "cd /app/backend && uv run alembic upgrade head" || {
+        log_error "Migration failed. Check database connection and config."
+        exit 1
     }
+
+    # Now start all services
+    log_step "Starting all services..."
+    docker compose -f "$COMPOSE_FILE" up -d
 
     # Wait for gateway health check
     log_step "Waiting for services to be healthy..."
