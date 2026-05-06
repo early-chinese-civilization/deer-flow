@@ -46,8 +46,6 @@ def _get_public_base_path() -> str:
 
 def _with_public_base_path(origin: str) -> str:
     base_path = _get_public_base_path()
-    print("base_path:", base_path)
-    print("origin:", origin)
 
     if not base_path:
         return origin
@@ -63,10 +61,16 @@ def _with_public_base_path(origin: str) -> str:
 
 def _patch_ecc_auth_public_origin() -> None:
     original_get_public_origin = ecc_auth_routes.get_public_origin
+    original_get_request_origin = ecc_auth_routes._get_request_origin
+
     def get_public_origin_with_base_path(request: Request) -> str:
         return _with_public_base_path(original_get_public_origin(request))
 
+    def get_request_origin_with_base_path(request: Request) -> str:
+        return _with_public_base_path(original_get_request_origin(request))
+
     ecc_auth_routes.get_public_origin = get_public_origin_with_base_path
+    ecc_auth_routes._get_request_origin = get_request_origin_with_base_path
 
 
 def _build_keycloak_config() -> KeycloakConfig:
