@@ -20,7 +20,7 @@ from deerflow.sandbox.local.list_dir import list_dir as local_list_dir
 from deerflow.sandbox.sandbox import Sandbox
 from deerflow.sandbox.sandbox_provider import get_sandbox_provider
 from deerflow.sandbox.security import LOCAL_HOST_BASH_DISABLED_MESSAGE, is_host_bash_allowed
-from deerflow.sandbox.skill_scope import derive_skill_scope_from_runtime, get_runtime_agent_context
+from deerflow.sandbox.skill_scope import derive_skill_scope_from_runtime, get_runtime_agent_context, normalize_runtime_artifact_uri
 from deerflow.skills.path_utils import resolve_skill_storage_dir
 
 _ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![:\w])(?<!:/)/(?:[^\s\"'`;&|<>()]+)")
@@ -129,17 +129,16 @@ def _get_runtime_skill_root_map(runtime: "ToolRuntime[ContextT, ThreadState] | N
             continue
         virtual_path = skill.get("virtual_path")
         skill_version_id = skill.get("skill_version_id")
-        file_path = skill.get("artifact_uri") or skill.get("file_path")
+        artifact_uri = skill.get("artifact_uri")
         if skill_version_id is None:
             continue
         if not isinstance(virtual_path, str) or not virtual_path.strip():
             continue
-        if not isinstance(file_path, str) or not file_path.strip():
-            continue
+        normalized_file_path = normalize_runtime_artifact_uri(artifact_uri)
         virtual_root = str(PurePosixPath(virtual_path.strip()).parent)
         if not _is_skills_path(virtual_root):
             continue
-        root_map[virtual_root] = file_path.strip()
+        root_map[virtual_root] = normalized_file_path
     return root_map
 
 
@@ -220,7 +219,10 @@ def _resolve_runtime_skill_path(
         resolved_root = resolve_skill_storage_dir(Path(skills_host), file_path).resolve()
         suffix = path[len(virtual_root) :].lstrip("/")
         resolved = resolved_root if not suffix else (resolved_root / Path(PurePosixPath(suffix))).resolve()
-        resolved.relative_to(resolved_root)
+        try:
+            resolved.relative_to(resolved_root)
+        except ValueError as exc:
+            raise PermissionError(f"Skill path is not available in this runtime: {path}") from exc
         return str(resolved), thread_data
 
     raise PermissionError(f"Skill path is not available in this runtime: {path}")
@@ -621,7 +623,11 @@ def _resolve_and_validate_user_data_path(path: str, thread_data: ThreadDataState
     return str(resolved)
 
 
-def validate_local_bash_command_paths(command: str, thread_data: ThreadDataState | None) -> None:
+def validate_local_bash_command_paths(
+    command: str,
+    thread_data: ThreadDataState | None,
+    runtime: ToolRuntime[ContextT, ThreadState] | None = None,
+) -> None:
     """Validate absolute paths in local-sandbox bash commands.
 
     This validation is only a best-effort guard for the explicit
@@ -659,6 +665,8 @@ def validate_local_bash_command_paths(command: str, thread_data: ThreadDataState
         # Allow skills container path (resolved by tools.py before passing to sandbox)
         if _is_skills_path(absolute_path):
             _reject_path_traversal(absolute_path)
+            if runtime is not None:
+                _resolve_runtime_skill_path(absolute_path, runtime)
             continue
 
         # Allow ACP workspace path (path-traversal check only)
@@ -676,7 +684,11 @@ def validate_local_bash_command_paths(command: str, thread_data: ThreadDataState
         raise PermissionError(f"Unsafe absolute paths in command: {unsafe}. Use paths under {VIRTUAL_PATH_PREFIX}")
 
 
-def replace_virtual_paths_in_command(command: str, thread_data: ThreadDataState | None) -> str:
+def replace_virtual_paths_in_command(
+    command: str,
+    thread_data: ThreadDataState | None,
+    runtime: ToolRuntime[ContextT, ThreadState] | None = None,
+) -> str:
     """Replace all virtual paths (/mnt/user-data, /mnt/skills, /mnt/acp-workspace) in a command string.
 
     Args:
@@ -695,6 +707,9 @@ def replace_virtual_paths_in_command(command: str, thread_data: ThreadDataState 
         skills_pattern = re.compile(rf"{re.escape(skills_container)}(/[^\s\"';&|<>()]*)?")
 
         def replace_skills_match(match: re.Match) -> str:
+            if runtime is not None:
+                resolved, _thread_data = _resolve_runtime_skill_path(match.group(0), runtime)
+                return resolved
             return _resolve_skills_path(match.group(0))
 
         result = skills_pattern.sub(replace_skills_match, result)
@@ -1041,8 +1056,8 @@ def bash_tool(runtime: ToolRuntime[ContextT, ThreadState], description: str, com
                 return f"Error: {LOCAL_HOST_BASH_DISABLED_MESSAGE}"
             ensure_thread_directories_exist(runtime)
             thread_data = get_thread_data(runtime)
-            validate_local_bash_command_paths(command, thread_data)
-            command = replace_virtual_paths_in_command(command, thread_data)
+            validate_local_bash_command_paths(command, thread_data, runtime)
+            command = replace_virtual_paths_in_command(command, thread_data, runtime)
             command = _apply_cwd_prefix(command, thread_data)
             output = sandbox.execute_command(command)
             max_chars = _get_bash_output_max_chars()

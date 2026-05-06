@@ -257,6 +257,9 @@ class AioSandboxProvider(SandboxProvider):
         Mount source uses DEER_FLOW_HOST_SKILLS_PATH when running inside Docker (DooD)
         so the host Docker daemon can resolve the path.
         """
+        if skill_scope is None:
+            return None
+
         try:
             config = get_app_config()
             skills_path = config.skills.get_skills_path()
@@ -266,7 +269,7 @@ class AioSandboxProvider(SandboxProvider):
                 # Prefer the shared filesystem contract so runtime skill loading
                 # and sandbox mounts resolve to the same host path.
                 host_skills_root = join_host_path(get_paths()._host_shared_fs_root_str(), "skills") if os.environ.get("DEER_FLOW_HOST_SHARED_FS_ROOT") else os.environ.get("DEER_FLOW_HOST_SKILLS_PATH") or str(skills_path)
-                host_skills = join_host_path(host_skills_root, skill_scope) if skill_scope else host_skills_root
+                host_skills = join_host_path(host_skills_root, skill_scope)
                 return (host_skills, container_path, True)  # Read-only for security
         except Exception as e:
             logger.warning(f"Could not setup skills mount: {e}")

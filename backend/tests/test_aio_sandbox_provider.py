@@ -156,6 +156,37 @@ def test_get_skills_mount_scopes_public_skills(tmp_path, monkeypatch):
     assert mount == (str(skills_root / "public"), "/mnt/skills", True)
 
 
+def test_get_skills_mount_skips_skills_when_no_scope(tmp_path, monkeypatch):
+    aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir()
+    monkeypatch.setattr(
+        aio_mod,
+        "get_app_config",
+        lambda: SimpleNamespace(skills=SimpleNamespace(get_skills_path=lambda: skills_root, container_path="/mnt/skills")),
+    )
+
+    assert aio_mod.AioSandboxProvider._get_skills_mount(None) is None
+
+
+def test_get_skills_mount_scopes_runtime_bundle(tmp_path, monkeypatch):
+    aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
+    skills_root = tmp_path / "skills"
+    bundle_scope = ".runtime-skill-bundles/abc123"
+    (skills_root / bundle_scope / "probe-skill").mkdir(parents=True)
+    monkeypatch.setattr(
+        aio_mod,
+        "get_app_config",
+        lambda: SimpleNamespace(skills=SimpleNamespace(get_skills_path=lambda: skills_root, container_path="/mnt/skills")),
+    )
+    monkeypatch.delenv("DEER_FLOW_HOST_SHARED_FS_ROOT", raising=False)
+    monkeypatch.delenv("DEER_FLOW_HOST_SKILLS_PATH", raising=False)
+
+    mount = aio_mod.AioSandboxProvider._get_skills_mount(bundle_scope)
+
+    assert mount == (str(skills_root / bundle_scope), "/mnt/skills", True)
+
+
 def test_get_skills_mount_preserves_windows_private_scope_paths(tmp_path, monkeypatch):
     aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
     skills_root = tmp_path / "skills"
