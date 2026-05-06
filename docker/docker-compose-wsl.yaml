@@ -1,0 +1,159 @@
+# DeerFlow WSL (Docker Desktop) Deployment
+# Usage: docker compose -f docker-compose-wsl.yaml up -d
+#
+# Services:
+#   - postgres: PostgreSQL database (port 5432) — reusable public image
+#   - nginx: Reverse proxy (port 2026) — custom wsl-nginx image
+#   - frontend: Frontend Next.js dev server (port 3000) — custom wsl-frontend image
+#   - gateway: Backend Gateway API (port 8001) — custom wsl-gateway image
+#
+# NOT started:
+#   - langgraph: Gateway has embedded LangGraph runtime
+#   - provisioner: Sandbox runs on local Docker via DooD
+#
+# Access: http://localhost:2026
+
+services:
+  # ── PostgreSQL Database ─────────────────────────────────────────────────
+  postgres:
+    image: postgres:${PG_VERSION:-16}-alpine
+    container_name: deer-flow-postgres
+    environment:
+      - POSTGRES_USER=${PG_USER:-deerflow}
+      - POSTGRES_PASSWORD=${PG_PASSWORD:-123456}
+      - POSTGRES_DB=${PG_DB:-flow}
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    volumes:
+      - wsl-pgdata:/var/lib/postgresql/data
+    networks:
+      - deer-flow-wsl
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-deerflow} -d ${PG_DB:-flow}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  # ── Reverse Proxy ──────────────────────────────────────────────────────
+  nginx:
+    build:
+      context: ./nginx-wsl
+      dockerfile: Dockerfile
+    image: wsl-nginx:latest
+    container_name: wsl-nginx
+    ports:
+      - "2026:2026"
+    depends_on:
+      frontend:
+        condition: service_started
+      gateway:
+        condition: service_healthy
+    networks:
+      - deer-flow-wsl
+    restart: unless-stopped
+
+  # ── Frontend - Next.js Development Server ──────────────────────────────
+  frontend:
+    build:
+      context: ../
+      dockerfile: frontend/Dockerfile
+      target: dev
+      args:
+        PNPM_STORE_PATH: ${PNPM_STORE_PATH:-/root/.local/share/pnpm/store}
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+    image: wsl-frontend:latest
+    container_name: wsl-frontend
+    command: sh -c "cd frontend && pnpm run dev > /app/logs/frontend.log 2>&1"
+    volumes:
+      - ../frontend/src:/app/frontend/src
+      - ../frontend/public:/app/frontend/public
+      - ../frontend/next.config.js:/app/frontend/next.config.js:ro
+      - ../logs:/app/logs
+      - ${PNPM_STORE_PATH:-~/.local/share/pnpm/store}:/root/.local/share/pnpm/store
+    working_dir: /app
+    environment:
+      - NODE_ENV=development
+      - WATCHPACK_POLLING=true
+      - CI=true
+      - DEER_FLOW_INTERNAL_GATEWAY_BASE_URL=http://gateway:8001
+      - DEER_FLOW_INTERNAL_LANGGRAPH_BASE_URL=http://gateway:8001
+    env_file:
+      - ../frontend/.env
+    networks:
+      - deer-flow-wsl
+    restart: unless-stopped
+
+  # ── Backend - Gateway API ──────────────────────────────────────────────
+  gateway:
+    build:
+      context: ../
+      dockerfile: backend/Dockerfile
+      args:
+        APT_MIRROR: ${APT_MIRROR:-}
+        UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:0.7.20}
+        UV_INDEX_URL: ${UV_INDEX_URL:-https://pypi.org/simple}
+    image: wsl-gateway:latest
+    container_name: wsl-gateway
+    command: sh -c "cd backend && uv sync && PYTHONPATH=. uv run uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001 --reload --reload-include='*.yaml .env' > /app/logs/gateway.log 2>&1"
+    volumes:
+      - ../backend/:/app/backend/
+      - ../backend/.deer-flow:/app/backend/.deer-flow
+      - wsl-gateway-venv:/app/backend/.venv
+      - ../config.yaml:/app/config.yaml
+      - ../logs:/app/logs
+      - ~/.cache/uv:/root/.cache/uv
+      # DooD: sandbox uses host Docker socket
+      - /var/run/docker.sock:/var/run/docker.sock
+      # CLI auth directories for auto-auth (Claude Code + Codex CLI)
+      - type: bind
+        source: ${HOME:?HOME must be set}/.claude
+        target: /root/.claude
+        read_only: true
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ${HOME:?HOME must be set}/.codex
+        target: /root/.codex
+        read_only: true
+        bind:
+          create_host_path: true
+    working_dir: /app
+    environment:
+      - CI=true
+      - DEER_FLOW_SERVER_MODE=dev
+      - DATABASE_URL=postgresql://${PG_USER:-deerflow}:${PG_PASSWORD:-123456}@postgres:5432/${PG_DB:-flow}
+      - DEER_FLOW_CHECKPOINTER_DATABASE_URL=postgresql://${PG_USER:-deerflow}:${PG_PASSWORD:-123456}@postgres:5432/check_point
+      - DEER_FLOW_HOME=/app/backend/.deer-flow
+      - DEER_FLOW_SHARED_FS_ROOT=/app/backend/.deer-flow
+      - DEER_FLOW_HOST_SHARED_FS_ROOT=${DEER_FLOW_ROOT}/backend/.deer-flow
+      - DEER_FLOW_CHANNELS_LANGGRAPH_URL=http://gateway:8001
+      - DEER_FLOW_CHANNELS_GATEWAY_URL=http://gateway:8001
+      - DEER_FLOW_HOST_BASE_DIR=${DEER_FLOW_ROOT}/backend/.deer-flow
+      - DEER_FLOW_HOST_SKILLS_PATH=${DEER_FLOW_ROOT}/backend/.deer-flow/skills
+      - DEER_FLOW_SANDBOX_HOST=host.docker.internal
+    env_file:
+      - ../.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - deer-flow-wsl
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+
+volumes:
+  wsl-gateway-venv:
+  wsl-pgdata:
+
+networks:
+  deer-flow-wsl:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.201.0/24

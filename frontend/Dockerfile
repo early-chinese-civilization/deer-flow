@@ -30,6 +30,12 @@ EXPOSE 3000
 
 # ── Builder: install + compile Next.js ───────────────────────────────────────
 FROM base AS builder
+ARG NEXT_PUBLIC_BASE_PATH=""
+ARG NEXT_PUBLIC_BACKEND_BASE_URL=""
+ARG NEXT_PUBLIC_LANGGRAPH_BASE_URL=""
+ENV NEXT_PUBLIC_BASE_PATH=${NEXT_PUBLIC_BASE_PATH}
+ENV NEXT_PUBLIC_BACKEND_BASE_URL=${NEXT_PUBLIC_BACKEND_BASE_URL}
+ENV NEXT_PUBLIC_LANGGRAPH_BASE_URL=${NEXT_PUBLIC_LANGGRAPH_BASE_URL}
 RUN cd /app/frontend && pnpm install --frozen-lockfile
 # Skip env validation — runtime vars are injected by nginx/container
 RUN cd /app/frontend && SKIP_ENV_VALIDATION=1 pnpm build

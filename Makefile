@@ -1,6 +1,6 @@
 # DeerFlow - Unified Development Environment
 
-.PHONY: help config config-upgrade check install migrate dev dev-daemon start stop up down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway
+.PHONY: help config config-upgrade check install migrate dev dev-daemon start stop up down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway wsl-up wsl-down wsl-db-init
 
 BASH ?= bash
 DEV_SYNTHETIC_AUTH ?=
@@ -43,6 +43,16 @@ help:
 	@echo "  make docker-logs     - View Docker development logs"
 	@echo "  make docker-logs-frontend - View Docker frontend logs"
 	@echo "  make docker-logs-gateway - View Docker gateway logs"
+	@echo ""
+	@echo "WSL Deployment Commands:"
+	@echo "  make wsl-up          - Build and start WSL Docker services (gateway + frontend + nginx + pg)"
+	@echo "  make wsl-down        - Stop WSL Docker services"
+	@echo "  make wsl-db-init     - Initialize database (create check_point DB + run migrations)"
+	@echo ""
+	@echo "Server Deployment Commands:"
+	@echo "  make server-up       - Build and start server Docker services (port 18226 + 15432)"
+	@echo "  make server-down     - Stop server Docker services"
+	@echo "  make server-db-init  - Initialize database on server"
 
 config:
 	@$(PYTHON) ./scripts/configure.py
@@ -199,3 +209,29 @@ up:
 # Stop and remove production containers
 down:
 	@./scripts/deploy.sh down
+
+# ==========================================
+# WSL Deployment Commands
+# ==========================================
+
+wsl-up:
+	@./scripts/wsl-deploy.sh up
+
+wsl-down:
+	@./scripts/wsl-deploy.sh down
+
+wsl-db-init:
+	@./scripts/wsl-deploy.sh db-init
+
+# ==========================================
+# Server Deployment Commands
+# ==========================================
+
+server-up:
+	@./scripts/server-deploy.sh up
+
+server-down:
+	@./scripts/server-deploy.sh down
+
+server-db-init:
+	@./scripts/server-deploy.sh db-init
