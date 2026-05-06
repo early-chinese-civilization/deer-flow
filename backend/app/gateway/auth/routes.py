@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import os
 
-import ecc_auth.routes as ecc_auth_routes
 from ecc_auth import create_auth_router, init_dependencies
 from ecc_auth.config import KeycloakConfig
 from ecc_auth.identity import AuthIdentity
 from fastapi import APIRouter
-from starlette.requests import Request
 from fastapi.responses import RedirectResponse
 
 from app.gateway.auth.dev_synthetic_auth import (
@@ -42,43 +40,6 @@ def _get_public_base_path() -> str:
         or os.getenv("NEXT_PUBLIC_BASE_PATH")
         or ""
     ).strip().rstrip("/")
-
-
-def _with_public_base_path(origin: str) -> str:
-    base_path = _get_public_base_path()
-
-    if not base_path:
-        return origin
-    if not base_path.startswith("/"):
-        base_path = f"/{base_path}"
-    if origin.endswith(base_path):
-        return origin
-
-    str_origin = f"{origin.rstrip('/')}{base_path}"
-    print("str_origin:", str_origin)
-    return str_origin
-
-
-def _patch_ecc_auth_public_origin() -> None:
-    original_get_public_origin = ecc_auth_routes.get_public_origin
-    original_get_request_origin = ecc_auth_routes._get_request_origin
-    original_normalize_return_to = ecc_auth_routes._normalize_return_to
-
-    def get_public_origin_with_base_path(request: Request) -> str:
-        return _with_public_base_path(original_get_public_origin(request))
-
-    def get_request_origin_with_base_path(request: Request) -> str:
-        return _with_public_base_path(original_get_request_origin(request))
-
-    def normalize_return_to_strip_base(return_to: str) -> str:
-        base_path = _get_public_base_path()
-        if base_path and return_to.startswith(base_path):
-            return_to = return_to[len(base_path):] or "/"
-        return original_normalize_return_to(return_to)
-
-    ecc_auth_routes.get_public_origin = get_public_origin_with_base_path
-    ecc_auth_routes._get_request_origin = get_request_origin_with_base_path
-    ecc_auth_routes._normalize_return_to = normalize_return_to_strip_base
 
 
 def _build_keycloak_config() -> KeycloakConfig:
@@ -149,7 +110,6 @@ def create_gateway_auth_router(config: KeycloakConfig | None = None) -> APIRoute
 
     resolved_config = config or _build_keycloak_config()
     init_dependencies(resolved_config)
-    _patch_ecc_auth_public_origin()
 
     router = APIRouter(prefix="/api/auth", tags=["auth"])
     router.include_router(
@@ -158,6 +118,7 @@ def create_gateway_auth_router(config: KeycloakConfig | None = None) -> APIRoute
             on_user_authenticated=_on_user_authenticated,
             load_current_user=_load_current_user,
             default_return_to="/workspace",
+            public_base_path=_get_public_base_path(),
         )
     )
     return router
