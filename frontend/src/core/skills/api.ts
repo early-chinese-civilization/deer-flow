@@ -1,5 +1,11 @@
 import { getBackendBaseURL } from "@/core/config";
 
+import {
+  buildSkillHubInstallCheckRequest,
+  buildSkillHubInstallRequest,
+  getSkillHubInstallCheckFallbackError,
+  getSkillHubInstallFallbackError,
+} from "./request";
 import type { Skill } from "./type";
 
 export interface SkillUploadCheckResponse {
@@ -25,17 +31,17 @@ export interface SkillUploadResponse {
   results: SkillUploadResult[];
 }
 
-export interface SkillDownloadCheckRequest {
+export interface SkillHubInstallCheckRequest {
   owner_user_id?: number | null;
 }
 
-export interface SkillDownloadCheckResponse {
+export interface SkillHubInstallCheckResponse {
   skill_name: string;
   exists: boolean;
   message: string;
 }
 
-export interface SkillDownloadRequest {
+export interface SkillHubInstallRequest {
   owner_user_id?: number | null;
   overwrite?: boolean;
 }
@@ -56,43 +62,63 @@ export async function loadSkills() {
 }
 
 export async function enableSkill(skillName: string, enabled: boolean) {
-  const response = await fetch(`${getBackendBaseURL()}/api/skills/${skillName}`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
+  const response = await fetch(
+    `${getBackendBaseURL()}/api/skills/${skillName}`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        enabled,
+      }),
+      credentials: "include",
     },
-    body: JSON.stringify({
-      enabled,
-    }),
-    credentials: "include",
-  });
+  );
   return response.json();
 }
 
 export async function deleteSkill(skillName: string): Promise<void> {
-  const response = await fetch(`${getBackendBaseURL()}/api/skills/${skillName}`, {
-    method: "DELETE",
-    credentials: "include",
-  });
+  const response = await fetch(
+    `${getBackendBaseURL()}/api/skills/${skillName}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+    },
+  );
   if (!response.ok) {
-    const errorData = (await response.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(errorData.detail ?? `Failed to delete skill: ${response.statusText}`);
+    const errorData = (await response.json().catch(() => ({}))) as {
+      detail?: string;
+    };
+    throw new Error(
+      errorData.detail ?? `Failed to delete skill: ${response.statusText}`,
+    );
   }
 }
 
-export async function checkSkillUpload(file: File): Promise<SkillUploadCheckResponse> {
+export async function checkSkillUpload(
+  file: File,
+): Promise<SkillUploadCheckResponse> {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(`${getBackendBaseURL()}/api/skills/check-upload`, {
-    method: "POST",
-    body: formData,
-    credentials: "include",
-  });
+  const response = await fetch(
+    `${getBackendBaseURL()}/api/skills/check-upload`,
+    {
+      method: "POST",
+      body: formData,
+      credentials: "include",
+    },
+  );
 
   if (!response.ok) {
-    const errorData = (await response.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(errorData.detail ?? `Failed to check skill upload: ${response.statusText}`);
+    const errorData = (await response.json().catch(() => ({}))) as {
+      detail?: string;
+    };
+    throw new Error(
+      errorData.detail ??
+        `Failed to check skill upload: ${response.statusText}`,
+    );
   }
 
   return response.json() as Promise<SkillUploadCheckResponse>;
@@ -117,71 +143,88 @@ export async function uploadSkills(
   });
 
   if (!response.ok) {
-    const errorData = (await response.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(errorData.detail ?? `Failed to upload skills: ${response.statusText}`);
+    const errorData = (await response.json().catch(() => ({}))) as {
+      detail?: string;
+    };
+    throw new Error(
+      errorData.detail ?? `Failed to upload skills: ${response.statusText}`,
+    );
   }
 
   return response.json() as Promise<SkillUploadResponse>;
 }
 
-export async function checkSkillDownload(
+export async function checkSkillHubInstall(
   skillName: string,
-  request: SkillDownloadCheckRequest,
-): Promise<SkillDownloadCheckResponse> {
-  const response = await fetch(`${getBackendBaseURL()}/api/skills/${skillName}/check-download`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(request),
-    credentials: "include",
-  });
+  request: SkillHubInstallCheckRequest,
+): Promise<SkillHubInstallCheckResponse> {
+  const response = await fetch(
+    ...buildSkillHubInstallCheckRequest(
+      getBackendBaseURL(),
+      skillName,
+      request,
+    ),
+  );
 
   if (!response.ok) {
-    const errorData = (await response.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(errorData.detail ?? `Failed to check skill download: ${response.statusText}`);
+    const errorData = (await response.json().catch(() => ({}))) as {
+      detail?: string;
+    };
+    throw new Error(
+      errorData.detail ??
+        getSkillHubInstallCheckFallbackError(response.statusText),
+    );
   }
 
-  return response.json() as Promise<SkillDownloadCheckResponse>;
+  return response.json() as Promise<SkillHubInstallCheckResponse>;
 }
 
-export async function downloadSkill(
+export async function installSkillHubSkill(
   skillName: string,
-  request: SkillDownloadRequest,
+  request: SkillHubInstallRequest,
 ): Promise<Skill> {
-  const response = await fetch(`${getBackendBaseURL()}/api/skills/${skillName}/download`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(request),
-    credentials: "include",
-  });
+  const response = await fetch(
+    ...buildSkillHubInstallRequest(getBackendBaseURL(), skillName, request),
+  );
 
   if (!response.ok) {
-    const errorData = (await response.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(errorData.detail ?? `Failed to download skill: ${response.statusText}`);
+    const errorData = (await response.json().catch(() => ({}))) as {
+      detail?: string;
+    };
+    throw new Error(
+      errorData.detail ?? getSkillHubInstallFallbackError(response.statusText),
+    );
   }
 
   return response.json() as Promise<Skill>;
 }
 
+export const checkSkillDownload = checkSkillHubInstall;
+export const downloadSkill = installSkillHubSkill;
+
 export async function publishSkill(
   skillName: string,
   request: SkillPublishRequest = {},
 ): Promise<Skill> {
-  const response = await fetch(`${getBackendBaseURL()}/api/skills/${skillName}/publish`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
+  const response = await fetch(
+    `${getBackendBaseURL()}/api/skills/${skillName}/publish`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+      credentials: "include",
     },
-    body: JSON.stringify(request),
-    credentials: "include",
-  });
+  );
 
   if (!response.ok) {
-    const errorData = (await response.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(errorData.detail ?? `Failed to publish skill: ${response.statusText}`);
+    const errorData = (await response.json().catch(() => ({}))) as {
+      detail?: string;
+    };
+    throw new Error(
+      errorData.detail ?? `Failed to publish skill: ${response.statusText}`,
+    );
   }
 
   return response.json() as Promise<Skill>;

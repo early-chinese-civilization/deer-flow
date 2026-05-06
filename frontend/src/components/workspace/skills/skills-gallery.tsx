@@ -29,52 +29,101 @@ import {
 } from "@/components/ui/item";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useI18n } from "@/core/i18n/hooks";
-import { checkSkillDownload, checkSkillUpload } from "@/core/skills";
 import {
+  checkSkillHubInstall,
+  checkSkillUpload,
   useDeleteSkill,
-  useDownloadSkill,
+  useInstallSkillHubSkill,
   usePublishSkill,
   useSkills,
   useUploadSkills,
 } from "@/core/skills";
+import {
+  findInstalledSkillForSkillHubItem,
+  getInstalledPlatformVersion,
+  getSkillHubLatestPlatformVersion,
+  getSkillInstallState,
+  getSkillPlatformVersion,
+  type SkillInstallState,
+} from "@/core/skills/display";
 import type { Skill } from "@/core/skills/type";
+
+type SkillsSurface = "skillhub" | "my-skills";
 
 export function SkillsGallery() {
   const { t } = useI18n();
   const { skills, isLoading, error } = useSkills();
   const deleteSkill = useDeleteSkill();
-  const downloadSkill = useDownloadSkill();
+  const installSkillHubSkill = useInstallSkillHubSkill();
   const publishSkill = usePublishSkill();
   const uploadSkills = useUploadSkills();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [filter, setFilter] = useState<Skill["category"]>("public");
+  const [filter, setFilter] = useState<SkillsSurface>("skillhub");
   const [publishCandidate, setPublishCandidate] = useState<Skill | null>(null);
   const [releaseNotes, setReleaseNotes] = useState("");
 
-  const filteredSkills = skills.filter((skill) => skill.category === filter);
+  const filteredSkills = skills.filter((skill) =>
+    filter === "skillhub"
+      ? skill.category === "public"
+      : skill.category === "custom",
+  );
 
-  function getDisplayVersion(skill: Skill) {
-    return skill.package_version ?? skill.release_version ?? null;
-  }
-
-  function getVersionText(skill: Skill) {
-    const displayVersion = getDisplayVersion(skill);
-    if (displayVersion) {
-      return displayVersion;
+  function getVersionText(version: number | null) {
+    if (version != null) {
+      return t.settings.skills.platformVersion(version);
     }
-    return t.settings.skills.noPackageVersion;
+    return t.settings.skills.noPlatformVersion;
   }
 
-  function getVersionDetail(skill: Skill) {
-    const displayVersion = getDisplayVersion(skill);
+  function getSkillHubVersionDetail(skill: Skill) {
+    const installedSkill = findInstalledSkillForSkillHubItem(skill, skills);
+    const installedVersion = getInstalledPlatformVersion(skill, installedSkill);
+    const latestVersion = getSkillHubLatestPlatformVersion(skill);
+
+    if (installedVersion != null && latestVersion != null) {
+      if (latestVersion > installedVersion) {
+        return t.settings.skills.currentAndUpdateVersions(
+          installedVersion,
+          latestVersion,
+        );
+      }
+      return t.settings.skills.currentVersion(installedVersion);
+    }
+
+    if (latestVersion != null) {
+      return t.settings.skills.skillHubVersion(latestVersion);
+    }
+
+    return t.settings.skills.noPlatformVersion;
+  }
+
+  function getMySkillVersionDetail(skill: Skill) {
+    const version = getSkillPlatformVersion(skill);
+    return version != null
+      ? t.settings.skills.currentVersion(version)
+      : t.settings.skills.noPlatformVersion;
+  }
+
+  function getSkillSourceText(skill: Skill) {
     if (skill.category === "public") {
-      return displayVersion
-        ? t.settings.skills.latestVersion(displayVersion)
-        : t.settings.skills.noPackageVersion;
+      return skill.owner_display_name
+        ? t.settings.skills.communitySource(skill.owner_display_name)
+        : t.settings.skills.officialSource;
     }
-    return skill.package_version
-      ? t.settings.skills.packageVersion(skill.package_version)
-      : t.settings.skills.noPackageVersion;
+    if (skill.skill_install_id != null) {
+      return t.settings.skills.installedSource;
+    }
+    return t.settings.skills.createdSource;
+  }
+
+  function getInstallStateText(state: SkillInstallState) {
+    if (state === "update-available") {
+      return t.settings.skills.updateAvailable;
+    }
+    if (state === "installed") {
+      return t.settings.skills.installed;
+    }
+    return t.settings.skills.notInstalled;
   }
 
   function openUploadDialog() {
@@ -101,9 +150,9 @@ export function SkillsGallery() {
     }
   }
 
-  async function handleDownload(skill: Skill) {
+  async function handleInstall(skill: Skill) {
     try {
-      const result = await checkSkillDownload(skill.name, {
+      const result = await checkSkillHubInstall(skill.name, {
         owner_user_id: skill.owner_user_id ?? null,
       });
       const overwrite = result.exists
@@ -114,15 +163,15 @@ export function SkillsGallery() {
         return;
       }
 
-      await downloadSkill.mutateAsync({
+      await installSkillHubSkill.mutateAsync({
         skillName: skill.name,
         ownerUserId: skill.owner_user_id ?? null,
         overwrite,
       });
-      toast.success(t.settings.skills.downloadSuccess(skill.name));
+      toast.success(t.settings.skills.installSuccess(skill.name));
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : t.settings.skills.uploadError,
+        error instanceof Error ? error.message : t.settings.skills.installError,
       );
     }
   }
@@ -236,10 +285,17 @@ export function SkillsGallery() {
 
       <div className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 flex gap-2">
-          <Tabs defaultValue="public" onValueChange={(value) => setFilter(value as Skill["category"])}>
+          <Tabs
+            defaultValue="skillhub"
+            onValueChange={(value) => setFilter(value as SkillsSurface)}
+          >
             <TabsList variant="line">
-              <TabsTrigger value="public">{t.common.public}</TabsTrigger>
-              <TabsTrigger value="custom">{t.common.custom}</TabsTrigger>
+              <TabsTrigger value="skillhub">
+                {t.settings.skills.skillHubTab}
+              </TabsTrigger>
+              <TabsTrigger value="my-skills">
+                {t.settings.skills.mySkillsTab}
+              </TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
@@ -252,55 +308,100 @@ export function SkillsGallery() {
           <div className="text-destructive text-sm">{error.message}</div>
         ) : filteredSkills.length === 0 ? (
           <div className="text-muted-foreground text-sm">
-            {filter === "public"
-              ? t.settings.skills.noPublicSkills
-              : t.settings.skills.noCustomSkills}
+            {filter === "skillhub"
+              ? t.settings.skills.noSkillHubSkills
+              : t.settings.skills.noMySkills}
           </div>
         ) : (
           <div className="space-y-4">
-            {filteredSkills.map((skill) => (
-              <Item
-                key={`${skill.category}-${skill.name}-${skill.owner_user_id ?? "system"}`}
-                className="w-full"
-                variant="outline"
-              >
-                <ItemContent>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <ItemTitle>{skill.name}</ItemTitle>
-                    <Badge variant={getDisplayVersion(skill) ? "secondary" : "outline"}>
-                      {getVersionText(skill)}
-                    </Badge>
-                  </div>
-                  <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                    <span>{getVersionDetail(skill)}</span>
-                    {skill.category === "public" && skill.owner_display_name ? (
+            {filteredSkills.map((skill) => {
+              const installedSkill = findInstalledSkillForSkillHubItem(
+                skill,
+                skills,
+              );
+              const installState = getSkillInstallState(skill, installedSkill);
+              const platformVersion =
+                skill.category === "public"
+                  ? getSkillHubLatestPlatformVersion(skill)
+                  : getSkillPlatformVersion(skill);
+              const isInstallDisabled =
+                installState !== "not-installed" ||
+                installSkillHubSkill.isPending;
+
+              return (
+                <Item
+                  key={`${skill.category}-${skill.name}-${skill.owner_user_id ?? "system"}`}
+                  className="w-full"
+                  variant="outline"
+                >
+                  <ItemContent>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <ItemTitle>{skill.name}</ItemTitle>
+                      <Badge
+                        variant={
+                          platformVersion != null ? "secondary" : "outline"
+                        }
+                      >
+                        {getVersionText(platformVersion)}
+                      </Badge>
+                      <Badge
+                        variant={
+                          installState === "update-available"
+                            ? "default"
+                            : "outline"
+                        }
+                      >
+                        {skill.category === "public"
+                          ? getInstallStateText(installState)
+                          : installState === "update-available"
+                            ? t.settings.skills.updateAvailable
+                            : skill.release_status === "published"
+                              ? t.settings.skills.published
+                              : t.settings.skills.unpublished}
+                      </Badge>
+                    </div>
+                    <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                       <span>
-                        {t.settings.skills.publishedBy(skill.owner_display_name)}
+                        {skill.category === "public"
+                          ? getSkillHubVersionDetail(skill)
+                          : getMySkillVersionDetail(skill)}
                       </span>
-                    ) : null}
-                  </div>
-                  <ItemDescription className="line-clamp-4">
-                    {skill.description}
-                  </ItemDescription>
-                </ItemContent>
-                <ItemActions>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <MoreVerticalIcon className="h-4 w-4" />
+                      <span>{getSkillSourceText(skill)}</span>
+                    </div>
+                    <ItemDescription className="line-clamp-4">
+                      {skill.description}
+                    </ItemDescription>
+                  </ItemContent>
+                  <ItemActions>
+                    {skill.category === "public" ? (
+                      <Button
+                        size="sm"
+                        variant={
+                          installState === "not-installed"
+                            ? "default"
+                            : "outline"
+                        }
+                        disabled={isInstallDisabled}
+                        onClick={() => void handleInstall(skill)}
+                      >
+                        {installSkillHubSkill.isPending
+                          ? t.settings.skills.installPending
+                          : installState === "not-installed"
+                            ? t.settings.skills.installSkill
+                            : getInstallStateText(installState)}
                       </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      {skill.category === "public" ? (
-                        <DropdownMenuItem
-                          onSelect={() => {
-                            void handleDownload(skill);
-                          }}
-                        >
-                          {t.settings.skills.downloadSkill}
-                        </DropdownMenuItem>
-                      ) : (
-                        <>
+                    ) : (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                          >
+                            <MoreVerticalIcon className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
                           <DropdownMenuItem
                             onSelect={() => {
                               void handleDelete(skill);
@@ -316,13 +417,13 @@ export function SkillsGallery() {
                           >
                             {t.settings.skills.publishSkill}
                           </DropdownMenuItem>
-                        </>
-                      )}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </ItemActions>
-              </Item>
-            ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </ItemActions>
+                </Item>
+              );
+            })}
           </div>
         )}
       </div>
@@ -345,22 +446,24 @@ export function SkillsGallery() {
           </DialogHeader>
           {publishCandidate ? (
             <div className="space-y-4 text-sm">
-              <div className="rounded-md border bg-muted/30 p-3">
+              <div className="bg-muted/30 rounded-md border p-3">
                 <div className="font-medium">{publishCandidate.name}</div>
                 <div className="text-muted-foreground mt-1">
-                  {getVersionDetail(publishCandidate)}
+                  {getMySkillVersionDetail(publishCandidate)}
                 </div>
               </div>
               <div>
-                <div className="text-muted-foreground mb-1 text-xs font-medium uppercase tracking-wide">
+                <div className="text-muted-foreground mb-1 text-xs font-medium tracking-wide uppercase">
                   {t.settings.skills.publishDescriptionLabel}
                 </div>
-                <p className="text-sm leading-6">{publishCandidate.description}</p>
+                <p className="text-sm leading-6">
+                  {publishCandidate.description}
+                </p>
               </div>
               <div>
                 <label
                   htmlFor="skill-release-notes"
-                  className="text-muted-foreground mb-1 block text-xs font-medium uppercase tracking-wide"
+                  className="text-muted-foreground mb-1 block text-xs font-medium tracking-wide uppercase"
                 >
                   {t.settings.skills.releaseNotesLabel}
                 </label>
@@ -377,7 +480,7 @@ export function SkillsGallery() {
                   {t.settings.skills.releaseNotesHelp}
                 </p>
               </div>
-              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+              <div className="bg-muted/30 text-muted-foreground rounded-md border p-3">
                 {t.settings.skills.publishAsLatestNotice}
               </div>
             </div>

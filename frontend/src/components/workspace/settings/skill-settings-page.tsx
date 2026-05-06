@@ -29,6 +29,8 @@ import { env } from "@/env";
 
 import { SettingsSection } from "./settings-section";
 
+type SkillsSurface = "skillhub" | "my-skills";
+
 export function SkillSettingsPage({ onClose }: { onClose?: () => void } = {}) {
   const { t } = useI18n();
   const { skills, isLoading, error } = useSkills();
@@ -57,10 +59,15 @@ function SkillSettingsList({
 }) {
   const { t } = useI18n();
   const router = useRouter();
-  const [filter, setFilter] = useState<string>("public");
+  const [filter, setFilter] = useState<SkillsSurface>("skillhub");
   const { mutate: enableSkill } = useEnableSkill();
   const filteredSkills = useMemo(
-    () => skills.filter((skill) => skill.category === filter),
+    () =>
+      skills.filter((skill) =>
+        filter === "skillhub"
+          ? skill.category === "public"
+          : skill.category === "custom",
+      ),
     [skills, filter],
   );
   const handleCreateSkill = () => {
@@ -71,10 +78,17 @@ function SkillSettingsList({
     <div className="flex w-full flex-col gap-4">
       <header className="flex justify-between">
         <div className="flex gap-2">
-          <Tabs defaultValue="public" onValueChange={setFilter}>
+          <Tabs
+            defaultValue="skillhub"
+            onValueChange={(value) => setFilter(value as SkillsSurface)}
+          >
             <TabsList variant="line">
-              <TabsTrigger value="public">{t.common.public}</TabsTrigger>
-              <TabsTrigger value="custom">{t.common.custom}</TabsTrigger>
+              <TabsTrigger value="skillhub">
+                {t.settings.skills.skillHubTab}
+              </TabsTrigger>
+              <TabsTrigger value="my-skills">
+                {t.settings.skills.mySkillsTab}
+              </TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
@@ -86,7 +100,7 @@ function SkillSettingsList({
         </div>
       </header>
       {filteredSkills.length === 0 && (
-        <EmptySkill onCreateSkill={handleCreateSkill} />
+        <EmptySkill filter={filter} onCreateSkill={handleCreateSkill} />
       )}
       {filteredSkills.length > 0 &&
         filteredSkills.map((skill) => (
@@ -114,7 +128,13 @@ function SkillSettingsList({
   );
 }
 
-function EmptySkill({ onCreateSkill }: { onCreateSkill: () => void }) {
+function EmptySkill({
+  filter,
+  onCreateSkill,
+}: {
+  filter: SkillsSurface;
+  onCreateSkill: () => void;
+}) {
   const { t } = useI18n();
   return (
     <Empty>
@@ -122,7 +142,11 @@ function EmptySkill({ onCreateSkill }: { onCreateSkill: () => void }) {
         <EmptyMedia variant="icon">
           <SparklesIcon />
         </EmptyMedia>
-        <EmptyTitle>{t.settings.skills.emptyTitle}</EmptyTitle>
+        <EmptyTitle>
+          {filter === "skillhub"
+            ? t.settings.skills.noSkillHubSkills
+            : t.settings.skills.noMySkills}
+        </EmptyTitle>
         <EmptyDescription>
           {t.settings.skills.emptyDescription}
         </EmptyDescription>

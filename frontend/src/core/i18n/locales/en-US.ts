@@ -475,46 +475,67 @@ export const enUS: Translations = {
       description: "Manage the configuration and enabled status of MCP tools.",
     },
     skills: {
-      title: "Agent Skills",
+      title: "Skills",
       description:
-        "Manage the configuration and enabled status of the agent skills.",
+        "Install Skills from SkillHub and manage the Skills in your workspace.",
       createSkill: "Create skill",
-      emptyTitle: "No agent skill yet",
+      emptyTitle: "No Skills yet",
       emptyDescription:
-        "Put your agent skill folders under the `/skills/custom` folder under the root folder of DeerFlow.",
+        "Install Skills from SkillHub or upload your own Skill to My Skills.",
       emptyButton: "Create Your First Skill",
       uploadSkill: "Upload skills",
       uploadPending: "Uploading...",
       uploadSuccess: "Skills uploaded successfully.",
       uploadError: "Failed to upload skills.",
       publishSkill: "Publish",
-      downloadSkill: "Download",
-      downloadSuccess: (skillName: string) =>
-        `Skill "${skillName}" downloaded successfully.`,
+      installSkill: "Install",
+      installPending: "Installing...",
+      installSuccess: (skillName: string) =>
+        `Skill "${skillName}" installed successfully.`,
+      installError: "Failed to install Skill.",
       publishSuccess: (skillName: string) =>
         `Skill "${skillName}" published successfully.`,
       publishPending: "Publishing...",
       publishedBy: (ownerDisplayName: string) =>
         `Published by ${ownerDisplayName}`,
-      latestVersion: (version: string) => `Latest ${version}`,
-      packageVersion: (version: string) => `Package ${version}`,
-      noPackageVersion: "No package version",
+      skillHubTab: "SkillHub",
+      mySkillsTab: "My Skills",
+      platformVersion: (version: number) => `Version ${version}`,
+      skillHubVersion: (version: number) => `SkillHub version ${version}`,
+      currentVersion: (version: number) => `Current version ${version}`,
+      currentAndUpdateVersions: (
+        currentVersion: number,
+        latestVersion: number,
+      ) =>
+        `Current version ${currentVersion}; update to version ${latestVersion}`,
+      noPlatformVersion: "No platform version yet",
+      installed: "Installed",
+      notInstalled: "Not installed",
+      updateAvailable: "Update available",
+      published: "Published",
+      unpublished: "Not published",
+      officialSource: "Official Skill",
+      communitySource: (ownerDisplayName: string) =>
+        `Community Skill by ${ownerDisplayName}`,
+      installedSource: "Installed in My Skills",
+      createdSource: "Created in My Skills",
       publishDialogTitle: "Publish skill",
       publishDialogDescription:
-        "Review the skill metadata before publishing it to the public catalog.",
+        "Review the Skill before publishing it to SkillHub.",
       publishDescriptionLabel: "Description",
       releaseNotesLabel: "Release notes (optional)",
       releaseNotesPlaceholder: "What changed in this publish?",
-      releaseNotesHelp: "Stored on this release record. Version still comes from SKILL.md.",
+      releaseNotesHelp:
+        "These notes will be shown to SkillHub users for this platform version.",
       publishAsLatestNotice:
-        "This will publish the skill as the public latest version. Other users can download it after publishing.",
-      confirmPublish: "Publish as public latest",
+        "Publishing creates a SkillHub version snapshot that other users can install.",
+      confirmPublish: "Publish to SkillHub",
       deleteBlocked: (agentName: string) =>
         `This skill is bound to agent "${agentName}" and cannot be deleted.`,
       conflictConfirm: (skillName: string) =>
         `Skill "${skillName}" already exists. Do you want to overwrite it?`,
-      noCustomSkills: "No custom skills yet.",
-      noPublicSkills: "No public skills available.",
+      noMySkills: "No Skills in your workspace yet.",
+      noSkillHubSkills: "No SkillHub Skills available.",
     },
     notification: {
       title: "Notification",

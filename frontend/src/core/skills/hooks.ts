@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { deleteSkill, downloadSkill, enableSkill, publishSkill, uploadSkills } from "./api";
+import {
+  deleteSkill,
+  enableSkill,
+  installSkillHubSkill,
+  publishSkill,
+  uploadSkills,
+} from "./api";
 
 import { loadSkills } from ".";
 
@@ -56,7 +62,7 @@ export function useUploadSkills() {
   });
 }
 
-export function useDownloadSkill() {
+export function useInstallSkillHubSkill() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({
@@ -68,7 +74,7 @@ export function useDownloadSkill() {
       ownerUserId?: number | null;
       overwrite?: boolean;
     }) =>
-      downloadSkill(skillName, {
+      installSkillHubSkill(skillName, {
         owner_user_id: ownerUserId,
         overwrite,
       }),
@@ -77,6 +83,8 @@ export function useDownloadSkill() {
     },
   });
 }
+
+export const useDownloadSkill = useInstallSkillHubSkill;
 
 export function usePublishSkill() {
   const queryClient = useQueryClient();

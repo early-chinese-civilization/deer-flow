@@ -5,6 +5,15 @@ export interface Skill {
   license: string | null;
   enabled: boolean;
   version?: string | null;
+  platform_version?: number | null;
+  skill_definition_id?: number | null;
+  skill_version_id?: number | null;
+  skill_install_id?: number | null;
+  current_platform_version?: number | null;
+  installed_platform_version?: number | null;
+  latest_platform_version?: number | null;
+  update_available?: boolean | null;
+  source_package_version?: string | null;
   package_version?: string | null;
   release_version?: string | null;
   release_status?: "published" | null;

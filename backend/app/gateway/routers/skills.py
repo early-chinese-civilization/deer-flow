@@ -870,7 +870,7 @@ async def check_skill_download(
             owner_user_id=request.owner_user_id,
         )
         if source_skill is None:
-            raise HTTPException(status_code=404, detail=f"Public skill '{skill_name}' not found")
+            raise HTTPException(status_code=404, detail=f"SkillHub skill '{skill_name}' not found")
 
         existing_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
         target_dir = _resolve_skill_dir(build_private_skill_file_path(current_user.id, skill_name))
@@ -883,8 +883,8 @@ async def check_skill_download(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("Failed to check skill download %s: %s", skill_name, exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to check skill download: {exc}")
+        logger.error("Failed to check SkillHub install %s: %s", skill_name, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to check SkillHub install: {exc}")
 
 
 @router.post(
@@ -906,7 +906,7 @@ async def download_skill(
             owner_user_id=request.owner_user_id,
         )
         if source_skill is None:
-            raise HTTPException(status_code=404, detail=f"Public skill '{skill_name}' not found")
+            raise HTTPException(status_code=404, detail=f"SkillHub skill '{skill_name}' not found")
 
         version = await SkillReleaseRepository.get_latest_published_version_by_name(db, skill_name=skill_name)
         if version is None or version.definition is None:

@@ -405,14 +405,32 @@ export interface Translations {
       uploadSuccess: string;
       uploadError: string;
       publishSkill: string;
-      downloadSkill: string;
-      downloadSuccess: (skillName: string) => string;
+      installSkill: string;
+      installPending: string;
+      installSuccess: (skillName: string) => string;
+      installError: string;
       publishSuccess: (skillName: string) => string;
       publishPending: string;
       publishedBy: (ownerDisplayName: string) => string;
-      latestVersion: (version: string) => string;
-      packageVersion: (version: string) => string;
-      noPackageVersion: string;
+      skillHubTab: string;
+      mySkillsTab: string;
+      platformVersion: (version: number) => string;
+      skillHubVersion: (version: number) => string;
+      currentVersion: (version: number) => string;
+      currentAndUpdateVersions: (
+        currentVersion: number,
+        latestVersion: number,
+      ) => string;
+      noPlatformVersion: string;
+      installed: string;
+      notInstalled: string;
+      updateAvailable: string;
+      published: string;
+      unpublished: string;
+      officialSource: string;
+      communitySource: (ownerDisplayName: string) => string;
+      installedSource: string;
+      createdSource: string;
       publishDialogTitle: string;
       publishDialogDescription: string;
       publishDescriptionLabel: string;
@@ -423,8 +441,8 @@ export interface Translations {
       confirmPublish: string;
       deleteBlocked: (agentName: string) => string;
       conflictConfirm: (skillName: string) => string;
-      noCustomSkills: string;
-      noPublicSkills: string;
+      noMySkills: string;
+      noSkillHubSkills: string;
     };
     notification: {
       title: string;
