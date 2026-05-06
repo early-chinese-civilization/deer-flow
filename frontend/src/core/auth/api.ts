@@ -33,6 +33,18 @@ const EXPECTED_UNAUTHENTICATED_DETAILS = new Set([
   'Logged out',
 ]);
 
+const BASE_PATH = (process.env.NEXT_PUBLIC_BASE_PATH ?? '').replace(
+  /\/+$/,
+  '',
+);
+
+function withBasePath(path: string): string {
+  if (!BASE_PATH || path === BASE_PATH || path.startsWith(`${BASE_PATH}/`)) {
+    return path;
+  }
+  return `${BASE_PATH}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
 async function readAuthErrorDetail(response: Response): Promise<string> {
   const body = await response.text();
   if (!body) {
@@ -72,7 +84,7 @@ function formatAuthError(action: string, status: number, detail: string): string
  */
 export async function getCurrentUser(): Promise<User | null> {
   try {
-    const res = await fetch('/api/auth/me', {
+    const res = await fetch(withBasePath('/api/auth/me'), {
       credentials: 'include', // 重要：携带 cookie
     });
 
@@ -101,7 +113,7 @@ export async function getCurrentUser(): Promise<User | null> {
  */
 export async function logout(): Promise<string> {
   try {
-    const res = await fetch('/api/auth/logout', {
+    const res = await fetch(withBasePath('/api/auth/logout'), {
       method: 'POST',
       credentials: 'include',
     });
@@ -116,7 +128,7 @@ export async function logout(): Promise<string> {
   } catch (error) {
     console.error('Logout failed:', error);
     // 返回默认登出 URL
-    return '/';
+    return withBasePath('/');
   }
 }
 
@@ -127,7 +139,7 @@ export async function logout(): Promise<string> {
  */
 export async function refreshToken(): Promise<boolean> {
   try {
-    const res = await fetch('/api/auth/refresh', {
+    const res = await fetch(withBasePath('/api/auth/refresh'), {
       method: 'POST',
       credentials: 'include',
     });
@@ -155,9 +167,11 @@ export async function refreshToken(): Promise<boolean> {
 export function login(returnTo?: string) {
   const params = new URLSearchParams();
   if (returnTo) {
-    params.set('return_to', returnTo);
+    params.set('return_to', withBasePath(returnTo));
   }
 
-  const url = `/api/auth/login${params.toString() ? '?' + params.toString() : ''}`;
+  const url = `${withBasePath('/api/auth/login')}${
+    params.toString() ? '?' + params.toString() : ''
+  }`;
   window.location.href = url;
 }
