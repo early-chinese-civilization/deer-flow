@@ -84,12 +84,16 @@ def test_get_skills_prompt_section_uses_runtime_context(monkeypatch):
                             "description": "Review SQL changes.",
                             "file_path": "public/sql-review",
                             "virtual_path": "/mnt/skills/sql-review/SKILL.md",
+                            "skill_version_id": 101,
+                            "version_number": 1,
                         },
                         {
                             "name": "api-design",
                             "description": "Design API contracts.",
                             "file_path": "9/api-design",
                             "virtual_path": "/mnt/skills/api-design/SKILL.md",
+                            "skill_version_id": 102,
+                            "version_number": 2,
                         },
                     ]
                 }
@@ -103,4 +107,43 @@ def test_get_skills_prompt_section_uses_runtime_context(monkeypatch):
     assert "Review SQL changes." in section
     assert "/mnt/skills/sql-review/SKILL.md" in section
     assert "api-design" in section
+    assert "<skill_version_id>101</skill_version_id>" in section
+    assert "<version_number>2</version_number>" in section
     assert "skill_load" in section
+
+
+def test_runtime_skill_prompt_descriptors_require_manifest_location():
+    descriptors = prompt_module.build_runtime_skill_descriptors(
+        [
+            {
+                "name": "legacy-name-only",
+                "description": "Should be ignored.",
+                "skill_version_id": 101,
+                "version_number": 1,
+            },
+            {
+                "name": "missing-version",
+                "description": "Should also be ignored.",
+                "virtual_path": "/mnt/skills/missing-version/SKILL.md",
+            },
+            {
+                "name": "manifest-skill",
+                "description": "Allowed.",
+                "virtual_path": "/mnt/skills/manifest-skill/SKILL.md",
+                "skill_version_id": 102,
+                "version_number": 2,
+            },
+        ],
+        container_base_path="/mnt/skills",
+    )
+
+    assert descriptors == [
+        {
+            "name": "manifest-skill",
+            "description": "Allowed.",
+            "location": "/mnt/skills/manifest-skill/SKILL.md",
+            "skill_version_id": "102",
+            "version_number": "2",
+            "content_hash": "",
+        }
+    ]

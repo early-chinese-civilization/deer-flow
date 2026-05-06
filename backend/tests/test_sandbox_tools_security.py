@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from deerflow.sandbox.exceptions import SandboxRuntimeError
+from deerflow.sandbox.skill_scope import derive_skill_scope_from_runtime
 from deerflow.sandbox.tools import (
     VIRTUAL_PATH_PREFIX,
     _apply_cwd_prefix,
@@ -26,7 +27,6 @@ from deerflow.sandbox.tools import (
     validate_local_tool_path,
     write_file_tool,
 )
-from deerflow.sandbox.skill_scope import derive_skill_scope_from_runtime
 
 _THREAD_DATA = {
     "workspace_path": "/tmp/deer-flow/threads/t1/user-data/workspace",
@@ -370,6 +370,7 @@ def test_skill_load_uses_runtime_virtual_mapping_for_public_skill(tmp_path: Path
                         "name": "sql-review",
                         "file_path": "public/sql-review",
                         "virtual_path": "/mnt/skills/sql-review/SKILL.md",
+                        "skill_version_id": 1,
                     }
                 ]
             }
@@ -405,6 +406,7 @@ def test_skill_load_rejects_paths_not_in_runtime_allowlist(tmp_path: Path) -> No
                         "name": "sql-review",
                         "file_path": "public/sql-review",
                         "virtual_path": "/mnt/skills/sql-review/SKILL.md",
+                        "skill_version_id": 1,
                     }
                 ]
             }
@@ -441,6 +443,7 @@ def test_ls_uses_runtime_virtual_mapping_for_skill_directories(tmp_path: Path) -
                         "name": "table-tools",
                         "file_path": "7/table-tools",
                         "virtual_path": "/mnt/skills/table-tools/SKILL.md",
+                        "skill_version_id": 1,
                     }
                 ]
             }
@@ -472,11 +475,13 @@ def test_ls_skills_root_lists_runtime_skill_directories() -> None:
                         "name": "chart-visualization",
                         "file_path": "public/chart-visualization",
                         "virtual_path": "/mnt/skills/chart-visualization/SKILL.md",
+                        "skill_version_id": 1,
                     },
                     {
                         "name": "table-tools",
                         "file_path": "7/table-tools",
                         "virtual_path": "/mnt/skills/table-tools/SKILL.md",
+                        "skill_version_id": 2,
                     },
                 ]
             }
@@ -499,6 +504,27 @@ def test_derive_skill_scope_returns_none_when_runtime_skills_are_missing() -> No
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
         context={"runtime_agent": {"user_id": 7, "skills": []}},
+        config={},
+    )
+
+    assert derive_skill_scope_from_runtime(runtime) is None
+
+
+def test_derive_skill_scope_returns_none_for_manifest_artifacts() -> None:
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "user_id": 7,
+                "skills": [
+                    {
+                        "name": "probe-skill",
+                        "file_path": "artifacts/skills/1/v1/probe-skill",
+                        "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
+                    }
+                ],
+            }
+        },
         config={},
     )
 

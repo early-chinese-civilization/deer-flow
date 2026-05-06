@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.gateway.db.models import SkillRelease
+from app.gateway.db.models import SkillDefinition, SkillInstall, SkillRelease, SkillVersion
 from app.gateway.db.repository import SkillReleaseRepository
 
 
@@ -56,6 +56,7 @@ def test_skill_release_model_declares_release_contract_columns():
     assert "publisher_user_id" in columns
     assert "source_skill_id" in columns
     assert "published_skill_id" in columns
+    assert "skill_version_id" in columns
     assert "created_at" in columns
     assert columns["release_version"].unique is True
     assert columns["package_version"].nullable is True
@@ -75,6 +76,7 @@ def test_create_skill_release_generates_release_version_and_persists_metadata():
             publisher_user_id=7,
             source_skill_id=11,
             published_skill_id=12,
+            skill_version_id=13,
         )
 
         assert release in session.added
@@ -89,6 +91,7 @@ def test_create_skill_release_generates_release_version_and_persists_metadata():
         assert release.publisher_user_id == 7
         assert release.source_skill_id == 11
         assert release.published_skill_id == 12
+        assert release.skill_version_id == 13
 
     import asyncio
 
@@ -108,6 +111,7 @@ def test_create_skill_release_allows_empty_package_version():
             publisher_user_id=7,
             source_skill_id=11,
             published_skill_id=12,
+            skill_version_id=13,
             release_version="rel_fixed",
             commit=False,
         )
@@ -178,3 +182,39 @@ def test_skill_release_notes_migration_adds_release_notes_column():
     migration = migration_path.read_text(encoding="utf-8")
     assert "skill_releases" in migration
     assert "release_notes" in migration
+
+
+def test_platform_skill_version_install_models_declares_manifest_foundation_columns():
+    definition_columns = SkillDefinition.__table__.columns
+    version_columns = SkillVersion.__table__.columns
+    install_columns = SkillInstall.__table__.columns
+
+    assert SkillDefinition.__tablename__ == "skill_definitions"
+    assert "name" in definition_columns
+    assert "owner_user_id" in definition_columns
+
+    assert SkillVersion.__tablename__ == "skill_versions"
+    assert "skill_definition_id" in version_columns
+    assert "version_number" in version_columns
+    assert "source_package_version" in version_columns
+    assert "content_hash" in version_columns
+    assert "file_manifest_hash" in version_columns
+    assert "artifact_uri" in version_columns
+
+    assert SkillInstall.__tablename__ == "skill_installs"
+    assert "user_id" in install_columns
+    assert "skill_definition_id" in install_columns
+    assert "installed_version_id" in install_columns
+    assert "current_version_id" in install_columns
+
+
+def test_skill_versions_installs_manifest_migration_exists():
+    migration_path = Path("alembic/versions/a7c9e2d5f604_add_skill_versions_installs_runtime_manifest.py")
+
+    assert migration_path.exists()
+    migration = migration_path.read_text(encoding="utf-8")
+    assert "skill_definitions" in migration
+    assert "skill_versions" in migration
+    assert "skill_installs" in migration
+    assert "skill_version_id" in migration
+    assert "runtime_manifests" in migration
