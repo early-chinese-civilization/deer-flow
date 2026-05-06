@@ -123,6 +123,7 @@ services:
     environment:
       - CI=true
       - DEER_FLOW_HOME=/app/backend/.deer-flow
+      - DEER_FLOW_PUBLIC_BASE_PATH=/deer-flow
       - DEER_FLOW_CHANNELS_LANGGRAPH_URL=http://gateway:8001
       - DEER_FLOW_CHANNELS_GATEWAY_URL=http://gateway:8001
       - DEER_FLOW_HOST_BASE_DIR=${DEER_FLOW_ROOT}/backend/.deer-flow

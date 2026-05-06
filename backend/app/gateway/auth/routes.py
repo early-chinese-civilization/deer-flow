@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import os
 
+import ecc_auth.routes as ecc_auth_routes
 from ecc_auth import create_auth_router, init_dependencies
 from ecc_auth.config import KeycloakConfig
 from ecc_auth.identity import AuthIdentity
 from fastapi import APIRouter
+from starlette.requests import Request
 from fastapi.responses import RedirectResponse
 
 from app.gateway.auth.dev_synthetic_auth import (
@@ -32,6 +34,34 @@ def _get_required_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"{name} must not be empty")
     return value
+
+
+def _get_public_base_path() -> str:
+    return (
+        os.getenv("DEER_FLOW_PUBLIC_BASE_PATH")
+        or os.getenv("NEXT_PUBLIC_BASE_PATH")
+        or ""
+    ).strip().rstrip("/")
+
+
+def _with_public_base_path(origin: str) -> str:
+    base_path = _get_public_base_path()
+    if not base_path:
+        return origin
+    if not base_path.startswith("/"):
+        base_path = f"/{base_path}"
+    if origin.endswith(base_path):
+        return origin
+    return f"{origin.rstrip('/')}{base_path}"
+
+
+def _patch_ecc_auth_public_origin() -> None:
+    original_get_public_origin = ecc_auth_routes.get_public_origin
+
+    def get_public_origin_with_base_path(request: Request) -> str:
+        return _with_public_base_path(original_get_public_origin(request))
+
+    ecc_auth_routes.get_public_origin = get_public_origin_with_base_path
 
 
 def _build_keycloak_config() -> KeycloakConfig:
@@ -102,6 +132,7 @@ def create_gateway_auth_router(config: KeycloakConfig | None = None) -> APIRoute
 
     resolved_config = config or _build_keycloak_config()
     init_dependencies(resolved_config)
+    _patch_ecc_auth_public_origin()
 
     router = APIRouter(prefix="/api/auth", tags=["auth"])
     router.include_router(
