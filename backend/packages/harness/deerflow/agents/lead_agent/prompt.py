@@ -3,7 +3,6 @@ from datetime import datetime
 
 from langgraph.config import get_config
 
-from deerflow.skills.path_utils import build_skill_virtual_path
 from deerflow.subagents import get_available_subagent_names
 
 logger = logging.getLogger(__name__)
@@ -27,7 +26,8 @@ def _get_runtime_agent_context(runtime_agent_context: dict | None = None) -> dic
 
 
 def build_runtime_skill_descriptors(skills: list[dict] | None, *, container_base_path: str) -> list[dict[str, str]]:
-    """Build prompt-facing skill descriptors with a swappable location strategy."""
+    """Build prompt-facing skill descriptors from manifest-provided entries."""
+    del container_base_path
     if not skills:
         return []
 
@@ -39,12 +39,18 @@ def build_runtime_skill_descriptors(skills: list[dict] | None, *, container_base
         normalized_name = name.strip()
         virtual_path = skill.get("virtual_path")
         if not isinstance(virtual_path, str) or not virtual_path.strip():
-            virtual_path = build_skill_virtual_path(normalized_name, container_base_path=container_base_path)
+            continue
+        skill_version_id = skill.get("skill_version_id")
+        if skill_version_id is None:
+            continue
         descriptors.append(
             {
                 "name": normalized_name,
                 "description": str(skill.get("description") or ""),
                 "location": virtual_path,
+                "skill_version_id": str(skill_version_id),
+                "version_number": str(skill.get("version_number") or ""),
+                "content_hash": str(skill.get("content_hash") or ""),
             }
         )
     return descriptors
@@ -459,7 +465,17 @@ def get_skills_prompt_section(
         return ""
 
     skill_items = "\n".join(
-        f"    <skill>\n        <name>{skill['name']}</name>\n        <description>{skill['description']}</description>\n        <location>{skill['location']}</location>\n    </skill>"
+        "\n".join(
+            [
+                "    <skill>",
+                f"        <name>{skill['name']}</name>",
+                f"        <description>{skill['description']}</description>",
+                f"        <location>{skill['location']}</location>",
+                f"        <skill_version_id>{skill['skill_version_id']}</skill_version_id>",
+                f"        <version_number>{skill['version_number']}</version_number>",
+                "    </skill>",
+            ]
+        )
         for skill in skills
     )
     skills_list = f"<available_skills>\n{skill_items}\n</available_skills>"

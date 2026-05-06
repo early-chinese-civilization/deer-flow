@@ -12,8 +12,21 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.gateway.db.models import Agent, AgentSkill, Memory, Skill, SkillRelease, Thread, User, Workspace
-from deerflow.skills.path_utils import build_skill_virtual_path, normalize_skill_file_path
+from app.gateway.db.models import (
+    Agent,
+    AgentSkill,
+    Memory,
+    RuntimeManifest,
+    Skill,
+    SkillDefinition,
+    SkillInstall,
+    SkillRelease,
+    SkillVersion,
+    Thread,
+    User,
+    Workspace,
+)
+from deerflow.skills.path_utils import build_skill_virtual_path, resolve_skill_storage_dir
 
 
 @dataclass(frozen=True)
@@ -24,6 +37,13 @@ class RuntimeSkillDescriptor:
     description: str
     file_path: str
     virtual_path: str
+    skill_definition_id: int
+    skill_version_id: int
+    skill_install_id: int
+    version_number: int
+    content_hash: str
+    artifact_uri: str
+    source_package_version: str | None
 
 
 @dataclass(frozen=True)
@@ -35,6 +55,11 @@ class RuntimeAgentBundle:
     memory_json: dict[str, Any]
     soul: str | None
     skills: list[RuntimeSkillDescriptor]
+    manifest_id: str | None = None
+
+
+class RuntimeManifestResolutionError(RuntimeError):
+    """Raised when an agent runtime manifest cannot be resolved exactly."""
 
 
 def _as_optional_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
@@ -52,6 +77,21 @@ def _get_skills_container_path() -> str:
         return get_app_config().skills.container_path
     except Exception:
         return "/mnt/skills"
+
+
+def _ensure_artifact_dir_exists(artifact_uri: str, *, skill_name: str) -> None:
+    """Fail manifest resolution if an immutable artifact is missing."""
+    try:
+        from deerflow.config import get_app_config
+
+        skills_root = get_app_config().skills.get_skills_path()
+        artifact_dir = resolve_skill_storage_dir(skills_root, artifact_uri)
+    except Exception as exc:
+        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact cannot be resolved") from exc
+    if not artifact_dir.exists() or not artifact_dir.is_dir():
+        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact is missing: {artifact_uri}")
+    if not (artifact_dir / "SKILL.md").exists():
+        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact is missing SKILL.md: {artifact_uri}")
 
 
 class UserRepository:
@@ -332,7 +372,11 @@ class AgentRepository:
 
     @staticmethod
     def _with_agent_skills(stmt):
-        return stmt.options(selectinload(Agent.agent_skills).selectinload(AgentSkill.skill))
+        return stmt.options(
+            selectinload(Agent.agent_skills).selectinload(AgentSkill.skill),
+            selectinload(Agent.agent_skills).selectinload(AgentSkill.skill_install).selectinload(SkillInstall.definition),
+            selectinload(Agent.agent_skills).selectinload(AgentSkill.skill_install).selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition),
+        )
 
     @staticmethod
     async def create_agent(
@@ -383,46 +427,79 @@ class AgentRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    def _build_runtime_skill_descriptor(skill: Skill) -> RuntimeSkillDescriptor:
-        """Project a DB skill row into the runtime prompt metadata."""
-        file_path = normalize_skill_file_path(
-            skill.file_path,
-            user_id=skill.user_id,
-            skill_name=skill.name,
-        )
+    def _build_runtime_skill_descriptor(install: SkillInstall) -> RuntimeSkillDescriptor:
+        """Project an install/current version into runtime manifest metadata."""
+        version = install.current_version
+        definition = install.definition or (version.definition if version is not None else None)
+        if version is None:
+            raise RuntimeManifestResolutionError(f"Skill install {install.id} has no current version")
+        if definition is None:
+            raise RuntimeManifestResolutionError(f"Skill install {install.id} has no definition")
+        if version.skill_definition_id != install.skill_definition_id:
+            raise RuntimeManifestResolutionError(f"Skill install {install.id} points to a version from another definition")
+        file_path = version.artifact_uri
+        _ensure_artifact_dir_exists(file_path, skill_name=definition.name)
         return RuntimeSkillDescriptor(
-            name=skill.name,
-            description=skill.description or "",
+            name=definition.name,
+            description=version.description or definition.description or "",
             file_path=file_path,
-            virtual_path=build_skill_virtual_path(skill.name, container_base_path=_get_skills_container_path()),
+            virtual_path=build_skill_virtual_path(definition.name, container_base_path=_get_skills_container_path()),
+            skill_definition_id=definition.id,
+            skill_version_id=version.id,
+            skill_install_id=install.id,
+            version_number=version.version_number,
+            content_hash=version.content_hash,
+            artifact_uri=version.artifact_uri,
+            source_package_version=version.source_package_version,
         )
 
     @staticmethod
     def _active_runtime_skills(agent: Agent) -> list[RuntimeSkillDescriptor]:
         """Return ordered active skill descriptors for an agent."""
-        active_associations = [association for association in agent.agent_skills if association.deleted_at is None and association.enabled and association.skill is not None and association.skill.deleted_at is None]
+        active_associations = [association for association in agent.agent_skills if association.deleted_at is None and association.enabled]
         active_associations.sort(key=lambda association: (association.display_order, association.id))
-        return [AgentRepository._build_runtime_skill_descriptor(association.skill) for association in active_associations]
+        descriptors: list[RuntimeSkillDescriptor] = []
+        for association in active_associations:
+            if association.skill_install is None or association.skill_install.deleted_at is not None:
+                raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
+            descriptors.append(AgentRepository._build_runtime_skill_descriptor(association.skill_install))
+        return descriptors
 
     @staticmethod
-    async def _public_runtime_skills(db: AsyncSession) -> list[RuntimeSkillDescriptor]:
-        """Return ordered descriptors for all active public skills."""
-        result = await db.execute(
-            select(Skill)
-            .where(
-                Skill.user_id.is_(None),
-                Skill.deleted_at.is_(None),
-            )
-            .order_by(Skill.name.asc(), Skill.updated_at.desc(), Skill.created_at.desc())
+    async def _create_runtime_manifest(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        agent: Agent,
+        skills: list[RuntimeSkillDescriptor],
+    ) -> RuntimeManifest:
+        """Persist the resolved manifest snapshot used by prompt and skill_load."""
+        entries = [
+            {
+                "name": skill.name,
+                "description": skill.description,
+                "file_path": skill.file_path,
+                "virtual_path": skill.virtual_path,
+                "skill_definition_id": skill.skill_definition_id,
+                "skill_version_id": skill.skill_version_id,
+                "skill_install_id": skill.skill_install_id,
+                "version_number": skill.version_number,
+                "content_hash": skill.content_hash,
+                "artifact_uri": skill.artifact_uri,
+                "source_package_version": skill.source_package_version,
+            }
+            for skill in skills
+        ]
+        manifest = RuntimeManifest(
+            user_id=user_id,
+            agent_id=agent.id,
+            agent_name=agent.name,
+            manifest_json={"version": 1, "skills": entries},
         )
-        seen_names: set[str] = set()
-        descriptors: list[RuntimeSkillDescriptor] = []
-        for skill in result.scalars().all():
-            if skill.name in seen_names:
-                continue
-            seen_names.add(skill.name)
-            descriptors.append(AgentRepository._build_runtime_skill_descriptor(skill))
-        return descriptors
+        db.add(manifest)
+        await db.flush()
+        await db.refresh(manifest)
+        return manifest
 
     @staticmethod
     async def get_runtime_agent_bundle(
@@ -442,25 +519,23 @@ class AgentRepository:
                 agent_name=None,
                 memory_json=memory_json,
                 soul=None,
-                skills=await AgentRepository._public_runtime_skills(db),
+                skills=[],
             )
 
         agent = await AgentRepository.get_agent_by_name(db, user_id=user_id, name=normalized_agent_name)
         if agent is None:
-            return RuntimeAgentBundle(
-                user_id=user_id,
-                agent_name=normalized_agent_name,
-                memory_json=memory_json,
-                soul=None,
-                skills=await AgentRepository._public_runtime_skills(db),
-            )
+            raise RuntimeManifestResolutionError(f"Agent '{normalized_agent_name}' not found")
+
+        skills = AgentRepository._active_runtime_skills(agent)
+        manifest = await AgentRepository._create_runtime_manifest(db, user_id=user_id, agent=agent, skills=skills)
 
         return RuntimeAgentBundle(
             user_id=user_id,
             agent_name=agent.name,
             memory_json=memory_json,
             soul=agent.soul,
-            skills=AgentRepository._active_runtime_skills(agent),
+            skills=skills,
+            manifest_id=str(manifest.id),
         )
 
     @staticmethod
@@ -514,6 +589,7 @@ class AgentRepository:
         *,
         agent: Agent,
         skill_ids: list[int],
+        skill_install_ids: list[int] | None = None,
         commit: bool = True,
     ) -> Agent:
         """Replace the agent's active skill associations with the provided skills."""
@@ -526,10 +602,24 @@ class AgentRepository:
             if association.deleted_at is None:
                 association.deleted_at = now
 
+        install_ids = skill_install_ids if skill_install_ids is not None else []
+        if skill_install_ids is None:
+            install_ids = []
+
         for display_order, skill_id in enumerate(skill_ids):
             association = AgentSkill(
                 agent_id=reloaded_agent.id,
                 skill_id=skill_id,
+                display_order=display_order,
+                enabled=True,
+            )
+            db.add(association)
+
+        for display_order, install_id in enumerate(install_ids):
+            association = AgentSkill(
+                agent_id=reloaded_agent.id,
+                skill_id=None,
+                skill_install_id=install_id,
                 display_order=display_order,
                 enabled=True,
             )
@@ -544,6 +634,190 @@ class AgentRepository:
         if refreshed is None:
             raise ValueError(f"Agent {reloaded_agent.id} disappeared during skill replacement")
         return refreshed
+
+
+class SkillDefinitionRepository:
+    """Persistence helpers for stable skill definitions."""
+
+    @staticmethod
+    async def get_by_name(db: AsyncSession, *, name: str) -> SkillDefinition | None:
+        result = await db.execute(
+            select(SkillDefinition).where(
+                SkillDefinition.name == name,
+                SkillDefinition.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_or_create(
+        db: AsyncSession,
+        *,
+        name: str,
+        display_name: str | None,
+        description: str | None,
+        owner_user_id: int | None,
+    ) -> SkillDefinition:
+        definition = await SkillDefinitionRepository.get_by_name(db, name=name)
+        if definition is not None:
+            definition.display_name = display_name or definition.display_name
+            definition.description = description or definition.description
+            definition.updated_at = datetime.now(UTC)
+            await db.flush()
+            await db.refresh(definition)
+            return definition
+
+        definition = SkillDefinition(
+            name=name,
+            display_name=display_name,
+            description=description,
+            owner_user_id=owner_user_id,
+        )
+        db.add(definition)
+        await db.flush()
+        await db.refresh(definition)
+        return definition
+
+
+class SkillVersionRepository:
+    """Persistence helpers for immutable platform skill versions."""
+
+    @staticmethod
+    async def get_by_id(db: AsyncSession, *, skill_version_id: int) -> SkillVersion | None:
+        result = await db.execute(select(SkillVersion).options(selectinload(SkillVersion.definition)).where(SkillVersion.id == skill_version_id))
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_by_definition_and_hash(
+        db: AsyncSession,
+        *,
+        skill_definition_id: int,
+        content_hash: str,
+    ) -> SkillVersion | None:
+        result = await db.execute(
+            select(SkillVersion)
+            .options(selectinload(SkillVersion.definition))
+            .where(
+                SkillVersion.skill_definition_id == skill_definition_id,
+                SkillVersion.content_hash == content_hash,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_latest_for_definition(
+        db: AsyncSession,
+        *,
+        skill_definition_id: int,
+    ) -> SkillVersion | None:
+        result = await db.execute(select(SkillVersion).options(selectinload(SkillVersion.definition)).where(SkillVersion.skill_definition_id == skill_definition_id).order_by(SkillVersion.version_number.desc()).limit(1))
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def create_version(
+        db: AsyncSession,
+        *,
+        definition: SkillDefinition,
+        source_package_version: str | None,
+        description: str | None,
+        content_hash: str,
+        file_manifest_hash: str,
+        artifact_uri: str,
+        created_by_user_id: int | None,
+    ) -> SkillVersion:
+        latest = await SkillVersionRepository.get_latest_for_definition(db, skill_definition_id=definition.id)
+        next_number = 1 if latest is None else latest.version_number + 1
+        version = SkillVersion(
+            skill_definition_id=definition.id,
+            version_number=next_number,
+            source_package_version=source_package_version,
+            description=description,
+            content_hash=content_hash,
+            file_manifest_hash=file_manifest_hash,
+            artifact_uri=artifact_uri,
+            created_by_user_id=created_by_user_id,
+        )
+        db.add(version)
+        await db.flush()
+        await db.refresh(version)
+        return version
+
+
+class SkillInstallRepository:
+    """Persistence helpers for user skill install state."""
+
+    @staticmethod
+    async def get_by_user_and_definition(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        skill_definition_id: int,
+    ) -> SkillInstall | None:
+        result = await db.execute(
+            select(SkillInstall)
+            .options(
+                selectinload(SkillInstall.definition),
+                selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition),
+            )
+            .where(
+                SkillInstall.user_id == user_id,
+                SkillInstall.skill_definition_id == skill_definition_id,
+                SkillInstall.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_by_user_and_name(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        name: str,
+    ) -> SkillInstall | None:
+        result = await db.execute(
+            select(SkillInstall)
+            .join(SkillDefinition, SkillDefinition.id == SkillInstall.skill_definition_id)
+            .options(
+                selectinload(SkillInstall.definition),
+                selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition),
+            )
+            .where(
+                SkillInstall.user_id == user_id,
+                SkillDefinition.name == name,
+                SkillDefinition.deleted_at.is_(None),
+                SkillInstall.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def upsert_install(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        definition: SkillDefinition,
+        version: SkillVersion,
+    ) -> SkillInstall:
+        install = await SkillInstallRepository.get_by_user_and_definition(
+            db,
+            user_id=user_id,
+            skill_definition_id=definition.id,
+        )
+        now = datetime.now(UTC)
+        if install is None:
+            install = SkillInstall(
+                user_id=user_id,
+                skill_definition_id=definition.id,
+                installed_version_id=version.id,
+                current_version_id=version.id,
+            )
+            db.add(install)
+        else:
+            install.current_version_id = version.id
+            install.updated_at = now
+        await db.flush()
+        await db.refresh(install)
+        return install
 
 
 class SkillReleaseRepository:
@@ -566,6 +840,7 @@ class SkillReleaseRepository:
         publisher_user_id: int | None,
         source_skill_id: int | None,
         published_skill_id: int | None,
+        skill_version_id: int | None = None,
         status: str = "published",
         release_version: str | None = None,
         commit: bool = True,
@@ -582,6 +857,7 @@ class SkillReleaseRepository:
             publisher_user_id=publisher_user_id,
             source_skill_id=source_skill_id,
             published_skill_id=published_skill_id,
+            skill_version_id=skill_version_id,
         )
         db.add(release)
         await db.flush()
@@ -592,6 +868,27 @@ class SkillReleaseRepository:
         return release
 
     @staticmethod
+    async def get_latest_published_version_by_name(
+        db: AsyncSession,
+        *,
+        skill_name: str,
+    ) -> SkillVersion | None:
+        """Load the latest published platform version for a SkillHub skill name."""
+        result = await db.execute(
+            select(SkillVersion)
+            .join(SkillRelease, SkillRelease.skill_version_id == SkillVersion.id)
+            .options(selectinload(SkillVersion.definition))
+            .where(
+                SkillRelease.skill_name == skill_name,
+                SkillRelease.status == "published",
+                SkillRelease.skill_version_id.is_not(None),
+            )
+            .order_by(SkillRelease.created_at.desc(), SkillVersion.version_number.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def get_latest_release_for_public_skill(
         db: AsyncSession,
         *,
@@ -600,6 +897,7 @@ class SkillReleaseRepository:
         """Load the latest published release that produced a public skill row, if any."""
         result = await db.execute(
             select(SkillRelease)
+            .options(selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition))
             .where(
                 SkillRelease.published_skill_id == published_skill_id,
                 SkillRelease.status == "published",

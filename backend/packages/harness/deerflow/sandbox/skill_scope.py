@@ -8,6 +8,7 @@ from deerflow.sandbox.exceptions import SandboxRuntimeError
 from deerflow.skills.path_utils import PUBLIC_SKILLS_DIR
 
 _PRIVATE_SCOPE_PATTERN = re.compile(r"^[0-9]+$")
+_ARTIFACTS_SCOPE_ROOT = "artifacts"
 
 
 def get_runtime_agent_context(
@@ -69,6 +70,8 @@ def derive_skill_scope_from_runtime_agent(runtime_agent: Mapping[str, Any] | Non
             raise SandboxRuntimeError(f"Runtime skill file_path has invalid scope root: {file_path!r}")
 
         scope_root = parts[0]
+        if scope_root == _ARTIFACTS_SCOPE_ROOT:
+            continue
         if scope_root == PUBLIC_SKILLS_DIR:
             scopes.add(PUBLIC_SKILLS_DIR)
             continue

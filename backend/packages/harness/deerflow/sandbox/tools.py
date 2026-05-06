@@ -10,13 +10,13 @@ from langgraph.typing import ContextT
 
 from deerflow.agents.thread_state import ThreadDataState, ThreadState
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX
-from deerflow.sandbox.local.list_dir import list_dir as local_list_dir
 from deerflow.sandbox.exceptions import (
     SandboxError,
     SandboxNotFoundError,
     SandboxRuntimeError,
 )
 from deerflow.sandbox.file_operation_lock import get_file_operation_lock
+from deerflow.sandbox.local.list_dir import list_dir as local_list_dir
 from deerflow.sandbox.sandbox import Sandbox
 from deerflow.sandbox.sandbox_provider import get_sandbox_provider
 from deerflow.sandbox.security import LOCAL_HOST_BASH_DISABLED_MESSAGE, is_host_bash_allowed
@@ -128,7 +128,10 @@ def _get_runtime_skill_root_map(runtime: "ToolRuntime[ContextT, ThreadState] | N
         if not isinstance(skill, dict):
             continue
         virtual_path = skill.get("virtual_path")
-        file_path = skill.get("file_path")
+        skill_version_id = skill.get("skill_version_id")
+        file_path = skill.get("artifact_uri") or skill.get("file_path")
+        if skill_version_id is None:
+            continue
         if not isinstance(virtual_path, str) or not virtual_path.strip():
             continue
         if not isinstance(file_path, str) or not file_path.strip():

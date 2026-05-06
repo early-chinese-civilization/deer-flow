@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -271,6 +271,159 @@ class Skill(Base):
     )
 
 
+class SkillDefinition(Base):
+    """Stable platform identity for a skill across immutable content versions."""
+
+    __tablename__ = "skill_definitions"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="Skill definition ID")
+    name = Column(String(255), nullable=False, comment="Stable skill name")
+    display_name = Column(String(255), nullable=True, comment="Display name")
+    description = Column(Text, nullable=True, comment="Latest description")
+    owner_user_id = Column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Initial creator/publisher user ID for audit",
+    )
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        comment="Created at",
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        comment="Updated at",
+    )
+    deleted_at = Column(DateTime(timezone=True), nullable=True, comment="Soft delete timestamp")
+
+    owner_user = relationship("User", foreign_keys=[owner_user_id])
+    versions = relationship("SkillVersion", back_populates="definition", cascade="all, delete-orphan")
+    installs = relationship("SkillInstall", back_populates="definition", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index(
+            "uq_skill_definitions_name_active",
+            "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index("ix_skill_definitions_deleted_at", "deleted_at"),
+    )
+
+
+class SkillVersion(Base):
+    """Immutable platform-managed version of skill content."""
+
+    __tablename__ = "skill_versions"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="Skill version ID")
+    skill_definition_id = Column(
+        BigInteger,
+        ForeignKey("skill_definitions.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="Stable skill definition ID",
+    )
+    version_number = Column(Integer, nullable=False, comment="Platform-managed monotonically increasing version")
+    source_package_version = Column(String(255), nullable=True, comment="Optional source SKILL.md version metadata")
+    description = Column(Text, nullable=True, comment="Description captured from this version")
+    content_hash = Column(String(128), nullable=False, comment="Canonical content hash excluding source package version")
+    file_manifest_hash = Column(String(128), nullable=False, comment="Raw file manifest hash")
+    artifact_uri = Column(String(500), nullable=False, comment="Immutable artifact filesystem path")
+    created_by_user_id = Column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="User that uploaded this version",
+    )
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        comment="Created at",
+    )
+
+    definition = relationship("SkillDefinition", back_populates="versions")
+    created_by_user = relationship("User", foreign_keys=[created_by_user_id])
+    releases = relationship("SkillRelease", back_populates="skill_version")
+    installs_current = relationship("SkillInstall", foreign_keys="SkillInstall.current_version_id", back_populates="current_version")
+    installs_initial = relationship("SkillInstall", foreign_keys="SkillInstall.installed_version_id", back_populates="installed_version")
+
+    __table_args__ = (
+        UniqueConstraint("skill_definition_id", "version_number", name="uq_skill_versions_definition_version"),
+        UniqueConstraint("skill_definition_id", "content_hash", name="uq_skill_versions_definition_content_hash"),
+        Index("ix_skill_versions_definition_created", "skill_definition_id", "created_at"),
+    )
+
+
+class SkillInstall(Base):
+    """User install state for a skill definition and its current version."""
+
+    __tablename__ = "skill_installs"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="Skill install ID")
+    user_id = Column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="Installing user ID",
+    )
+    skill_definition_id = Column(
+        BigInteger,
+        ForeignKey("skill_definitions.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="Installed skill definition ID",
+    )
+    installed_version_id = Column(
+        BigInteger,
+        ForeignKey("skill_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+        comment="Version first installed by this user",
+    )
+    current_version_id = Column(
+        BigInteger,
+        ForeignKey("skill_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+        comment="Version currently selected for runtime",
+    )
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        comment="Created at",
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        comment="Updated at",
+    )
+    deleted_at = Column(DateTime(timezone=True), nullable=True, comment="Soft delete timestamp")
+
+    user = relationship("User", foreign_keys=[user_id])
+    definition = relationship("SkillDefinition", back_populates="installs")
+    installed_version = relationship("SkillVersion", foreign_keys=[installed_version_id], back_populates="installs_initial")
+    current_version = relationship("SkillVersion", foreign_keys=[current_version_id], back_populates="installs_current")
+    agent_skills = relationship("AgentSkill", back_populates="skill_install")
+
+    __table_args__ = (
+        Index(
+            "uq_skill_installs_user_definition_active",
+            "user_id",
+            "skill_definition_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index("ix_skill_installs_current_version_id", "current_version_id"),
+        Index("ix_skill_installs_deleted_at", "deleted_at"),
+    )
+
+
 class SkillRelease(Base):
     """Immutable record of a skill publish event."""
 
@@ -302,6 +455,12 @@ class SkillRelease(Base):
         nullable=True,
         comment="Public latest skill row produced by this release",
     )
+    skill_version_id = Column(
+        BigInteger,
+        ForeignKey("skill_versions.id", ondelete="RESTRICT"),
+        nullable=True,
+        comment="Immutable platform skill version published by this release",
+    )
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -312,10 +471,12 @@ class SkillRelease(Base):
     publisher_user = relationship("User", foreign_keys=[publisher_user_id])
     source_skill = relationship("Skill", foreign_keys=[source_skill_id], back_populates="source_releases")
     published_skill = relationship("Skill", foreign_keys=[published_skill_id], back_populates="published_releases")
+    skill_version = relationship("SkillVersion", back_populates="releases")
 
     __table_args__ = (
         Index("ix_skill_releases_skill_name_created", "skill_name", "created_at"),
         Index("ix_skill_releases_published_skill_id", "published_skill_id"),
+        Index("ix_skill_releases_skill_version_id", "skill_version_id"),
         Index("ix_skill_releases_status", "status"),
     )
 
@@ -335,8 +496,14 @@ class AgentSkill(Base):
     skill_id = Column(
         BigInteger,
         ForeignKey("skills.id", ondelete="CASCADE"),
-        nullable=False,
-        comment="Skill ID",
+        nullable=True,
+        comment="Legacy skill ID",
+    )
+    skill_install_id = Column(
+        BigInteger,
+        ForeignKey("skill_installs.id", ondelete="CASCADE"),
+        nullable=True,
+        comment="Install ID resolved by runtime manifest",
     )
     display_order = Column(Integer, nullable=False, default=0, comment="Display order")
     enabled = Column(Boolean, nullable=False, default=True, comment="Enabled flag")
@@ -350,8 +517,13 @@ class AgentSkill(Base):
 
     agent = relationship("Agent", back_populates="agent_skills")
     skill = relationship("Skill", back_populates="agent_skills")
+    skill_install = relationship("SkillInstall", back_populates="agent_skills")
 
     __table_args__ = (
+        CheckConstraint(
+            "skill_id IS NOT NULL OR skill_install_id IS NOT NULL",
+            name="ck_agents_skills_has_skill_or_install",
+        ),
         Index(
             "uq_agents_skills_active",
             "agent_id",
@@ -359,10 +531,46 @@ class AgentSkill(Base):
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
+        Index(
+            "uq_agents_skill_installs_active",
+            "agent_id",
+            "skill_install_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND skill_install_id IS NOT NULL"),
+        ),
         Index("ix_agents_skills_agent_id", "agent_id"),
         Index("ix_agents_skills_skill_id", "skill_id"),
+        Index("ix_agents_skills_skill_install_id", "skill_install_id"),
         Index("ix_agents_skills_deleted_at", "deleted_at"),
     )
+
+
+class RuntimeManifest(Base):
+    """Persisted run-level manifest snapshot for runtime skill authorization."""
+
+    __tablename__ = "runtime_manifests"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        comment="Runtime manifest ID",
+    )
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, comment="Runtime user ID")
+    agent_id = Column(BigInteger, ForeignKey("agents.id", ondelete="SET NULL"), nullable=True, comment="Resolved agent ID")
+    agent_name = Column(String(255), nullable=True, comment="Resolved agent name")
+    manifest_json = Column(JSONB(astext_type=Text()), nullable=False, default=dict, comment="Manifest payload")
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        comment="Created at",
+    )
+
+    user = relationship("User", foreign_keys=[user_id])
+    agent = relationship("Agent", foreign_keys=[agent_id])
+
+    __table_args__ = (Index("ix_runtime_manifests_user_created", "user_id", "created_at"),)
 
 
 class Memory(Base):

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.db.models import Agent, User
-from app.gateway.db.repository import AgentRepository, SkillRepository
+from app.gateway.db.repository import AgentRepository, SkillInstallRepository
 from app.gateway.deps import get_current_user, get_db
 from deerflow.config.paths import get_paths
 
@@ -68,16 +68,18 @@ def _normalize_agent_name(name: str) -> str:
 
 def _active_skill_names(agent: Agent) -> list[str] | None:
     """Return ordered active skill names for an agent, or None when unrestricted."""
-    active_associations = [
-        association
-        for association in agent.agent_skills
-        if association.deleted_at is None and association.skill is not None
-    ]
+    active_associations = [association for association in agent.agent_skills if association.deleted_at is None and (association.skill_install is not None or association.skill is not None)]
     if not active_associations:
         return None
 
     active_associations.sort(key=lambda association: (association.display_order, association.id))
-    return [association.skill.name for association in active_associations]
+    names: list[str] = []
+    for association in active_associations:
+        if association.skill_install is not None and association.skill_install.definition is not None:
+            names.append(association.skill_install.definition.name)
+        elif association.skill is not None:
+            names.append(association.skill.name)
+    return names
 
 
 def _agent_to_response(agent: Agent, *, include_soul: bool = False) -> AgentResponse:
@@ -90,24 +92,24 @@ def _agent_to_response(agent: Agent, *, include_soul: bool = False) -> AgentResp
     )
 
 
-async def _resolve_skill_ids(
+async def _resolve_skill_install_ids(
     db: AsyncSession,
     *,
     user_id: int,
     skill_names: list[str],
 ) -> list[int]:
-    """Resolve request skill names to current-user custom skill IDs."""
-    skill_ids: list[int] = []
+    """Resolve request skill names to current-user install IDs."""
+    skill_install_ids: list[int] = []
     seen_skill_names: set[str] = set()
     for skill_name in skill_names:
         if skill_name in seen_skill_names:
             raise HTTPException(status_code=400, detail=f"Duplicate skill '{skill_name}'")
         seen_skill_names.add(skill_name)
-        skill = await SkillRepository.get_user_skill_by_name(db, user_id=user_id, name=skill_name)
-        if skill is None:
-            raise HTTPException(status_code=400, detail=f"Skill '{skill_name}' not found")
-        skill_ids.append(skill.id)
-    return skill_ids
+        install = await SkillInstallRepository.get_by_user_and_name(db, user_id=user_id, name=skill_name)
+        if install is None:
+            raise HTTPException(status_code=400, detail=f"Skill install '{skill_name}' not found")
+        skill_install_ids.append(install.id)
+    return skill_install_ids
 
 
 @router.get(
@@ -204,8 +206,8 @@ async def create_agent_endpoint(
         )
 
         if request.skills is not None:
-            skill_ids = await _resolve_skill_ids(db, user_id=current_user.id, skill_names=request.skills)
-            agent = await AgentRepository.replace_agent_skills(db, agent=agent, skill_ids=skill_ids, commit=True)
+            skill_install_ids = await _resolve_skill_install_ids(db, user_id=current_user.id, skill_names=request.skills)
+            agent = await AgentRepository.replace_agent_skills(db, agent=agent, skill_ids=[], skill_install_ids=skill_install_ids, commit=True)
         else:
             await db.commit()
             refreshed = await AgentRepository.get_agent_by_id(db, agent.id)
@@ -255,8 +257,8 @@ async def update_agent(
 
         if "skills" in request.model_fields_set:
             requested_skills = request.skills or []
-            skill_ids = await _resolve_skill_ids(db, user_id=current_user.id, skill_names=requested_skills)
-            agent = await AgentRepository.replace_agent_skills(db, agent=agent, skill_ids=skill_ids, commit=True)
+            skill_install_ids = await _resolve_skill_install_ids(db, user_id=current_user.id, skill_names=requested_skills)
+            agent = await AgentRepository.replace_agent_skills(db, agent=agent, skill_ids=[], skill_install_ids=skill_install_ids, commit=True)
         else:
             await db.commit()
             refreshed = await AgentRepository.get_agent_by_id(db, agent.id)

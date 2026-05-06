@@ -14,7 +14,7 @@ from langchain_core.messages import convert_to_messages
 
 from app.gateway.db.engine import get_db_session
 from app.gateway.db.models import User
-from app.gateway.db.repository import AgentRepository, ThreadRepository
+from app.gateway.db.repository import AgentRepository, RuntimeManifestResolutionError, ThreadRepository
 from app.gateway.deps import get_checkpointer, get_run_manager, get_store, get_stream_bridge
 from app.gateway.services.ownership import ThreadAccessRecord
 from app.gateway.services.thread_store import upsert_thread_record
@@ -61,35 +61,49 @@ _TRUSTED_CONTEXT_KEYS = {
 
 def _resolve_requested_agent_name(body: Any) -> str | None:
     """Resolve the effective agent_name from request context/configurable payloads."""
+
+    def _normalize(raw: str) -> str:
+        return raw.strip().lower().replace("_", "-")
+
     context = getattr(body, "context", None)
     if isinstance(context, dict):
         raw_agent_name = context.get("agent_name")
         if isinstance(raw_agent_name, str) and raw_agent_name.strip():
-            return raw_agent_name.strip().lower()
+            return _normalize(raw_agent_name)
 
     request_config = getattr(body, "config", None)
     if isinstance(request_config, dict):
+        request_context = request_config.get("context", {})
+        if isinstance(request_context, dict):
+            raw_agent_name = request_context.get("agent_name")
+            if isinstance(raw_agent_name, str) and raw_agent_name.strip():
+                return _normalize(raw_agent_name)
         configurable = request_config.get("configurable", {})
         if isinstance(configurable, dict):
             raw_agent_name = configurable.get("agent_name")
             if isinstance(raw_agent_name, str) and raw_agent_name.strip():
-                return raw_agent_name.strip().lower()
+                return _normalize(raw_agent_name)
 
     return None
 
 
 async def _load_runtime_agent_payload(*, user_id: int, agent_name: str | None) -> dict[str, Any]:
     """Load the runtime agent payload injected into config.context."""
-    async with get_db_session() as db:
-        bundle = await AgentRepository.get_runtime_agent_bundle(
-            db,
-            user_id=user_id,
-            agent_name=agent_name,
-        )
+    try:
+        async with get_db_session() as db:
+            bundle = await AgentRepository.get_runtime_agent_bundle(
+                db,
+                user_id=user_id,
+                agent_name=agent_name,
+            )
+            await db.commit()
+    except RuntimeManifestResolutionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return {
         "user_id": bundle.user_id,
         "agent_name": bundle.agent_name,
+        "manifest_id": bundle.manifest_id,
         "memory": bundle.memory_json,
         "soul": bundle.soul,
         "skills": [
@@ -98,6 +112,13 @@ async def _load_runtime_agent_payload(*, user_id: int, agent_name: str | None) -
                 "description": skill.description,
                 "file_path": skill.file_path,
                 "virtual_path": skill.virtual_path,
+                "skill_definition_id": skill.skill_definition_id,
+                "skill_version_id": skill.skill_version_id,
+                "skill_install_id": skill.skill_install_id,
+                "version_number": skill.version_number,
+                "content_hash": skill.content_hash,
+                "artifact_uri": skill.artifact_uri,
+                "source_package_version": skill.source_package_version,
             }
             for skill in bundle.skills
         ],
@@ -193,7 +214,7 @@ def build_run_config(
                     thread_id,
                     list(request_config.get("configurable", {}).keys()),
                 )
-            config["context"] = request_config["context"]
+            config["context"] = dict(request_config["context"])
             context_agent_name = request_config["context"].get("agent_name")
             if context_agent_name is not None and (not assistant_id or assistant_id == _DEFAULT_ASSISTANT_ID):
                 configurable = config.setdefault("configurable", {})
@@ -205,13 +226,7 @@ def build_run_config(
         else:
             configurable = {"thread_id": thread_id}
             client_configurable = request_config.get("configurable", {})
-            configurable.update(
-                {
-                    key: value
-                    for key, value in client_configurable.items()
-                    if key not in _REQUEST_CONFIGURABLE_BLOCKLIST
-                }
-            )
+            configurable.update({key: value for key, value in client_configurable.items() if key not in _REQUEST_CONFIGURABLE_BLOCKLIST})
             config["configurable"] = configurable
         for key, value in request_config.items():
             if key not in ("configurable", "context"):
@@ -455,12 +470,7 @@ async def start_run(
         try:
             async with get_db_session() as db:
                 resolved_agent_id: int | None = None
-                if (
-                    isinstance(resolved_agent_name, str)
-                    and resolved_agent_name.strip()
-                    and current_user is not None
-                    and getattr(current_user, "id", None) is not None
-                ):
+                if isinstance(resolved_agent_name, str) and resolved_agent_name.strip() and current_user is not None and getattr(current_user, "id", None) is not None:
                     agent = await AgentRepository.get_agent_by_name(
                         db,
                         user_id=current_user.id,
@@ -510,11 +520,13 @@ async def start_run(
 
     resolved_agent_name = _resolve_requested_agent_name(body)
     configurable = config.setdefault("configurable", {})
+    configurable.setdefault("thread_id", thread_id)
     if resolved_agent_name:
         configurable.setdefault("agent_name", resolved_agent_name)
     if workspace_id is not None:
         configurable.setdefault("workspace_id", workspace_id)
 
+    _apply_trusted_run_context(config, trusted_context)
     runtime_context = config.setdefault("context", {})
     runtime_context.setdefault("thread_id", thread_id)
     if workspace_id is not None:

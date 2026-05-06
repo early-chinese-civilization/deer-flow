@@ -9,7 +9,21 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.gateway.db.schema_settings import get_gateway_db_schema
 
-REQUIRED_GATEWAY_TABLES = frozenset({"users", "workspaces", "threads", "skills", "skill_releases"})
+REQUIRED_GATEWAY_TABLES = frozenset(
+    {
+        "users",
+        "workspaces",
+        "threads",
+        "agents",
+        "agents_skills",
+        "skills",
+        "skill_definitions",
+        "skill_versions",
+        "skill_installs",
+        "skill_releases",
+        "runtime_manifests",
+    }
+)
 REQUIRED_GATEWAY_COLUMNS = {
     "users": frozenset(
         {
@@ -48,6 +62,31 @@ REQUIRED_GATEWAY_COLUMNS = {
             "updated_at",
         }
     ),
+    "agents": frozenset(
+        {
+            "id",
+            "user_id",
+            "name",
+            "description",
+            "soul",
+            "mcp_config",
+            "created_at",
+            "updated_at",
+            "deleted_at",
+        }
+    ),
+    "agents_skills": frozenset(
+        {
+            "id",
+            "agent_id",
+            "skill_id",
+            "skill_install_id",
+            "display_order",
+            "enabled",
+            "created_at",
+            "deleted_at",
+        }
+    ),
     "skills": frozenset(
         {
             "id",
@@ -75,20 +114,62 @@ REQUIRED_GATEWAY_COLUMNS = {
             "publisher_user_id",
             "source_skill_id",
             "published_skill_id",
+            "skill_version_id",
+            "created_at",
+        }
+    ),
+    "skill_definitions": frozenset(
+        {
+            "id",
+            "name",
+            "display_name",
+            "description",
+            "owner_user_id",
+            "created_at",
+            "updated_at",
+            "deleted_at",
+        }
+    ),
+    "skill_versions": frozenset(
+        {
+            "id",
+            "skill_definition_id",
+            "version_number",
+            "source_package_version",
+            "description",
+            "content_hash",
+            "file_manifest_hash",
+            "artifact_uri",
+            "created_by_user_id",
+            "created_at",
+        }
+    ),
+    "skill_installs": frozenset(
+        {
+            "id",
+            "user_id",
+            "skill_definition_id",
+            "installed_version_id",
+            "current_version_id",
+            "created_at",
+            "updated_at",
+            "deleted_at",
+        }
+    ),
+    "runtime_manifests": frozenset(
+        {
+            "id",
+            "user_id",
+            "agent_id",
+            "agent_name",
+            "manifest_json",
             "created_at",
         }
     ),
 }
 
-_TABLES_SQL = text(
-    "select table_name from information_schema.tables "
-    "where table_schema=:schema order by table_name"
-)
-_COLUMNS_SQL = text(
-    "select table_name, column_name from information_schema.columns "
-    "where table_schema=:schema and table_name = any(:tables) "
-    "order by table_name, ordinal_position"
-)
+_TABLES_SQL = text("select table_name from information_schema.tables where table_schema=:schema order by table_name")
+_COLUMNS_SQL = text("select table_name, column_name from information_schema.columns where table_schema=:schema and table_name = any(:tables) order by table_name, ordinal_position")
 _ALEMBIC_VERSION_SQL = text("select version_num from alembic_version order by version_num")
 
 
@@ -123,13 +204,7 @@ async def inspect_gateway_schema(engine: AsyncEngine) -> GatewaySchemaStatus:
                     observed_columns[table_name].add(column_name)
 
     missing_tables = tuple(sorted(REQUIRED_GATEWAY_TABLES - tables))
-    missing_columns = tuple(
-        sorted(
-            f"{table}.{column}"
-            for table, required_columns in REQUIRED_GATEWAY_COLUMNS.items()
-            for column in sorted(required_columns - observed_columns.get(table, set()))
-        )
-    )
+    missing_columns = tuple(sorted(f"{table}.{column}" for table, required_columns in REQUIRED_GATEWAY_COLUMNS.items() for column in sorted(required_columns - observed_columns.get(table, set()))))
     return GatewaySchemaStatus(
         current_revision=current_revision,
         missing_tables=missing_tables,
