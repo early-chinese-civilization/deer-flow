@@ -355,9 +355,60 @@ def test_validate_local_bash_command_paths_allows_skills_path() -> None:
         )
 
 
-def test_skill_load_uses_runtime_virtual_mapping_for_public_skill(tmp_path: Path) -> None:
+def test_local_bash_skills_paths_use_runtime_manifest_allowlist(tmp_path) -> None:
     skills_root = tmp_path / "skills"
-    skill_dir = skills_root / "public" / "sql-review"
+    artifact_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "probe-skill"
+    public_dir = skills_root / "public" / "probe-skill"
+    artifact_dir.mkdir(parents=True)
+    public_dir.mkdir(parents=True)
+    (artifact_dir / "SKILL.md").write_text("authorized", encoding="utf-8")
+    (public_dir / "SKILL.md").write_text("public latest", encoding="utf-8")
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "skills": [
+                    {
+                        "name": "probe-skill",
+                        "artifact_uri": "artifacts/skills/1/v1/probe-skill",
+                        "file_path": "artifacts/skills/1/v1/probe-skill",
+                        "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
+                        "skill_version_id": 101,
+                    }
+                ]
+            }
+        },
+        config={},
+    )
+
+    with (
+        patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"),
+        patch("deerflow.sandbox.tools._get_skills_host_path", return_value=str(skills_root)),
+    ):
+        validate_local_bash_command_paths(
+            "cat /mnt/skills/probe-skill/SKILL.md",
+            _THREAD_DATA,
+            runtime,
+        )
+        resolved = replace_virtual_paths_in_command(
+            "cat /mnt/skills/probe-skill/SKILL.md",
+            _THREAD_DATA,
+            runtime,
+        )
+        with pytest.raises(PermissionError, match="not available"):
+            validate_local_bash_command_paths(
+                "cat /mnt/skills/public/probe-skill/SKILL.md",
+                _THREAD_DATA,
+                runtime,
+            )
+
+    assert str(artifact_dir / "SKILL.md") in resolved
+    assert "public" not in resolved
+
+
+def test_skill_load_uses_runtime_virtual_mapping_for_manifest_artifact(tmp_path: Path) -> None:
+    skills_root = tmp_path / "skills"
+    skill_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "sql-review"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text("review sql", encoding="utf-8")
 
@@ -368,7 +419,8 @@ def test_skill_load_uses_runtime_virtual_mapping_for_public_skill(tmp_path: Path
                 "skills": [
                     {
                         "name": "sql-review",
-                        "file_path": "public/sql-review",
+                        "artifact_uri": "artifacts/skills/1/v1/sql-review",
+                        "file_path": "artifacts/skills/1/v1/sql-review",
                         "virtual_path": "/mnt/skills/sql-review/SKILL.md",
                         "skill_version_id": 1,
                     }
@@ -393,7 +445,7 @@ def test_skill_load_uses_runtime_virtual_mapping_for_public_skill(tmp_path: Path
 
 def test_skill_load_rejects_paths_not_in_runtime_allowlist(tmp_path: Path) -> None:
     skills_root = tmp_path / "skills"
-    skill_dir = skills_root / "public" / "sql-review"
+    skill_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "sql-review"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text("review sql", encoding="utf-8")
 
@@ -404,7 +456,8 @@ def test_skill_load_rejects_paths_not_in_runtime_allowlist(tmp_path: Path) -> No
                 "skills": [
                     {
                         "name": "sql-review",
-                        "file_path": "public/sql-review",
+                        "artifact_uri": "artifacts/skills/1/v1/sql-review",
+                        "file_path": "artifacts/skills/1/v1/sql-review",
                         "virtual_path": "/mnt/skills/sql-review/SKILL.md",
                         "skill_version_id": 1,
                     }
@@ -427,9 +480,47 @@ def test_skill_load_rejects_paths_not_in_runtime_allowlist(tmp_path: Path) -> No
     assert "Permission denied" in result
 
 
+def test_skill_load_rejects_manifest_artifact_traversal_to_public_latest(tmp_path: Path) -> None:
+    skills_root = tmp_path / "skills"
+    public_dir = skills_root / "public" / "sql-review"
+    public_dir.mkdir(parents=True)
+    (public_dir / "SKILL.md").write_text("public latest", encoding="utf-8")
+
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "skills": [
+                    {
+                        "name": "sql-review",
+                        "artifact_uri": "artifacts/../public/sql-review",
+                        "file_path": "artifacts/../public/sql-review",
+                        "virtual_path": "/mnt/skills/sql-review/SKILL.md",
+                        "skill_version_id": 1,
+                    }
+                ]
+            }
+        },
+        config={},
+    )
+
+    with (
+        patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"),
+        patch("deerflow.sandbox.tools._get_skills_host_path", return_value=str(skills_root)),
+    ):
+        result = skill_load_tool.func(
+            runtime=runtime,
+            description="load skill",
+            path="/mnt/skills/sql-review/SKILL.md",
+        )
+
+    assert "public latest" not in result
+    assert "Error:" in result
+
+
 def test_ls_uses_runtime_virtual_mapping_for_skill_directories(tmp_path: Path) -> None:
     skills_root = tmp_path / "skills"
-    skill_dir = skills_root / "7" / "table-tools"
+    skill_dir = skills_root / "artifacts" / "skills" / "2" / "v1" / "table-tools"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text("table skill", encoding="utf-8")
     (skill_dir / "notes.md").write_text("notes", encoding="utf-8")
@@ -441,7 +532,8 @@ def test_ls_uses_runtime_virtual_mapping_for_skill_directories(tmp_path: Path) -
                 "skills": [
                     {
                         "name": "table-tools",
-                        "file_path": "7/table-tools",
+                        "artifact_uri": "artifacts/skills/2/v1/table-tools",
+                        "file_path": "artifacts/skills/2/v1/table-tools",
                         "virtual_path": "/mnt/skills/table-tools/SKILL.md",
                         "skill_version_id": 1,
                     }
@@ -473,13 +565,15 @@ def test_ls_skills_root_lists_runtime_skill_directories() -> None:
                 "skills": [
                     {
                         "name": "chart-visualization",
-                        "file_path": "public/chart-visualization",
+                        "artifact_uri": "artifacts/skills/1/v1/chart-visualization",
+                        "file_path": "artifacts/skills/1/v1/chart-visualization",
                         "virtual_path": "/mnt/skills/chart-visualization/SKILL.md",
                         "skill_version_id": 1,
                     },
                     {
                         "name": "table-tools",
-                        "file_path": "7/table-tools",
+                        "artifact_uri": "artifacts/skills/2/v1/table-tools",
+                        "file_path": "artifacts/skills/2/v1/table-tools",
                         "virtual_path": "/mnt/skills/table-tools/SKILL.md",
                         "skill_version_id": 2,
                     },
@@ -510,7 +604,14 @@ def test_derive_skill_scope_returns_none_when_runtime_skills_are_missing() -> No
     assert derive_skill_scope_from_runtime(runtime) is None
 
 
-def test_derive_skill_scope_returns_none_for_manifest_artifacts() -> None:
+def test_derive_skill_scope_materializes_bundle_for_manifest_artifacts(tmp_path) -> None:
+    skills_root = tmp_path / "skills"
+    artifact_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "probe-skill"
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "SKILL.md").write_text("authorized", encoding="utf-8")
+    (skills_root / "public" / "probe-skill").mkdir(parents=True)
+    (skills_root / "public" / "probe-skill" / "SKILL.md").write_text("public latest", encoding="utf-8")
+
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
         context={
@@ -519,8 +620,11 @@ def test_derive_skill_scope_returns_none_for_manifest_artifacts() -> None:
                 "skills": [
                     {
                         "name": "probe-skill",
+                        "artifact_uri": "artifacts/skills/1/v1/probe-skill",
                         "file_path": "artifacts/skills/1/v1/probe-skill",
                         "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
+                        "skill_version_id": 101,
+                        "content_hash": "hash-v1",
                     }
                 ],
             }
@@ -528,10 +632,20 @@ def test_derive_skill_scope_returns_none_for_manifest_artifacts() -> None:
         config={},
     )
 
-    assert derive_skill_scope_from_runtime(runtime) is None
+    with patch(
+        "deerflow.sandbox.skill_scope._get_skills_root_path",
+        return_value=skills_root,
+    ):
+        scope = derive_skill_scope_from_runtime(runtime)
+
+    assert scope is not None
+    assert scope.startswith(".runtime-skill-bundles/")
+    bundle_dir = skills_root / scope
+    assert (bundle_dir / "probe-skill" / "SKILL.md").read_text(encoding="utf-8") == "authorized"
+    assert not (bundle_dir / "public" / "probe-skill" / "SKILL.md").exists()
 
 
-def test_derive_skill_scope_returns_public_for_public_skills() -> None:
+def test_derive_skill_scope_rejects_public_latest_artifact_uri() -> None:
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
         context={
@@ -540,8 +654,10 @@ def test_derive_skill_scope_returns_public_for_public_skills() -> None:
                 "skills": [
                     {
                         "name": "chart-visualization",
+                        "artifact_uri": "public/chart-visualization",
                         "file_path": "public/chart-visualization",
                         "virtual_path": "/mnt/skills/chart-visualization/SKILL.md",
+                        "skill_version_id": 1,
                     }
                 ],
             }
@@ -549,58 +665,59 @@ def test_derive_skill_scope_returns_public_for_public_skills() -> None:
         config={},
     )
 
-    assert derive_skill_scope_from_runtime(runtime) == "public"
-
-
-def test_derive_skill_scope_returns_private_scope_for_private_skills() -> None:
-    runtime = SimpleNamespace(
-        state={"thread_data": _THREAD_DATA.copy()},
-        context={
-            "runtime_agent": {
-                "user_id": 7,
-                "skills": [
-                    {
-                        "name": "table-tools",
-                        "file_path": "7/table-tools",
-                        "virtual_path": "/mnt/skills/table-tools/SKILL.md",
-                    }
-                ],
-            }
-        },
-        config={},
-    )
-
-    assert derive_skill_scope_from_runtime(runtime) == "7"
-
-
-def test_derive_skill_scope_rejects_mixed_public_and_private_skills() -> None:
-    runtime = SimpleNamespace(
-        state={"thread_data": _THREAD_DATA.copy()},
-        context={
-            "runtime_agent": {
-                "user_id": 7,
-                "skills": [
-                    {
-                        "name": "chart-visualization",
-                        "file_path": "public/chart-visualization",
-                        "virtual_path": "/mnt/skills/chart-visualization/SKILL.md",
-                    },
-                    {
-                        "name": "table-tools",
-                        "file_path": "7/table-tools",
-                        "virtual_path": "/mnt/skills/table-tools/SKILL.md",
-                    },
-                ],
-            }
-        },
-        config={},
-    )
-
-    with pytest.raises(SandboxRuntimeError, match="same scope"):
+    with pytest.raises(SandboxRuntimeError, match="immutable artifacts scope"):
         derive_skill_scope_from_runtime(runtime)
 
 
-def test_derive_skill_scope_rejects_malformed_skill_roots() -> None:
+def test_derive_skill_scope_rejects_private_latest_artifact_uri() -> None:
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "user_id": 7,
+                "skills": [
+                    {
+                        "name": "table-tools",
+                        "artifact_uri": "7/table-tools",
+                        "file_path": "7/table-tools",
+                        "virtual_path": "/mnt/skills/table-tools/SKILL.md",
+                        "skill_version_id": 1,
+                    }
+                ],
+            }
+        },
+        config={},
+    )
+
+    with pytest.raises(SandboxRuntimeError, match="immutable artifacts scope"):
+        derive_skill_scope_from_runtime(runtime)
+
+
+def test_derive_skill_scope_rejects_artifact_uri_traversal() -> None:
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "user_id": 7,
+                "skills": [
+                    {
+                        "name": "probe-skill",
+                        "artifact_uri": "artifacts/../public/probe-skill",
+                        "file_path": "artifacts/../public/probe-skill",
+                        "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
+                        "skill_version_id": 1,
+                    },
+                ],
+            }
+        },
+        config={},
+    )
+
+    with pytest.raises(SandboxRuntimeError, match="immutable artifacts scope"):
+        derive_skill_scope_from_runtime(runtime)
+
+
+def test_derive_skill_scope_rejects_missing_skill_version_id() -> None:
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
         context={
@@ -609,7 +726,8 @@ def test_derive_skill_scope_rejects_malformed_skill_roots() -> None:
                 "skills": [
                     {
                         "name": "broken",
-                        "file_path": "custom/broken-skill",
+                        "artifact_uri": "artifacts/skills/1/v1/broken-skill",
+                        "file_path": "artifacts/skills/1/v1/broken-skill",
                         "virtual_path": "/mnt/skills/broken/SKILL.md",
                     }
                 ],
@@ -618,11 +736,11 @@ def test_derive_skill_scope_rejects_malformed_skill_roots() -> None:
         config={},
     )
 
-    with pytest.raises(SandboxRuntimeError, match="invalid scope root"):
+    with pytest.raises(SandboxRuntimeError, match="missing skill_version_id"):
         derive_skill_scope_from_runtime(runtime)
 
 
-def test_derive_skill_scope_rejects_private_scope_user_mismatch() -> None:
+def test_derive_skill_scope_rejects_missing_artifact_uri() -> None:
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
         context={
@@ -633,6 +751,7 @@ def test_derive_skill_scope_rejects_private_scope_user_mismatch() -> None:
                         "name": "table-tools",
                         "file_path": "7/table-tools",
                         "virtual_path": "/mnt/skills/table-tools/SKILL.md",
+                        "skill_version_id": 1,
                     }
                 ],
             }
@@ -640,28 +759,7 @@ def test_derive_skill_scope_rejects_private_scope_user_mismatch() -> None:
         config={},
     )
 
-    with pytest.raises(SandboxRuntimeError, match="does not match"):
-        derive_skill_scope_from_runtime(runtime)
-
-
-def test_derive_skill_scope_rejects_private_scope_without_runtime_user_id() -> None:
-    runtime = SimpleNamespace(
-        state={"thread_data": _THREAD_DATA.copy()},
-        context={
-            "runtime_agent": {
-                "skills": [
-                    {
-                        "name": "table-tools",
-                        "file_path": "7/table-tools",
-                        "virtual_path": "/mnt/skills/table-tools/SKILL.md",
-                    }
-                ],
-            }
-        },
-        config={},
-    )
-
-    with pytest.raises(SandboxRuntimeError, match="user_id is required"):
+    with pytest.raises(SandboxRuntimeError, match="missing artifact_uri"):
         derive_skill_scope_from_runtime(runtime)
 
 
