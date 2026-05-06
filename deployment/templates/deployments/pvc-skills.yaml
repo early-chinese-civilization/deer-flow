@@ -1,0 +1,16 @@
+{{- if .Values.persistence.skills.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-skills
+  labels:
+    app.kubernetes.io/name: {{ include "deer-flow.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: {{ .Values.persistence.skills.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.skills.size }}
+{{- end }}

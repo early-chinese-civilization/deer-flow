@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  labels:
+    {{- include "deer-flow.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+{{ tpl (.Files.Get "files/config.yaml") . | indent 4 }}
+  extensions_config.json: |
+{{ tpl (.Files.Get "files/extensions_config.json") . | indent 4 }}

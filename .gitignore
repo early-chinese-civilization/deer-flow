@@ -23,6 +23,7 @@ venv/
 
 # Environment variables
 .env
+.env.production
 
 # Configuration files
 config.yaml
@@ -58,3 +59,4 @@ config.yaml.bak
 .playwright-mcp
 .agents
 .omx/
+deployment/values.production.yaml

@@ -1,0 +1,343 @@
+# Default values for deer-flow.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+image:
+  repository: deer-flow/backend
+  tag: latest
+  pullPolicy: IfNotPresent
+
+frontendImage:
+  repository: deer-flow/frontend
+  tag: latest
+  pullPolicy: IfNotPresent
+
+nginxImage:
+  repository: docker.m.daocloud.io/library/nginx
+  tag: alpine
+  pullPolicy: IfNotPresent
+
+# ============================================================
+# Image Pull Secrets
+# ============================================================
+imagePullSecrets: []
+# - name: acr-registry-secret
+
+# ============================================================
+# Pod Security
+# ============================================================
+security:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+# ============================================================
+# Ingress
+# ============================================================
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
+  hosts:
+    - host: deer-flow.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: deer-flow-tls
+  #    hosts:
+  #      - deer-flow.local
+
+# ============================================================
+# Horizontal Pod Autoscaler
+# ============================================================
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 75
+  targetMemoryUtilizationPercentage: 80
+
+# ============================================================
+# Pod Disruption Budget
+# ============================================================
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+  # maxUnavailable: 1
+
+# ============================================================
+# Gateway (FastAPI)
+# ============================================================
+gateway:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+  env: {}
+  #  GATEWAY_HOST: "0.0.0.0"
+  #  GATEWAY_PORT: "8001"
+  #  CORS_ORIGINS: "https://deer-flow.local"
+  #  DATABASE_URL: "postgresql+asyncpg://..."
+  #  DEER_FLOW_CHECKPOINTER_DATABASE_URL: "postgresql+asyncpg://..."
+  #  DEER_FLOW_DB_SCHEMA: "deer-flow"
+  #  KEYCLOAK_URL: "https://keycloak.local/realms/..."
+  #  KEYCLOAK_REALM: "..."
+  #  KEYCLOAK_CLIENT_ID: "..."
+  #  KEYCLOAK_CLIENT_SECRET: "..."
+  #  SESSION_SECRET_KEY: "..."
+  #  ALIYUN_OSS_ENDPOINT: "..."
+  #  ALIYUN_OSS_BUCKET: "..."
+  #  ALIYUN_OSS_ACCESS_KEY_ID: "..."
+  #  ALIYUN_OSS_ACCESS_KEY_SECRET: "..."
+  nodeSelector: {}
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - gateway
+            topologyKey: kubernetes.io/hostname
+
+# ============================================================
+# LangGraph
+# ============================================================
+langgraph:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+  env: {}
+  #  LANGSMITH_TRACING: "true"
+  #  LANGSMITH_ENDPOINT: "https://api.smith.langchain.com"
+  #  LANGSMITH_API_KEY: "..."
+  #  LANGSMITH_PROJECT: "..."
+  nodeSelector: {}
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - langgraph
+            topologyKey: kubernetes.io/hostname
+
+# ============================================================
+# Frontend (Next.js)
+# ============================================================
+frontend:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    capabilities:
+      drop:
+        - ALL
+  env: {}
+  #  DEER_FLOW_INTERNAL_GATEWAY_BASE_URL: "http://gateway:8001"
+  #  DEER_FLOW_INTERNAL_LANGGRAPH_BASE_URL: "http://langgraph:2024"
+  nodeSelector: {}
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - frontend
+            topologyKey: kubernetes.io/hostname
+
+# ============================================================
+# Nginx (reverse proxy, optional — Ingress can replace it)
+# ============================================================
+nginx:
+  containerSecurityContext:
+    allowPrivilegeEscalation: true
+    readOnlyRootFilesystem: false
+  nodeSelector: {}
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - nginx
+            topologyKey: kubernetes.io/hostname
+
+# ============================================================
+# Sandbox Provisioner (optional, for K8s-based sandbox isolation)
+# ============================================================
+provisioner:
+  enabled: true
+  replicas: 1
+  image:
+    repository: deer-flow/provisioner
+    tag: latest
+    pullPolicy: IfNotPresent
+  sandboxImage: enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest
+  sandboxResources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+      storage: 500Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+      storage: 500Mi
+  sandboxSecurityContext:
+    privileged: true
+    allowPrivilegeEscalation: true
+    runAsUser: 0
+  sandboxPort: 8080
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    capabilities:
+      drop:
+        - ALL
+  nodeSelector: {}
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - provisioner
+            topologyKey: kubernetes.io/hostname
+
+secret:
+  eccApiKey: ""
+  databaseUrl: ""
+  checkpointerDatabaseUrl: ""
+  dbSchema: "deer-flow"
+  keycloakUrl: ""
+  keycloakRealm: ""
+  keycloakClientId: ""
+  keycloakClientSecret: ""
+  sessionSecretKey: ""
+  betterAuthSecret: ""
+  aliyunIqsApiKey: ""
+  aliyunOssEndpoint: ""
+  aliyunOssBucket: ""
+  aliyunOssAccessKeyId: ""
+  aliyunOssAccessKeySecret: ""
+  aliyunOssSignedUrlExpiresSeconds: "3600"
+  keycloakTlsInsecure: "false"
+
+# ============================================================
+# Persistent Volumes
+# ============================================================
+persistence:
+  # DEER_FLOW_HOME — runtime data (memory.json, checkpointer, etc.)
+  data:
+    enabled: false
+    storageClass: ""
+    size: 10Gi
+    mountPath: /app/backend/.deer-flow
+  # Config — share config.yaml and extensions_config.json
+  config:
+    enabled: false
+    storageClass: ""
+    size: 1Gi
+    mountPath: /app/backend/config
+  # Skills — shared skills directory
+  skills:
+    enabled: false
+    storageClass: ""
+    size: 5Gi
+    mountPath: /app/skills
+
+# ============================================================
+# Service Account
+# ============================================================
+serviceAccount:
+  create: false
+  name: ""
+  annotations: {}
+
+# ============================================================
+# Health checks
+# ============================================================
+livenessProbe:
+  httpGet:
+    path: /health
+    port: gateway
+  initialDelaySeconds: 60
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: gateway
+  initialDelaySeconds: 30
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3

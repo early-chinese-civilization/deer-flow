@@ -1,4 +1,4 @@
-FROM python:3.12-slim-bookworm
+FROM docker.m.daocloud.io/library/python:3.12-slim-bookworm
 
 ARG APT_MIRROR
 
@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-RUN pip install --no-cache-dir \
+RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ \
     fastapi \
     "uvicorn[standard]" \
     kubernetes

@@ -1,0 +1,232 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [ 'main' ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ 'main' ]
+  workflow_dispatch:
+    inputs:
+      deploy_to_production:
+        description: 'Deploy to production cluster'
+        type: boolean
+        default: false
+
+env:
+  ACR_REGISTRY: novainspire-acr-registry.cn-wulanchabu.cr.aliyuncs.com
+  ACR_REGISTRY_VPC: novainspire-acr-registry-vpc.cn-wulanchabu.cr.aliyuncs.com
+  IMAGE_TAG: ${{ github.sha }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Build & Push Images ──────────────────────────────────────────────────
+  build-and-push:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        component: [ backend, frontend, provisioner ]
+      fail-fast: false
+    outputs:
+      image_tag: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Determine image tag
+        id: tags
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAGS="${{ env.ACR_REGISTRY }}/deer-flow/${{ matrix.component }}:${{ github.ref_name }},${{ env.ACR_REGISTRY }}/deer-flow/${{ matrix.component }}:latest"
+          else
+            TAGS="${{ env.ACR_REGISTRY }}/deer-flow/${{ matrix.component }}:${SHORT_SHA},${{ env.ACR_REGISTRY }}/deer-flow/${{ matrix.component }}:sha-${{ github.sha }}"
+          fi
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Build & Push Backend
+        if: matrix.component == 'backend'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./backend/Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+          build-args: |
+            APT_MIRROR=mirrors.aliyun.com
+
+      - name: Build & Push Frontend
+        if: matrix.component == 'frontend'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./frontend/Dockerfile
+          target: prod
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
+          build-args: |
+            NPM_REGISTRY=https://registry.npmmirror.com
+
+      - name: Build & Push Provisioner
+        if: matrix.component == 'provisioner'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./docker/provisioner
+          file: ./docker/provisioner/Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=provisioner
+          cache-to: type=gha,scope=provisioner,mode=max
+          build-args: |
+            APT_MIRROR=mirrors.aliyun.com
+
+      - name: Summary
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Component**: ${{ matrix.component }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tags**: ${{ steps.tags.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **SHA**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+
+  # ── Deploy to Staging ───────────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy to Staging
+    needs: [ build-and-push ]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.STAGING_KUBECONFIG }}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Deploy Helm chart
+        env:
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+        run: |
+          SHORT_SHA=$(echo "${IMAGE_TAG}" | cut -c1-8)
+
+          helm upgrade deer-flow-staging ./deployment \
+            --install \
+            --namespace bio-dev \
+            --create-namespace \
+            --values ./deployment/values.production.yaml \
+            --set image.repository=${{ env.ACR_REGISTRY_VPC }}/deer-flow/backend \
+            --set image.tag=${SHORT_SHA} \
+            --set image.pullPolicy=Always \
+            --set frontendImage.repository=${{ env.ACR_REGISTRY_VPC }}/deer-flow/frontend \
+            --set frontendImage.tag=${SHORT_SHA} \
+            --set frontendImage.pullPolicy=Always \
+            --set provisioner.image.repository=${{ env.ACR_REGISTRY_VPC }}/deer-flow/provisioner \
+            --set provisioner.image.tag=${SHORT_SHA} \
+            --set provisioner.image.pullPolicy=Always \
+            --wait \
+            --timeout 300s \
+            --debug
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/deer-flow-staging-gateway -n bio-dev --timeout=300s
+          kubectl rollout status deployment/deer-flow-staging-langgraph -n bio-dev --timeout=300s
+          kubectl rollout status deployment/deer-flow-staging-frontend -n bio-dev --timeout=300s
+          kubectl get pods -n bio-dev -l app.kubernetes.io/instance=deer-flow-staging
+
+  # ── Deploy to Production ────────────────────────────────────────────────
+  deploy-production:
+    name: Deploy to Production
+    needs: [ build-and-push ]
+    if: >
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_to_production == 'true') ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.PRODUCTION_KUBECONFIG }}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Deploy Helm chart
+        env:
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+        run: |
+          SHORT_SHA=$(echo "${IMAGE_TAG}" | cut -c1-8)
+
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            DEPLOY_TAG="${{ github.ref_name }}"
+          else
+            DEPLOY_TAG=${SHORT_SHA}
+          fi
+
+          helm upgrade deer-flow-prod ./deployment \
+            --install \
+            --namespace deer-flow \
+            --create-namespace \
+            --values ./deployment/values.production.yaml \
+            --set image.repository=${{ env.ACR_REGISTRY_VPC }}/deer-flow/backend \
+            --set image.tag=${DEPLOY_TAG} \
+            --set image.pullPolicy=Always \
+            --set frontendImage.repository=${{ env.ACR_REGISTRY_VPC }}/deer-flow/frontend \
+            --set frontendImage.tag=${DEPLOY_TAG} \
+            --set frontendImage.pullPolicy=Always \
+            --set provisioner.image.repository=${{ env.ACR_REGISTRY_VPC }}/deer-flow/provisioner \
+            --set provisioner.image.tag=${DEPLOY_TAG} \
+            --set provisioner.image.pullPolicy=Always \
+            --set ingress.hosts[0].host=deer-flow.ai4s.infly.tech \
+            --wait \
+            --timeout 600s \
+            --atomic \
+            --cleanup-on-fail
+
+      - name: Verify production deployment
+        run: |
+          kubectl rollout status deployment/deer-flow-prod-gateway -n deer-flow --timeout=600s
+          kubectl rollout status deployment/deer-flow-prod-langgraph -n deer-flow --timeout=600s
+          kubectl rollout status deployment/deer-flow-prod-frontend -n deer-flow --timeout=600s
+          kubectl get pods -n deer-flow -l app.kubernetes.io/instance=deer-flow-prod
+          kubectl get svc -n deer-flow
+          kubectl get ingress -n deer-flow
+
+      - name: Production deployment summary
+        run: |
+          echo "## Production Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image Tag**: ${{ needs.build-and-push.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Namespace**: deer-flow" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release**: deer-flow-prod" >> $GITHUB_STEP_SUMMARY
+          echo "- **URL**: https://deer-flow.ai4s.infly.tech" >> $GITHUB_STEP_SUMMARY

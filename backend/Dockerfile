@@ -4,7 +4,7 @@
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.7.20
 FROM ${UV_IMAGE} AS uv-source
 
-FROM python:3.12-slim-bookworm
+FROM docker.m.daocloud.io/library/python:3.12-slim-bookworm
 
 ARG NODE_MAJOR=22
 ARG APT_MIRROR
@@ -30,7 +30,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Docker CLI (for DooD: allows starting sandbox containers via host Docker socket)
-COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
+# Use apt instead of COPY --from=docker:cli for restricted network compatibility
+RUN apt-get update && apt-get install -y docker.io && rm -rf /var/lib/apt/lists/*
 
 # Install uv (source image overridable via UV_IMAGE build arg)
 COPY --from=uv-source /uv /uvx /usr/local/bin/
@@ -41,9 +42,8 @@ WORKDIR /app
 # Copy frontend source code
 COPY backend ./backend
 
-# Install dependencies with cache mount
-RUN --mount=type=cache,target=/root/.cache/uv \
-    sh -c "cd backend && UV_INDEX_URL=${UV_INDEX_URL:-https://pypi.org/simple} uv sync"
+# Install dependencies
+RUN sh -c "cd backend && UV_INDEX_URL=${UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple} uv sync"
 
 # Expose ports (gateway: 8001, langgraph: 2024)
 EXPOSE 8001 2024

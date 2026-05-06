@@ -1,0 +1,17 @@
+apiVersion: v2
+name: deer-flow
+description: A Helm chart for deploying DeerFlow AI Agent platform on Kubernetes
+type: application
+version: 0.2.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.24.0-0"
+maintainers:
+  - name: deer-flow-team
+sources:
+  - https://github.com/deer-flow/deer-flow
+keywords:
+  - ai
+  - agent
+  - langgraph
+  - langchain
+  - llm
