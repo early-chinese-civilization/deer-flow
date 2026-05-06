@@ -80,3 +80,7 @@ vendor/
 *.log
 .cache/
 tmp/
+
+AGENTS.md
+.trellis/
+.codex/
