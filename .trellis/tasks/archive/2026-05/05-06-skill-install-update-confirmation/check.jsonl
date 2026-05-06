@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify install update mutates only current_version_id and preserves runtime audit"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify unavailable state and no fallback behavior"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Verify update confirmation UI behavior and copy"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Verify API/domain type safety"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify frontend/backend/runtime state remains coherent"}

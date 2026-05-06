@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Backend app/harness ownership for update preview and runtime contracts"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "SkillInstall current_version update and affected Agent persistence contracts"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Unavailable install/version/artifact and no fallback behavior"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend pytest and API test conventions"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Update confirmation UI/dialog conventions"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Typed update preview/confirm API payloads"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Mutation/query invalidation for install update state"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer flow from publish latest to install update to runtime manifest"}
