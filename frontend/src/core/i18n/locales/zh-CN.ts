@@ -498,6 +498,7 @@ export const zhCN: Translations = {
       published: "已发布",
       unpublished: "未发布",
       officialSource: "官方 Skill",
+      communitySpaceSource: "社区",
       communitySource: (ownerDisplayName: string) =>
         `社区 Skill，作者 ${ownerDisplayName}`,
       installedSource: "已安装到我的 Skills",

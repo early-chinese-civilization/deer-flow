@@ -528,6 +528,7 @@ export const enUS: Translations = {
       published: "Published",
       unpublished: "Not published",
       officialSource: "Official Skill",
+      communitySpaceSource: "Community",
       communitySource: (ownerDisplayName: string) =>
         `Community Skill by ${ownerDisplayName}`,
       installedSource: "Installed in My Skills",

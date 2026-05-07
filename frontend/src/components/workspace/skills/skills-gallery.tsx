@@ -44,9 +44,14 @@ import {
 import {
   findInstalledSkillForSkillHubItem,
   getInstalledPlatformVersion,
+  getSkillDisplayContract,
   getSkillHubLatestPlatformVersion,
   getSkillInstallState,
   getSkillPlatformVersion,
+  isAuthoredSkillRelation,
+  isCommunitySkill,
+  isPersonalSkill,
+  isSelfAuthoredCommunitySkill,
   type SkillInstallState,
 } from "@/core/skills/display";
 import type { Skill } from "@/core/skills/type";
@@ -78,9 +83,7 @@ export function SkillsGallery() {
   );
 
   const filteredSkills = skills.filter((skill) =>
-    filter === "skillhub"
-      ? skill.category === "public"
-      : skill.category === "custom",
+    filter === "skillhub" ? isCommunitySkill(skill) : isPersonalSkill(skill),
   );
 
   function getVersionText(version: number | null) {
@@ -120,12 +123,21 @@ export function SkillsGallery() {
   }
 
   function getSkillSourceText(skill: Skill) {
-    if (skill.category === "public") {
+    const display = getSkillDisplayContract(skill);
+    if (display.sourceKind === "official") {
+      return t.settings.skills.officialSource;
+    }
+    if (display.space === "community") {
       return skill.owner_display_name
         ? t.settings.skills.communitySource(skill.owner_display_name)
-        : t.settings.skills.officialSource;
+        : t.settings.skills.communitySource(
+            t.settings.skills.communitySpaceSource,
+          );
     }
-    if (skill.skill_install_id != null) {
+    if (
+      display.viewerRelation === "downloaded" ||
+      display.viewerRelation === "update_available"
+    ) {
       return t.settings.skills.installedSource;
     }
     return t.settings.skills.createdSource;
@@ -358,23 +370,28 @@ export function SkillsGallery() {
         ) : (
           <div className="space-y-4">
             {filteredSkills.map((skill) => {
+              const display = getSkillDisplayContract(skill);
               const installedSkill = findInstalledSkillForSkillHubItem(
                 skill,
                 skills,
               );
               const installState = getSkillInstallState(skill, installedSkill);
+              const isSelfAuthoredCommunity =
+                isSelfAuthoredCommunitySkill(skill);
+              const canPublishSkill = isAuthoredSkillRelation(skill);
               const platformVersion =
-                skill.category === "public"
+                display.space === "community"
                   ? getSkillHubLatestPlatformVersion(skill)
                   : getSkillPlatformVersion(skill);
               const isInstallDisabled =
+                isSelfAuthoredCommunity ||
                 (installState !== "not-installed" &&
                   installState !== "update-available") ||
                 installSkillHubSkill.isPending;
 
               return (
                 <Item
-                  key={`${skill.category}-${skill.skill_definition_id ?? skill.owner_user_id ?? "system"}-${skill.name}`}
+                  key={display.identityKey}
                   className="w-full"
                   variant="outline"
                 >
@@ -395,18 +412,20 @@ export function SkillsGallery() {
                             : "outline"
                         }
                       >
-                        {skill.category === "public"
-                          ? getInstallStateText(installState)
+                        {display.space === "community"
+                          ? isSelfAuthoredCommunity
+                            ? t.settings.skills.published
+                            : getInstallStateText(installState)
                           : installState === "update-available"
                             ? t.settings.skills.updateAvailable
-                            : skill.release_status === "published"
+                            : display.viewerRelation === "authored_published"
                               ? t.settings.skills.published
                               : t.settings.skills.unpublished}
                       </Badge>
                     </div>
                     <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                       <span>
-                        {skill.category === "public"
+                        {display.space === "community"
                           ? getSkillHubVersionDetail(skill)
                           : getMySkillVersionDetail(skill)}
                       </span>
@@ -417,7 +436,7 @@ export function SkillsGallery() {
                     </ItemDescription>
                   </ItemContent>
                   <ItemActions>
-                    {skill.category === "public" ? (
+                    {display.space === "community" ? (
                       <Button
                         size="sm"
                         variant={
@@ -427,6 +446,9 @@ export function SkillsGallery() {
                         }
                         disabled={isInstallDisabled}
                         onClick={() => {
+                          if (isSelfAuthoredCommunity) {
+                            return;
+                          }
                           if (installState === "update-available") {
                             setUpdateCandidate(installedSkill ?? skill);
                             return;
@@ -436,7 +458,9 @@ export function SkillsGallery() {
                       >
                         {installSkillHubSkill.isPending
                           ? t.settings.skills.installPending
-                          : installState === "not-installed"
+                          : isSelfAuthoredCommunity
+                            ? t.settings.skills.published
+                            : installState === "not-installed"
                             ? t.settings.skills.installSkill
                             : getInstallStateText(installState)}
                       </Button>
@@ -468,14 +492,16 @@ export function SkillsGallery() {
                               {t.settings.skills.viewUpdate}
                             </DropdownMenuItem>
                           ) : null}
-                          <DropdownMenuItem
-                            onSelect={() => {
-                              setReleaseNotes("");
-                              setPublishCandidate(skill);
-                            }}
-                          >
-                            {t.settings.skills.publishSkill}
-                          </DropdownMenuItem>
+                          {canPublishSkill ? (
+                            <DropdownMenuItem
+                              onSelect={() => {
+                                setReleaseNotes("");
+                                setPublishCandidate(skill);
+                              }}
+                            >
+                              {t.settings.skills.publishSkill}
+                            </DropdownMenuItem>
+                          ) : null}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     )}

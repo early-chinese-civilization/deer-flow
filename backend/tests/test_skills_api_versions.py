@@ -28,8 +28,24 @@ def _user() -> User:
     return User(id=7, external_auth_id="sub", username="alice", display_name="Alice")
 
 
-def _definition() -> SkillDefinition:
-    return SkillDefinition(id=100, name="demo-skill", display_name="demo-skill", description="Demo skill")
+def _definition(
+    *,
+    definition_id: int = 100,
+    owner_user_id: int | None = 7,
+    source_type: str = "user",
+    source_identifier: str = "7",
+    owner_user: User | None = None,
+) -> SkillDefinition:
+    return SkillDefinition(
+        id=definition_id,
+        name="demo-skill",
+        display_name="demo-skill",
+        description="Demo skill",
+        owner_user_id=owner_user_id,
+        source_type=source_type,
+        source_identifier=source_identifier,
+        owner_user=owner_user,
+    )
 
 
 def _version(version_number: int, *, definition: SkillDefinition | None = None) -> SkillVersion:
@@ -87,6 +103,149 @@ def _release(published_skill_id: int, version: SkillVersion | None = None) -> Sk
     release.skill_version = version
     release.publisher_user = User(id=7, external_auth_id="sub", username="alice", display_name="Alice")
     return release
+
+
+def test_skill_response_relation_matrix():
+    current_user = _user()
+    other_user = User(id=8, external_auth_id="sub-8", username="bob", display_name="Bob")
+    official_definition = _definition(definition_id=101, owner_user_id=None, source_type="legacy", source_identifier="legacy")
+    official_public = _public_skill(101, "official-skill")
+    official_public.owner_user_id = None
+    official_public.definition = official_definition
+
+    official_response = skills_router._skill_to_response(official_public, skill_version=_version(1, definition=official_definition), current_user_id=current_user.id)
+    assert official_response.space == "community"
+    assert official_response.source_kind == "official"
+    assert official_response.viewer_relation == "official_available"
+    assert official_response.owner_display_name == "official"
+
+    community_definition = _definition(definition_id=102, owner_user_id=8, source_type="user", source_identifier="8", owner_user=other_user)
+    community_public = _public_skill(102, "community-skill")
+    community_public.owner_user_id = 8
+    community_public.owner_user = other_user
+    community_response = skills_router._skill_to_response(community_public, skill_version=_version(1, definition=community_definition), current_user_id=current_user.id)
+    assert community_response.space == "community"
+    assert community_response.source_kind == "community"
+    assert community_response.viewer_relation == "community_available"
+    assert community_response.owner_display_name == "Bob"
+
+    missing_owner_public = _public_skill(108, "missing-owner-community-skill")
+    missing_owner_public.owner_user_id = None
+    missing_owner_response = skills_router._skill_to_response(
+        missing_owner_public,
+        skill_version=_version(1, definition=community_definition),
+        current_user_id=current_user.id,
+    )
+    assert missing_owner_response.source_kind == "community"
+    assert missing_owner_response.viewer_relation == "community_available"
+    assert missing_owner_response.owner_display_name == "Bob"
+
+    self_public = _public_skill(103, "self-skill")
+    self_public.owner_user = current_user
+    self_response = skills_router._skill_to_response(self_public, release=_release(103), skill_version=_version(1), current_user_id=current_user.id)
+    assert self_response.space == "community"
+    assert self_response.source_kind == "community"
+    assert self_response.viewer_relation == "authored_published"
+
+    self_legacy_response = skills_router._skill_to_response(self_public, current_user_id=current_user.id)
+    assert self_legacy_response.source_kind == "community"
+    assert self_legacy_response.viewer_relation == "authored_published"
+
+    downloaded_version = _version(1, definition=community_definition)
+    downloaded = _custom_skill(104, "community-skill")
+    downloaded.definition = community_definition
+    downloaded_install = _install(downloaded_version)
+    downloaded_install.skill_definition_id = community_definition.id
+    downloaded_install.definition = community_definition
+    downloaded_response = skills_router._skill_to_response(downloaded, skill_version=downloaded_version, skill_install=downloaded_install, current_user_id=current_user.id)
+    assert downloaded_response.space == "personal"
+    assert downloaded_response.source_kind == "community"
+    assert downloaded_response.viewer_relation == "downloaded"
+
+    authored = _custom_skill(105, "authored-skill")
+    authored.definition = _definition()
+    authored_response = skills_router._skill_to_response(authored, skill_version=_version(1), skill_install=_install(_version(1)), current_user_id=current_user.id)
+    assert authored_response.space == "personal"
+    assert authored_response.source_kind == "personal"
+    assert authored_response.viewer_relation == "authored"
+
+    published_response = skills_router._skill_to_response(
+        authored,
+        release=_release(105, _version(1)),
+        skill_version=_version(1),
+        skill_install=_install(_version(1)),
+        latest_skill_version=_version(1),
+        current_user_id=current_user.id,
+    )
+    assert published_response.viewer_relation == "authored_published"
+
+    v1 = _version(1)
+    v2 = _version(2, definition=v1.definition)
+    unpublished_install = _install(v2)
+    unpublished_response = skills_router._skill_to_response(
+        authored,
+        release=_release(105, v1),
+        skill_version=v2,
+        skill_install=unpublished_install,
+        latest_skill_version=v1,
+        current_user_id=current_user.id,
+    )
+    assert unpublished_response.viewer_relation == "authored_unpublished_changes"
+    assert unpublished_response.update_available is None
+
+    fork_definition = _definition(definition_id=106, owner_user_id=7, source_type="fork", source_identifier="source:102")
+    forked = _custom_skill(106, "forked-skill")
+    forked.definition = fork_definition
+    forked_response = skills_router._skill_to_response(forked, skill_version=_version(1, definition=fork_definition), current_user_id=current_user.id)
+    assert forked_response.source_kind == "fork"
+    assert forked_response.viewer_relation == "forked"
+
+    latest_version = _version(2, definition=community_definition)
+    downloaded_install.current_version = downloaded_version
+    downloaded_install.current_version_id = downloaded_version.id
+    update_response = skills_router._skill_to_response(
+        downloaded,
+        skill_version=downloaded_version,
+        skill_install=downloaded_install,
+        latest_skill_version=latest_version,
+        current_user_id=current_user.id,
+    )
+    assert update_response.viewer_relation == "update_available"
+    assert update_response.current_platform_version == 1
+    assert update_response.latest_platform_version == 2
+
+
+def test_skill_response_legacy_public_fallback_is_official():
+    legacy_public = _public_skill(107, "legacy-skill")
+    legacy_public.owner_user_id = None
+    response = skills_router._skill_to_response(legacy_public, current_user_id=_user().id)
+
+    assert response.space == "community"
+    assert response.source_kind == "official"
+    assert response.viewer_relation == "official_available"
+    assert response.owner_display_name == "official"
+
+
+def test_skill_response_preserves_same_name_different_source_identity():
+    bob = User(id=8, external_auth_id="sub-8", username="bob", display_name="Bob")
+    carol = User(id=9, external_auth_id="sub-9", username="carol", display_name="Carol")
+    bob_definition = _definition(definition_id=201, owner_user_id=8, source_type="user", source_identifier="8", owner_user=bob)
+    carol_definition = _definition(definition_id=202, owner_user_id=9, source_type="user", source_identifier="9", owner_user=carol)
+    bob_public = _public_skill(201, "same-skill")
+    bob_public.owner_user_id = 8
+    bob_public.owner_user = bob
+    carol_public = _public_skill(202, "same-skill")
+    carol_public.owner_user_id = 9
+    carol_public.owner_user = carol
+
+    bob_response = skills_router._skill_to_response(bob_public, skill_version=_version(1, definition=bob_definition), current_user_id=7)
+    carol_response = skills_router._skill_to_response(carol_public, skill_version=_version(1, definition=carol_definition), current_user_id=7)
+
+    assert bob_response.name == carol_response.name
+    assert bob_response.skill_definition_id == 201
+    assert carol_response.skill_definition_id == 202
+    assert bob_response.owner_display_name == "Bob"
+    assert carol_response.owner_display_name == "Carol"
 
 
 def test_list_skills_uses_platform_version_for_public_and_install_rows(monkeypatch):

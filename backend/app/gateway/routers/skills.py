@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -37,6 +38,19 @@ router = APIRouter(prefix="/api", tags=["skills"])
 
 ALLOWED_SKILL_FRONTMATTER_KEYS = ALLOWED_FRONTMATTER_PROPERTIES
 
+SkillSpace = Literal["community", "personal"]
+SkillSourceKind = Literal["official", "community", "personal", "fork"]
+SkillViewerRelation = Literal[
+    "official_available",
+    "community_available",
+    "downloaded",
+    "authored",
+    "authored_published",
+    "authored_unpublished_changes",
+    "update_available",
+    "forked",
+]
+
 
 class SkillResponse(BaseModel):
     """Response model for skill information."""
@@ -45,6 +59,9 @@ class SkillResponse(BaseModel):
     description: str = Field(..., description="Description of what the skill does")
     license: str | None = Field(None, description="License information")
     category: str = Field(..., description="Category of the skill (public or custom)")
+    space: SkillSpace = Field(..., description="User-facing space for this row")
+    source_kind: SkillSourceKind = Field(..., description="User-facing source kind for display")
+    viewer_relation: SkillViewerRelation = Field(..., description="Current user's relation to this row")
     enabled: bool = Field(default=True, description="Whether this skill is enabled")
     owner_user_id: int | None = Field(default=None, description="Publisher user ID for public skills")
     owner_display_name: str | None = Field(default=None, description="Publisher display name for public skills")
@@ -65,6 +82,79 @@ class SkillResponse(BaseModel):
     release_status: str | None = Field(default=None, description="Release status")
     release_notes: str | None = Field(default=None, description="Optional notes attached to the publish event")
     published_at: str | None = Field(default=None, description="Release publish timestamp")
+
+
+def _display_name_for_user(user: User | None) -> str | None:
+    if user is None:
+        return None
+    display_name = (user.display_name or "").strip()
+    return display_name or user.username
+
+
+def _is_official_skill_source(skill: Skill, definition: SkillDefinition | None) -> bool:
+    if definition is not None:
+        return definition.source_type == "legacy" and definition.source_identifier == "legacy"
+    return skill.user_id is None and skill.owner_user_id is None
+
+
+def _is_authored_by_current_user(skill: Skill, definition: SkillDefinition | None, current_user_id: int | None) -> bool:
+    if current_user_id is None:
+        return False
+    if definition is not None:
+        return definition.owner_user_id == current_user_id
+    if skill.user_id is None:
+        return skill.owner_user_id == current_user_id
+    return skill.user_id == current_user_id
+
+
+def _derive_skill_source_kind(
+    *,
+    skill: Skill,
+    definition: SkillDefinition | None,
+    space: SkillSpace,
+    authored_by_current_user: bool,
+) -> SkillSourceKind:
+    if _is_official_skill_source(skill, definition):
+        return "official"
+    if definition is not None and definition.source_type == "fork":
+        return "fork"
+    if space == "personal" and authored_by_current_user:
+        return "personal"
+    return "community"
+
+
+def _derive_skill_viewer_relation(
+    *,
+    space: SkillSpace,
+    source_kind: SkillSourceKind,
+    authored_by_current_user: bool,
+    release: SkillRelease | None,
+    skill_version: SkillVersion | None,
+    latest_skill_version: SkillVersion | None,
+    update_available: bool | None,
+) -> SkillViewerRelation:
+    if source_kind == "fork":
+        return "forked"
+
+    if space == "community":
+        if authored_by_current_user:
+            return "authored_published"
+        if update_available is True:
+            return "update_available"
+        if source_kind == "official":
+            return "official_available"
+        return "community_available"
+
+    if authored_by_current_user:
+        if release is not None and skill_version is not None and latest_skill_version is not None and latest_skill_version.id != skill_version.id:
+            return "authored_unpublished_changes"
+        if release is not None and release.status == "published":
+            return "authored_published"
+        return "authored"
+
+    if update_available is True:
+        return "update_available"
+    return "downloaded"
 
 
 class SkillsListResponse(BaseModel):
@@ -205,13 +295,9 @@ def _skill_to_response(
     skill_version: SkillVersion | None = None,
     skill_install: SkillInstall | None = None,
     latest_skill_version: SkillVersion | None = None,
+    current_user_id: int | None = None,
 ) -> SkillResponse:
     """Convert a database skill row to the API response model."""
-    owner_display_name = None
-    if skill.user_id is None and skill.owner_user_id is not None and skill.owner_user is not None:
-        display_name = (skill.owner_user.display_name or "").strip()
-        owner_display_name = display_name or skill.owner_user.username
-
     release_package_version = getattr(release, "package_version", None) if release is not None else None
     version_source_package = None
     if skill_version is not None:
@@ -228,15 +314,42 @@ def _skill_to_response(
     current_platform_version = skill_install.current_version.version_number if skill_install is not None and skill_install.current_version is not None else None
     installed_platform_version = skill_install.installed_version.version_number if skill_install is not None and skill_install.installed_version is not None else current_platform_version
     latest_platform_version = latest_skill_version.version_number if latest_skill_version is not None else None
+    space: SkillSpace = "community" if skill.user_id is None else "personal"
+    authored_by_current_user = _is_authored_by_current_user(skill, definition, current_user_id)
     update_available = None
-    if skill_install is not None and latest_skill_version is not None:
+    if skill_install is not None and latest_skill_version is not None and not authored_by_current_user:
         update_available = skill_install.current_version_id != latest_skill_version.id
+    source_kind = _derive_skill_source_kind(
+        skill=skill,
+        definition=definition,
+        space=space,
+        authored_by_current_user=authored_by_current_user,
+    )
+    viewer_relation = _derive_skill_viewer_relation(
+        space=space,
+        source_kind=source_kind,
+        authored_by_current_user=authored_by_current_user,
+        release=release,
+        skill_version=skill_version,
+        latest_skill_version=latest_skill_version,
+        update_available=update_available,
+    )
+    owner_display_name = _display_name_for_user(skill.owner_user)
+    if owner_display_name is None and release is not None:
+        owner_display_name = _display_name_for_user(release.publisher_user)
+    if owner_display_name is None and definition is not None:
+        owner_display_name = _display_name_for_user(definition.owner_user)
+    if source_kind == "official":
+        owner_display_name = owner_display_name or "official"
 
     return SkillResponse(
         name=skill.name,
         description=skill.description or "",
         license=None,
         category="public" if skill.user_id is None else "custom",
+        space=space,
+        source_kind=source_kind,
+        viewer_relation=viewer_relation,
         enabled=True,
         owner_user_id=skill.owner_user_id,
         owner_display_name=owner_display_name,
@@ -292,7 +405,7 @@ async def _skill_to_response_with_metadata(db: AsyncSession, skill: Skill, *, cu
             if current_user_id is not None and skill_version is not None
             else None
         )
-        return _skill_to_response(skill, release=release, skill_version=skill_version, skill_install=install, latest_skill_version=skill_version)
+        return _skill_to_response(skill, release=release, skill_version=skill_version, skill_install=install, latest_skill_version=skill_version, current_user_id=current_user_id)
     install = None
     if skill.user_id is not None:
         if skill.skill_definition_id is not None:
@@ -309,8 +422,8 @@ async def _skill_to_response_with_metadata(db: AsyncSession, skill: Skill, *, cu
             skill_definition_id=install.skill_definition_id,
         )
         latest_version = latest_release.skill_version if latest_release is not None else None
-        return _skill_to_response(skill, release=latest_release, skill_version=install.current_version, skill_install=install, latest_skill_version=latest_version)
-    return _skill_to_response(skill, package_version=_extract_package_version_for_skill(skill))
+        return _skill_to_response(skill, release=latest_release, skill_version=install.current_version, skill_install=install, latest_skill_version=latest_version, current_user_id=current_user_id)
+    return _skill_to_response(skill, package_version=_extract_package_version_for_skill(skill), current_user_id=current_user_id)
 
 
 def _extract_frontmatter(skill_md_path: Path) -> dict:
@@ -1174,7 +1287,7 @@ async def download_skill(
             user_id=current_user.id,
             skill_definition_id=version.skill_definition_id,
         )
-        return _skill_to_response(refreshed_skill, release=source_release, skill_version=version, skill_install=refreshed_install or install)
+        return _skill_to_response(refreshed_skill, release=source_release, skill_version=version, skill_install=refreshed_install or install, current_user_id=current_user.id)
     except HTTPException:
         await db.rollback()
         raise
@@ -1357,7 +1470,7 @@ async def publish_skill(
         refreshed_skill = await SkillRepository.get_skill_by_id(db, published_skill.id)
         if refreshed_skill is None:
             raise HTTPException(status_code=500, detail=f"Failed to load published skill '{skill_name}'")
-        return _skill_to_response(refreshed_skill, release=release, skill_version=current_version)
+        return _skill_to_response(refreshed_skill, release=release, skill_version=current_version, current_user_id=current_user.id)
     except HTTPException as exc:
         await db.rollback()
         if not artifact_committed and target_dir is not None and backup_temp is not None:
@@ -1443,7 +1556,7 @@ async def update_skill(
             updated_skill = await SkillRepository.touch_user_skill(db, user_id=current_user.id, name=skill_name)
             if updated_skill is None:
                 raise HTTPException(status_code=500, detail=f"Failed to refresh skill '{skill_name}'")
-            return _skill_to_response(updated_skill)
+            return await _skill_to_response_with_metadata(db, updated_skill, current_user_id=current_user.id)
 
         public_skill = await SkillRepository.get_public_skill_by_name(db, name=skill_name)
         if public_skill is not None:
