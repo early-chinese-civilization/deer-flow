@@ -487,6 +487,7 @@ export const zhCN: Translations = {
       mySkillsTab: "我的 Skills",
       communitySpaceTab: "社区空间",
       personalSpaceTab: "我的空间",
+      communitySearchPlaceholder: "按名称或作者搜索社区 Skill",
       allSegment: "全部",
       downloadedSegment: "已添加",
       authoredSegment: "我的 Skill",
@@ -554,6 +555,7 @@ export const zhCN: Translations = {
         `技能“${skillName}”已存在，是否覆盖？`,
       noMySkills: "我的空间还没有 Skill。",
       noSkillHubSkills: "SkillHub 暂无可用 Skill。",
+      noCommunitySearchResults: "没有匹配的社区 Skill。",
     },
     notification: {
       title: "通知",

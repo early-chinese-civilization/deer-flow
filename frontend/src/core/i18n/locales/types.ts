@@ -429,6 +429,7 @@ export interface Translations {
       mySkillsTab: string;
       communitySpaceTab: string;
       personalSpaceTab: string;
+      communitySearchPlaceholder: string;
       allSegment: string;
       downloadedSegment: string;
       authoredSegment: string;
@@ -490,6 +491,7 @@ export interface Translations {
       conflictConfirm: (skillName: string) => string;
       noMySkills: string;
       noSkillHubSkills: string;
+      noCommunitySearchResults: string;
     };
     notification: {
       title: string;
