@@ -12,11 +12,10 @@ export type SkillInstallState =
 
 export type SkillWorkspaceSegment =
   | "all"
+  | "system"
   | "downloaded"
   | "authored"
-  | "published"
-  | "updates"
-  | "forks";
+  | "updates";
 
 export type SkillWorkspaceCardRole =
   | "official-community"
@@ -212,41 +211,25 @@ export function getSkillWorkspaceCardState(
 
   if (display.space === "community") {
     const installState = getSkillInstallState(skill, installedSkill);
+    if (display.sourceKind === "official") {
+      segments.add("system");
+    }
 
     if (isSelfAuthoredCommunitySkill(skill)) {
-      segments.add("authored");
-      segments.add("published");
-      if (display.viewerRelation === "authored_unpublished_changes") {
-        segments.add("updates");
-      }
       return {
         role: "self-published-community",
-        primaryAction: "manage-published",
+        primaryAction: "none",
         segments: Array.from(segments),
       };
     }
 
-    if (installState === "update-available") {
-      segments.add("downloaded");
-      segments.add("updates");
+    if (installState !== "not-installed") {
       return {
         role:
           display.sourceKind === "official"
             ? "official-community"
             : "community",
-        primaryAction: "view-update",
-        segments: Array.from(segments),
-      };
-    }
-
-    if (installState === "installed") {
-      segments.add("downloaded");
-      return {
-        role:
-          display.sourceKind === "official"
-            ? "official-community"
-            : "community",
-        primaryAction: "view-personal",
+        primaryAction: "none",
         segments: Array.from(segments),
       };
     }
@@ -280,7 +263,6 @@ export function getSkillWorkspaceCardState(
 
   if (display.viewerRelation === "forked") {
     segments.add("authored");
-    segments.add("forks");
     return {
       role: "forked",
       primaryAction: "publish",
@@ -290,7 +272,6 @@ export function getSkillWorkspaceCardState(
 
   if (display.viewerRelation === "authored_unpublished_changes") {
     segments.add("authored");
-    segments.add("published");
     segments.add("updates");
     return {
       role: "authored-unpublished-changes",
@@ -301,7 +282,6 @@ export function getSkillWorkspaceCardState(
 
   if (display.viewerRelation === "authored_published") {
     segments.add("authored");
-    segments.add("published");
     return {
       role: "authored-published",
       primaryAction: "manage-owned",
