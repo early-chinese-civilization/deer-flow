@@ -1,12 +1,22 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { AlertCircleIcon, PlusIcon } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { parseAsString, useQueryStates } from "nuqs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
+import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import { AgentWelcome } from "@/components/workspace/agent-welcome";
 import {
   ChatBox,
@@ -30,7 +40,7 @@ import { useAgent, useAgents } from "@/core/agents";
 import { useI18n } from "@/core/i18n/hooks";
 import { useNotification } from "@/core/notification/hooks";
 import { useThreadSettings } from "@/core/settings";
-import { getThread } from "@/core/threads/api";
+import { getThread, isThreadApiError } from "@/core/threads/api";
 import { useThreadStream } from "@/core/threads/hooks";
 import { textOfMessage } from "@/core/threads/utils";
 import {
@@ -108,6 +118,10 @@ export function SharedChatPage({
     enabled: !isNewThread,
     refetchOnWindowFocus: false,
   });
+  const isThreadNotFound =
+    !isNewThread &&
+    isThreadApiError(threadDetailQuery.error) &&
+    threadDetailQuery.error.status === 404;
 
   const persistedAgentName = useMemo(() => {
     if (isNewThread || !threadDetailQuery.data) {
@@ -137,7 +151,8 @@ export function SharedChatPage({
   });
 
   const [thread, sendMessage, isSendingMessage] = useThreadStream({
-    threadId: isNewThread ? undefined : threadId,
+    threadId:
+      !isNewThread && threadDetailQuery.isSuccess ? threadId : undefined,
     context: submitContext,
     isMock,
     onStart: (resolvedThreadId) => {
@@ -284,6 +299,30 @@ export function SharedChatPage({
     env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ||
     isSendingMessage ||
     (!isNewThread && !threadDetailQuery.isSuccess);
+
+  if (isThreadNotFound) {
+    return (
+      <div className="flex size-full items-center justify-center p-6">
+        <Empty className="border-0">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <AlertCircleIcon />
+            </EmptyMedia>
+            <EmptyTitle>{t.conversation.threadNotFound}</EmptyTitle>
+            <EmptyDescription>
+              {t.conversation.threadNotFoundDescription}
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button onClick={() => router.replace("/workspace/chats/new")}>
+              <PlusIcon />
+              {t.conversation.startNewConversation}
+            </Button>
+          </EmptyContent>
+        </Empty>
+      </div>
+    );
+  }
 
   return (
     <ThreadContext.Provider
