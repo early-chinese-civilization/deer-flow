@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
-- **Last Active**: 2026-05-06
+- **Total Sessions**: 9
+- **Last Active**: 2026-05-07
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~274 | Active |
+| `journal-1.md` | ~342 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-05-07 | 收口 skill-version 当前任务 | `e509011`, `2b9f355`, `9e0e1cf` | `feature/skill-version` |
+| 8 | 2026-05-07 | Skill runtime sandbox hardening | `2b9f355` | `feature/skill-version` |
 | 7 | 2026-05-06 | Skill install update confirmation | `48975c1` | `feature/skill-version` |
 | 6 | 2026-05-06 | SkillHub and My Skills product surface | `9838dab`, `3451871` | `feature/skill-version` |
 | 5 | 2026-05-06 | Skills max-flow backend truth test | `9e0e1cf`, `55f3356` | `feature/skill-version` |

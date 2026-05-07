@@ -272,3 +272,71 @@ Implemented explicit Skill install update preview and confirmation, including af
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Skill runtime sandbox hardening
+
+**Date**: 2026-05-07
+**Task**: Skill runtime sandbox hardening
+**Branch**: `feature/skill-version`
+
+### Summary
+
+Hardened Manifest-backed Skill sandbox access by materializing authorized runtime bundles, denying public/latest and traversal fallbacks, and adding backend sandbox/tool regression coverage.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2b9f355` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 9: 收口 skill-version 当前任务
+
+**Date**: 2026-05-07
+**Task**: 收口 skill-version 当前任务
+**Branch**: `feature/skill-version`
+
+### Summary
+
+归档 Skills max-flow backend truth/probe test 与下一阶段规划任务；确认 Runtime Manifest artifact truth、sandbox authorization 和 max-flow backend truth 测试已落地，质量门已通过，知识文档无需新增更新。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e509011` | (see git log) |
+| `2b9f355` | (see git log) |
+| `9e0e1cf` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
