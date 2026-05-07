@@ -104,6 +104,7 @@ async def _load_runtime_agent_payload(*, user_id: int, agent_name: str | None) -
         "user_id": bundle.user_id,
         "agent_name": bundle.agent_name,
         "manifest_id": bundle.manifest_id,
+        "manifest_hash": bundle.manifest_hash,
         "memory": bundle.memory_json,
         "soul": bundle.soul,
         "skills": [
@@ -117,6 +118,7 @@ async def _load_runtime_agent_payload(*, user_id: int, agent_name: str | None) -
                 "skill_install_id": skill.skill_install_id,
                 "version_number": skill.version_number,
                 "content_hash": skill.content_hash,
+                "file_manifest_hash": skill.file_manifest_hash,
                 "artifact_uri": skill.artifact_uri,
                 "source_package_version": skill.source_package_version,
             }

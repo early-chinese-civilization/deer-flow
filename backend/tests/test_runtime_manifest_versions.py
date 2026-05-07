@@ -13,16 +13,18 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.gateway.db.models import Agent, AgentSkill, RuntimeManifest, Skill, SkillDefinition, SkillInstall, SkillRelease, SkillVersion, User
-from app.gateway.db.repository import AgentRepository, MemoryRepository, RuntimeManifestResolutionError
+from app.gateway.db.repository import AgentRepository, MemoryRepository, RuntimeManifestResolutionError, build_runtime_manifest_hash
 from app.gateway.routers import agents as agents_router
 from app.gateway.routers import skills as skills_router
 from deerflow.sandbox.tools import skill_load_tool
+from deerflow.skills.hashing import hash_skill_file_manifest
 
 
-def _write_artifact(skills_root: Path, artifact_uri: str, marker: str) -> None:
+def _write_artifact(skills_root: Path, artifact_uri: str, marker: str) -> str:
     artifact_dir = skills_root / artifact_uri
     artifact_dir.mkdir(parents=True)
     (artifact_dir / "SKILL.md").write_text(marker, encoding="utf-8")
+    return hash_skill_file_manifest(artifact_dir)
 
 
 def _runtime_config(skills_root: Path):
@@ -475,7 +477,6 @@ def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_
 
         with (
             patch.object(Path, "glob", fail_scan),
-            patch.object(Path, "rglob", fail_scan),
         ):
             bundle = asyncio.run(
                 AgentRepository.get_runtime_agent_bundle(
@@ -492,6 +493,7 @@ def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_
             missing_denied = _load_skill(runtime, skills_root, "/mnt/skills/missing-artifact/probe-skill/SKILL.md")
 
         assert bundle.manifest_id == str(manifest.id)
+        assert bundle.manifest_hash == manifest.manifest_hash
         assert bundle.skills[0].skill_version_id == expected_version_id
         return manifest, loaded, public_denied, legacy_denied, missing_denied
 
@@ -571,9 +573,11 @@ def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_
         assert before_entry["skill_version_id"] == v1.id
         assert before_entry["skill_install_id"] == installer_install.id
         assert before_entry["version_number"] == 1
+        assert before_entry["file_manifest_hash"] == v1.file_manifest_hash
         assert before_entry["artifact_uri"] == v1.artifact_uri
         assert before_entry["file_path"] == v1.artifact_uri
         assert before_entry["source_package_version"] == "99.0.0"
+        assert before_update_manifest.manifest_hash == build_runtime_manifest_hash(before_update_manifest.manifest_json)
         assert "SKILL_RUNTIME_OK_V1" in before_update_load
         assert "SKILL_RUNTIME_OK_V2" not in before_update_load
         assert "SKILL_RUNTIME_OK_V2_SAME_NAME_ROOT" not in before_update_load
@@ -595,9 +599,11 @@ def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_
         assert after_entry["skill_version_id"] == v2.id
         assert after_entry["skill_install_id"] == installer_install.id
         assert after_entry["version_number"] == 2
+        assert after_entry["file_manifest_hash"] == v2.file_manifest_hash
         assert after_entry["artifact_uri"] == v2.artifact_uri
         assert after_entry["file_path"] == v2.artifact_uri
         assert after_entry["source_package_version"] == "100.0.0"
+        assert after_update_manifest.manifest_hash == build_runtime_manifest_hash(after_update_manifest.manifest_json)
         assert "SKILL_RUNTIME_OK_V2" in after_update_load
         assert "SKILL_RUNTIME_OK_V1" not in after_update_load
         assert "SKILL_RUNTIME_OK_V2_SAME_NAME_ROOT" not in after_update_load
@@ -629,6 +635,7 @@ def _runtime_for_manifest(tmp_path: Path, manifest) -> SimpleNamespace:
         context={
             "runtime_agent": {
                 "manifest_id": str(manifest.id),
+                "manifest_hash": manifest.manifest_hash,
                 "skills": manifest.manifest_json["skills"],
             }
         },
@@ -652,8 +659,8 @@ def test_runtime_manifest_resolves_installed_v1_then_manual_update_to_v2(tmp_pat
     skills_root = tmp_path / "skills"
     v1_uri = "artifacts/skills/1/v1-aaa/probe-skill"
     v2_uri = "artifacts/skills/1/v2-bbb/probe-skill"
-    _write_artifact(skills_root, v1_uri, "SKILL_RUNTIME_OK_V1")
-    _write_artifact(skills_root, v2_uri, "SKILL_RUNTIME_OK_V2")
+    v1_file_manifest_hash = _write_artifact(skills_root, v1_uri, "SKILL_RUNTIME_OK_V1")
+    v2_file_manifest_hash = _write_artifact(skills_root, v2_uri, "SKILL_RUNTIME_OK_V2")
     monkeypatch.setattr("deerflow.config.get_app_config", lambda: _runtime_config(skills_root))
 
     definition = SkillDefinition(id=1, name="probe-skill", description="Probe")
@@ -663,7 +670,7 @@ def test_runtime_manifest_resolves_installed_v1_then_manual_update_to_v2(tmp_pat
         version_number=1,
         description="Probe",
         content_hash="hash-v1",
-        file_manifest_hash="manifest-v1",
+        file_manifest_hash=v1_file_manifest_hash,
         artifact_uri=v1_uri,
         source_package_version="99.0.0",
         definition=definition,
@@ -674,7 +681,7 @@ def test_runtime_manifest_resolves_installed_v1_then_manual_update_to_v2(tmp_pat
         version_number=2,
         description="Probe",
         content_hash="hash-v2",
-        file_manifest_hash="manifest-v2",
+        file_manifest_hash=v2_file_manifest_hash,
         artifact_uri=v2_uri,
         source_package_version="99.0.0",
         definition=definition,
@@ -702,10 +709,12 @@ def test_runtime_manifest_resolves_installed_v1_then_manual_update_to_v2(tmp_pat
     assert before_publish[0].skill_version_id == 101
     assert before_publish[0].version_number == 1
     assert before_publish[0].file_path == v1_uri
+    assert before_publish[0].file_manifest_hash == v1_file_manifest_hash
     assert after_publish[0].skill_version_id == 101
     assert after_manual_update[0].skill_version_id == 102
     assert after_manual_update[0].version_number == 2
     assert after_manual_update[0].file_path == v2_uri
+    assert after_manual_update[0].file_manifest_hash == v2_file_manifest_hash
 
 
 def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts(tmp_path, monkeypatch):
@@ -720,8 +729,8 @@ def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts
     public_latest_uri = "public/probe-skill"
     legacy_custom_uri = "22/probe-skill"
     same_name_root_uri = "probe-skill"
-    _write_artifact(skills_root, v1_uri, "SKILL_RUNTIME_OK_V1")
-    _write_artifact(skills_root, v2_uri, "SKILL_RUNTIME_OK_V2")
+    v1_file_manifest_hash = _write_artifact(skills_root, v1_uri, "SKILL_RUNTIME_OK_V1")
+    v2_file_manifest_hash = _write_artifact(skills_root, v2_uri, "SKILL_RUNTIME_OK_V2")
     _write_artifact(skills_root, public_latest_uri, "SKILL_RUNTIME_OK_V2_PUBLIC_LATEST")
     _write_artifact(skills_root, legacy_custom_uri, "SKILL_RUNTIME_OK_V2_LEGACY_CUSTOM")
     _write_artifact(skills_root, same_name_root_uri, "SKILL_RUNTIME_OK_V2_SAME_NAME_ROOT")
@@ -731,7 +740,6 @@ def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts
         raise AssertionError("runtime resolution must use exact manifest artifact paths, not filesystem scans")
 
     monkeypatch.setattr(Path, "glob", _fail_scan)
-    monkeypatch.setattr(Path, "rglob", _fail_scan)
 
     definition = SkillDefinition(id=1, name="probe-skill", description="Probe")
     v1 = SkillVersion(
@@ -740,7 +748,7 @@ def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts
         version_number=1,
         description="Probe v1",
         content_hash="hash-v1",
-        file_manifest_hash="manifest-v1",
+        file_manifest_hash=v1_file_manifest_hash,
         artifact_uri=v1_uri,
         source_package_version=None,
         definition=definition,
@@ -751,7 +759,7 @@ def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts
         version_number=2,
         description="Probe v2",
         content_hash="hash-v2",
-        file_manifest_hash="manifest-v2",
+        file_manifest_hash=v2_file_manifest_hash,
         artifact_uri=v2_uri,
         source_package_version=None,
         definition=definition,
@@ -827,6 +835,7 @@ def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts
     assert before_update_skills[0].skill_version_id == v1.id
     assert before_update_skills[0].version_number == 1
     assert before_update_skills[0].artifact_uri == v1_uri
+    assert before_update_skills[0].file_manifest_hash == v1_file_manifest_hash
     assert before_update_manifest.manifest_json == {
         "version": 1,
         "skills": [
@@ -840,11 +849,13 @@ def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts
                 "skill_install_id": install.id,
                 "version_number": 1,
                 "content_hash": "hash-v1",
+                "file_manifest_hash": v1_file_manifest_hash,
                 "artifact_uri": v1_uri,
                 "source_package_version": None,
             }
         ],
     }
+    assert before_update_manifest.manifest_hash == build_runtime_manifest_hash(before_update_manifest.manifest_json)
     assert before_update_load == "SKILL_RUNTIME_OK_V1"
     assert "SKILL_RUNTIME_OK_V2_PUBLIC_LATEST" not in before_update_load
     assert "SKILL_RUNTIME_OK_V2_LEGACY_CUSTOM" not in before_update_load
@@ -879,6 +890,8 @@ def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts
     assert after_update_skills[0].version_number == 2
     assert after_update_manifest.manifest_json["skills"][0]["artifact_uri"] == v2_uri
     assert after_update_manifest.manifest_json["skills"][0]["skill_install_id"] == install.id
+    assert after_update_manifest.manifest_json["skills"][0]["file_manifest_hash"] == v2_file_manifest_hash
+    assert after_update_manifest.manifest_hash == build_runtime_manifest_hash(after_update_manifest.manifest_json)
     assert _load_skill(after_update_runtime, skills_root, "/mnt/skills/probe-skill/SKILL.md") == "SKILL_RUNTIME_OK_V2"
 
 
@@ -928,6 +941,37 @@ def test_runtime_manifest_rejects_missing_artifact(tmp_path, monkeypatch):
     )
 
     with pytest.raises(RuntimeManifestResolutionError, match="artifact is missing"):
+        AgentRepository._active_runtime_skills(_bound_agent_with_install(install))
+
+
+def test_runtime_manifest_rejects_artifact_file_manifest_hash_mismatch(tmp_path, monkeypatch):
+    skills_root = tmp_path / "skills"
+    artifact_uri = "artifacts/skills/1/v1-aaa/probe-skill"
+    _write_artifact(skills_root, artifact_uri, "SKILL_RUNTIME_OK_V1")
+    monkeypatch.setattr("deerflow.config.get_app_config", lambda: _runtime_config(skills_root))
+
+    definition = SkillDefinition(id=1, name="probe-skill", description="Probe")
+    version = SkillVersion(
+        id=101,
+        skill_definition_id=1,
+        version_number=1,
+        description="Probe",
+        content_hash="hash-v1",
+        file_manifest_hash="wrong-file-manifest-hash",
+        artifact_uri=artifact_uri,
+        definition=definition,
+    )
+    install = SkillInstall(
+        id=201,
+        user_id=22,
+        skill_definition_id=1,
+        installed_version_id=101,
+        current_version_id=101,
+        definition=definition,
+        current_version=version,
+    )
+
+    with pytest.raises(RuntimeManifestResolutionError, match="file manifest hash mismatch"):
         AgentRepository._active_runtime_skills(_bound_agent_with_install(install))
 
 

@@ -86,6 +86,7 @@ def test_get_skills_prompt_section_uses_runtime_context(monkeypatch):
                             "virtual_path": "/mnt/skills/sql-review/SKILL.md",
                             "skill_version_id": 101,
                             "version_number": 1,
+                            "file_manifest_hash": "manifest-sql",
                         },
                         {
                             "name": "api-design",
@@ -94,6 +95,7 @@ def test_get_skills_prompt_section_uses_runtime_context(monkeypatch):
                             "virtual_path": "/mnt/skills/api-design/SKILL.md",
                             "skill_version_id": 102,
                             "version_number": 2,
+                            "file_manifest_hash": "manifest-api",
                         },
                     ]
                 }
@@ -109,6 +111,7 @@ def test_get_skills_prompt_section_uses_runtime_context(monkeypatch):
     assert "api-design" in section
     assert "<skill_version_id>101</skill_version_id>" in section
     assert "<version_number>2</version_number>" in section
+    assert "<file_manifest_hash>manifest-api</file_manifest_hash>" in section
     assert "skill_load" in section
 
 
@@ -145,5 +148,6 @@ def test_runtime_skill_prompt_descriptors_require_manifest_location():
             "skill_version_id": "102",
             "version_number": "2",
             "content_hash": "",
+            "file_manifest_hash": "",
         }
     ]

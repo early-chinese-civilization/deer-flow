@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.gateway.db.models import SkillDefinition, SkillInstall, SkillRelease, SkillVersion
+from app.gateway.db.models import RuntimeManifest, SkillDefinition, SkillInstall, SkillRelease, SkillVersion
 from app.gateway.db.repository import SkillReleaseRepository
 
 
@@ -188,6 +188,7 @@ def test_platform_skill_version_install_models_declares_manifest_foundation_colu
     definition_columns = SkillDefinition.__table__.columns
     version_columns = SkillVersion.__table__.columns
     install_columns = SkillInstall.__table__.columns
+    manifest_columns = RuntimeManifest.__table__.columns
 
     assert SkillDefinition.__tablename__ == "skill_definitions"
     assert "name" in definition_columns
@@ -207,6 +208,10 @@ def test_platform_skill_version_install_models_declares_manifest_foundation_colu
     assert "installed_version_id" in install_columns
     assert "current_version_id" in install_columns
 
+    assert RuntimeManifest.__tablename__ == "runtime_manifests"
+    assert "manifest_json" in manifest_columns
+    assert "manifest_hash" in manifest_columns
+
 
 def test_skill_versions_installs_manifest_migration_exists():
     migration_path = Path("alembic/versions/a7c9e2d5f604_add_skill_versions_installs_runtime_manifest.py")
@@ -218,3 +223,12 @@ def test_skill_versions_installs_manifest_migration_exists():
     assert "skill_installs" in migration
     assert "skill_version_id" in migration
     assert "runtime_manifests" in migration
+
+
+def test_runtime_manifest_hash_migration_exists():
+    migration_path = Path("alembic/versions/c1d2e3f4a5b6_add_runtime_manifest_hash.py")
+
+    assert migration_path.exists()
+    migration = migration_path.read_text(encoding="utf-8")
+    assert "runtime_manifests" in migration
+    assert "manifest_hash" in migration

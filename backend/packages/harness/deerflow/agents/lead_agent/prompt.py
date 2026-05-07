@@ -51,6 +51,7 @@ def build_runtime_skill_descriptors(skills: list[dict] | None, *, container_base
                 "skill_version_id": str(skill_version_id),
                 "version_number": str(skill.get("version_number") or ""),
                 "content_hash": str(skill.get("content_hash") or ""),
+                "file_manifest_hash": str(skill.get("file_manifest_hash") or ""),
             }
         )
     return descriptors
@@ -473,6 +474,7 @@ def get_skills_prompt_section(
                 f"        <location>{skill['location']}</location>",
                 f"        <skill_version_id>{skill['skill_version_id']}</skill_version_id>",
                 f"        <version_number>{skill['version_number']}</version_number>",
+                f"        <file_manifest_hash>{skill['file_manifest_hash']}</file_manifest_hash>",
                 "    </skill>",
             ]
         )
