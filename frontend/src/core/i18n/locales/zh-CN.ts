@@ -257,6 +257,9 @@ export const zhCN: Translations = {
   conversation: {
     noMessages: "还没有消息",
     startConversation: "开始新的对话以查看消息",
+    threadNotFound: "对话不存在",
+    threadNotFoundDescription: "这个对话可能已被删除，或当前已无法访问。",
+    startNewConversation: "开始新对话",
   },
 
   // Chats

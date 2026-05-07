@@ -274,6 +274,10 @@ export const enUS: Translations = {
   conversation: {
     noMessages: "No messages yet",
     startConversation: "Start a conversation to see messages here",
+    threadNotFound: "Conversation not found",
+    threadNotFoundDescription:
+      "This conversation may have been deleted or is no longer available.",
+    startNewConversation: "Start a new conversation",
   },
 
   // Chats
