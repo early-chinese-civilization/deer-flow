@@ -105,18 +105,29 @@ const UNSUPPORTED_PREVIEW_EXTENSIONS = new Set([
   "xlsx",
 ]);
 const RICH_PREVIEW_EXTENSIONS = new Set(["md", "mdx", "html", "htm", "skill"]);
+const IFRAME_PREVIEW_EXTENSIONS = new Set([
+  "pdf",
+  "mp3",
+  "wav",
+  "ogg",
+  "m4a",
+  "mp4",
+  "webm",
+  "mov",
+  "m4v",
+]);
 const IMAGE_PREVIEW_EXTENSIONS = new Set([
   "png",
   "jpg",
   "jpeg",
   "gif",
   "webp",
-  "svg",
   "bmp",
   "ico",
   "tiff",
   "heic",
 ]);
+const ACTIVE_CONTENT_PREVIEW_EXTENSIONS = new Set(["svg"]);
 
 export type ArtifactDisplayMode =
   | "code"
@@ -127,11 +138,11 @@ export type ArtifactDisplayMode =
 
 function getFileExtension(filepath: string) {
   const filename = filepath.split("/").pop() ?? filepath;
-  const lastSegment = filename.split(".").pop();
-  if (!lastSegment) {
+  const dotIndex = filename.lastIndexOf(".");
+  if (dotIndex <= 0 || dotIndex === filename.length - 1) {
     return "";
   }
-  return lastSegment.toLowerCase();
+  return filename.slice(dotIndex + 1).toLowerCase();
 }
 
 export function getArtifactDisplayMode(filepath: string): ArtifactDisplayMode {
@@ -141,7 +152,10 @@ export function getArtifactDisplayMode(filepath: string): ArtifactDisplayMode {
     return "unsupported-preview";
   }
 
-  if (RICH_PREVIEW_EXTENSIONS.has(extension)) {
+  if (
+    RICH_PREVIEW_EXTENSIONS.has(extension) ||
+    ACTIVE_CONTENT_PREVIEW_EXTENSIONS.has(extension)
+  ) {
     return "rich-preview";
   }
 
@@ -153,5 +167,28 @@ export function getArtifactDisplayMode(filepath: string): ArtifactDisplayMode {
     return "code";
   }
 
-  return "iframe-preview";
+  if (IFRAME_PREVIEW_EXTENSIONS.has(extension)) {
+    return "iframe-preview";
+  }
+
+  return "unsupported-preview";
+}
+
+export function getSvgPreviewDataUrl(content: string): string | null {
+  const trimmedContent = content.trim();
+  if (!/<svg(?:\s|>)/i.test(trimmedContent)) {
+    return null;
+  }
+
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(trimmedContent)}`;
+}
+
+export function shouldShowArtifactCodePreviewToggle({
+  displayMode,
+  isSvgPreview,
+}: {
+  displayMode: ArtifactDisplayMode;
+  isSvgPreview: boolean;
+}): boolean {
+  return displayMode === "rich-preview" && !isSvgPreview;
 }
