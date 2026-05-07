@@ -81,11 +81,15 @@ def _get_skills_container_path() -> str:
 
 def _ensure_artifact_dir_exists(artifact_uri: str, *, skill_name: str) -> None:
     """Fail manifest resolution if an immutable artifact is missing."""
+    normalized_artifact = artifact_uri.replace("\\", "/").strip("/")
+    parts = [part for part in normalized_artifact.split("/") if part]
+    if len(parts) < 2 or parts[0] != "artifacts" or any(part in {".", ".."} for part in parts):
+        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact must use immutable artifacts scope: {artifact_uri}")
     try:
         from deerflow.config import get_app_config
 
         skills_root = get_app_config().skills.get_skills_path()
-        artifact_dir = resolve_skill_storage_dir(skills_root, artifact_uri)
+        artifact_dir = resolve_skill_storage_dir(skills_root, normalized_artifact)
     except Exception as exc:
         raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact cannot be resolved") from exc
     if not artifact_dir.exists() or not artifact_dir.is_dir():

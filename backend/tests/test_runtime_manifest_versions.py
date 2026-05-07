@@ -284,6 +284,9 @@ def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts
         ],
     }
     assert before_update_load == "SKILL_RUNTIME_OK_V1"
+    assert "SKILL_RUNTIME_OK_V2_PUBLIC_LATEST" not in before_update_load
+    assert "SKILL_RUNTIME_OK_V2_LEGACY_CUSTOM" not in before_update_load
+    assert "SKILL_RUNTIME_OK_V2_SAME_NAME_ROOT" not in before_update_load
     assert "Permission denied" in public_latest_denied
     assert "Permission denied" in legacy_custom_denied
 
@@ -363,6 +366,128 @@ def test_runtime_manifest_rejects_missing_artifact(tmp_path, monkeypatch):
     )
 
     with pytest.raises(RuntimeManifestResolutionError, match="artifact is missing"):
+        AgentRepository._active_runtime_skills(_bound_agent_with_install(install))
+
+
+def test_runtime_manifest_rejects_missing_current_version(tmp_path, monkeypatch):
+    skills_root = tmp_path / "skills"
+    monkeypatch.setattr("deerflow.config.get_app_config", lambda: _runtime_config(skills_root))
+
+    definition = SkillDefinition(id=1, name="probe-skill", description="Probe")
+    install = SkillInstall(
+        id=201,
+        user_id=22,
+        skill_definition_id=1,
+        installed_version_id=101,
+        current_version_id=None,
+        definition=definition,
+        current_version=None,
+    )
+
+    with pytest.raises(RuntimeManifestResolutionError, match="has no current version"):
+        AgentRepository._active_runtime_skills(_bound_agent_with_install(install))
+
+
+def test_runtime_manifest_rejects_version_from_another_definition(tmp_path, monkeypatch):
+    skills_root = tmp_path / "skills"
+    artifact_uri = "artifacts/skills/2/v1-other/probe-skill"
+    _write_artifact(skills_root, artifact_uri, "wrong definition")
+    monkeypatch.setattr("deerflow.config.get_app_config", lambda: _runtime_config(skills_root))
+
+    install_definition = SkillDefinition(id=1, name="probe-skill", description="Probe")
+    version_definition = SkillDefinition(id=2, name="probe-skill", description="Other Probe")
+    mismatched_version = SkillVersion(
+        id=101,
+        skill_definition_id=2,
+        version_number=1,
+        description="Probe",
+        content_hash="hash-v1",
+        file_manifest_hash="manifest-v1",
+        artifact_uri=artifact_uri,
+        definition=version_definition,
+    )
+    install = SkillInstall(
+        id=201,
+        user_id=22,
+        skill_definition_id=1,
+        installed_version_id=101,
+        current_version_id=101,
+        definition=install_definition,
+        current_version=mismatched_version,
+    )
+
+    with pytest.raises(RuntimeManifestResolutionError, match="version from another definition"):
+        AgentRepository._active_runtime_skills(_bound_agent_with_install(install))
+
+
+def test_runtime_manifest_rejects_missing_skill_md(tmp_path, monkeypatch):
+    skills_root = tmp_path / "skills"
+    artifact_uri = "artifacts/skills/1/v1-no-skill-md/probe-skill"
+    (skills_root / artifact_uri).mkdir(parents=True)
+    monkeypatch.setattr("deerflow.config.get_app_config", lambda: _runtime_config(skills_root))
+
+    definition = SkillDefinition(id=1, name="probe-skill", description="Probe")
+    version = SkillVersion(
+        id=101,
+        skill_definition_id=1,
+        version_number=1,
+        description="Probe",
+        content_hash="hash-v1",
+        file_manifest_hash="manifest-v1",
+        artifact_uri=artifact_uri,
+        definition=definition,
+    )
+    install = SkillInstall(
+        id=201,
+        user_id=22,
+        skill_definition_id=1,
+        installed_version_id=101,
+        current_version_id=101,
+        definition=definition,
+        current_version=version,
+    )
+
+    with pytest.raises(RuntimeManifestResolutionError, match="missing SKILL.md"):
+        AgentRepository._active_runtime_skills(_bound_agent_with_install(install))
+
+
+@pytest.mark.parametrize(
+    "artifact_uri",
+    [
+        "public/probe-skill",
+        "22/probe-skill",
+        "custom/probe-skill",
+        "probe-skill",
+        "artifacts/../public/probe-skill",
+    ],
+)
+def test_runtime_manifest_rejects_non_artifacts_scope_artifact_uri(tmp_path, monkeypatch, artifact_uri):
+    skills_root = tmp_path / "skills"
+    _write_artifact(skills_root, artifact_uri, "fallback should never authorize")
+    monkeypatch.setattr("deerflow.config.get_app_config", lambda: _runtime_config(skills_root))
+
+    definition = SkillDefinition(id=1, name="probe-skill", description="Probe")
+    version = SkillVersion(
+        id=101,
+        skill_definition_id=1,
+        version_number=1,
+        description="Probe",
+        content_hash="hash-v1",
+        file_manifest_hash="manifest-v1",
+        artifact_uri=artifact_uri,
+        definition=definition,
+    )
+    install = SkillInstall(
+        id=201,
+        user_id=22,
+        skill_definition_id=1,
+        installed_version_id=101,
+        current_version_id=101,
+        definition=definition,
+        current_version=version,
+    )
+
+    with pytest.raises(RuntimeManifestResolutionError, match="immutable artifacts scope"):
         AgentRepository._active_runtime_skills(_bound_agent_with_install(install))
 
 
