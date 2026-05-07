@@ -11,7 +11,9 @@ export interface FileLikeOssSource {
   artifact_url?: string | null;
 }
 
-function splitOssUri(ossUri: string): { ossUri: string; objectKey: string } | null {
+function splitOssUri(
+  ossUri: string,
+): { ossUri: string; objectKey: string } | null {
   if (!ossUri.startsWith("oss://")) {
     return null;
   }

@@ -99,11 +99,7 @@ class UserRepository:
             family_name=family_name,
             email_verified=email_verified,
         )
-        update_values = {
-            key: value
-            for key, value in insert_values.items()
-            if key != "external_auth_id"
-        }
+        update_values = {key: value for key, value in insert_values.items() if key != "external_auth_id"}
 
         stmt = (
             insert(User)
@@ -130,9 +126,7 @@ class UserRepository:
         external_auth_id: str,
     ) -> User | None:
         """Load a user by external authentication subject."""
-        result = await db.execute(
-            select(User).where(User.external_auth_id == external_auth_id)
-        )
+        result = await db.execute(select(User).where(User.external_auth_id == external_auth_id))
         return result.scalar_one_or_none()
 
 
@@ -370,29 +364,21 @@ class AgentRepository:
     @staticmethod
     async def get_agent_by_id(db: AsyncSession, agent_id: int) -> Agent | None:
         """Load an agent by ID."""
-        stmt = AgentRepository._with_agent_skills(
-            AgentRepository._active_agent_stmt().where(Agent.id == agent_id)
-        )
+        stmt = AgentRepository._with_agent_skills(AgentRepository._active_agent_stmt().where(Agent.id == agent_id))
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
     @staticmethod
     async def list_agents(db: AsyncSession, user_id: int) -> list[Agent]:
         """List all agents for a user."""
-        stmt = AgentRepository._with_agent_skills(
-            AgentRepository._active_agent_stmt()
-            .where(Agent.user_id == user_id)
-            .order_by(Agent.created_at.desc())
-        )
+        stmt = AgentRepository._with_agent_skills(AgentRepository._active_agent_stmt().where(Agent.user_id == user_id).order_by(Agent.created_at.desc()))
         result = await db.execute(stmt)
         return result.scalars().all()
 
     @staticmethod
     async def get_agent_by_name(db: AsyncSession, *, user_id: int, name: str) -> Agent | None:
         """Load an active user-owned agent by name."""
-        stmt = AgentRepository._with_agent_skills(
-            AgentRepository._active_agent_stmt().where(Agent.user_id == user_id, Agent.name == name)
-        )
+        stmt = AgentRepository._with_agent_skills(AgentRepository._active_agent_stmt().where(Agent.user_id == user_id, Agent.name == name))
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -414,19 +400,9 @@ class AgentRepository:
     @staticmethod
     def _active_runtime_skills(agent: Agent) -> list[RuntimeSkillDescriptor]:
         """Return ordered active skill descriptors for an agent."""
-        active_associations = [
-            association
-            for association in agent.agent_skills
-            if association.deleted_at is None
-            and association.enabled
-            and association.skill is not None
-            and association.skill.deleted_at is None
-        ]
+        active_associations = [association for association in agent.agent_skills if association.deleted_at is None and association.enabled and association.skill is not None and association.skill.deleted_at is None]
         active_associations.sort(key=lambda association: (association.display_order, association.id))
-        return [
-            AgentRepository._build_runtime_skill_descriptor(association.skill)
-            for association in active_associations
-        ]
+        return [AgentRepository._build_runtime_skill_descriptor(association.skill) for association in active_associations]
 
     @staticmethod
     async def _public_runtime_skills(db: AsyncSession) -> list[RuntimeSkillDescriptor]:
@@ -628,9 +604,7 @@ class SkillRepository:
     @staticmethod
     async def get_skill_by_id(db: AsyncSession, skill_id: int) -> Skill | None:
         """Load a skill by ID."""
-        stmt = SkillRepository._with_owner_user(
-            select(Skill).where(Skill.id == skill_id, Skill.deleted_at.is_(None))
-        )
+        stmt = SkillRepository._with_owner_user(select(Skill).where(Skill.id == skill_id, Skill.deleted_at.is_(None)))
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -664,34 +638,22 @@ class SkillRepository:
     @staticmethod
     async def list_public_skills(db: AsyncSession) -> list[Skill]:
         """List all active public skills, preferring the newest row per name."""
-        stmt = SkillRepository._with_owner_user(
-            SkillRepository._active_skill_stmt()
-            .where(Skill.user_id.is_(None))
-            .order_by(Skill.name.asc(), Skill.updated_at.desc(), Skill.created_at.desc())
-        )
+        stmt = SkillRepository._with_owner_user(SkillRepository._active_skill_stmt().where(Skill.user_id.is_(None)).order_by(Skill.name.asc(), Skill.updated_at.desc(), Skill.created_at.desc()))
         result = await db.execute(stmt)
         return SkillRepository._dedupe_public_skills(list(result.scalars().all()))
 
     @staticmethod
     async def list_custom_skills(db: AsyncSession, *, user_id: int) -> list[Skill]:
         """List all active custom skills owned by the current user."""
-        stmt = SkillRepository._with_owner_user(
-            SkillRepository._active_skill_stmt()
-            .where(Skill.user_id == user_id)
-            .order_by(Skill.name.asc(), Skill.created_at.desc())
-        )
+        stmt = SkillRepository._with_owner_user(SkillRepository._active_skill_stmt().where(Skill.user_id == user_id).order_by(Skill.name.asc(), Skill.created_at.desc()))
         result = await db.execute(stmt)
         return result.scalars().all()
 
     @staticmethod
     async def get_user_skill_by_name(db: AsyncSession, *, user_id: int, name: str) -> Skill | None:
         """Load the current user's active skill by name."""
-        stmt = SkillRepository._with_owner_user(
-            SkillRepository._active_skill_stmt().where(Skill.user_id == user_id, Skill.name == name)
-        )
-        result = await db.execute(
-            stmt
-        )
+        stmt = SkillRepository._with_owner_user(SkillRepository._active_skill_stmt().where(Skill.user_id == user_id, Skill.name == name))
+        result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
     @staticmethod

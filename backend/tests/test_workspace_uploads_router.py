@@ -98,13 +98,16 @@ def test_prepare_upload_includes_oss_uri(monkeypatch) -> None:
         ),
     )
 
-    with patch.object(
-        uploads_router.WorkspaceRepository,
-        "get_workspace_by_id",
-        AsyncMock(return_value=None),
-    ), patch(
-        "app.gateway.routers.uploads.list_workspace_objects",
-        AsyncMock(return_value=[]),
+    with (
+        patch.object(
+            uploads_router.WorkspaceRepository,
+            "get_workspace_by_id",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.gateway.routers.uploads.list_workspace_objects",
+            AsyncMock(return_value=[]),
+        ),
     ):
         with _build_client() as client:
             response = client.post(
@@ -141,17 +144,21 @@ def test_finalize_upload_includes_oss_uri(monkeypatch) -> None:
         content_type="text/markdown",
     )
 
-    with patch.object(
-        uploads_router.WorkspaceRepository,
-        "get_workspace_by_id",
-        AsyncMock(return_value=SimpleNamespace(id="workspace-1", user_id=7, file_path=root_prefix, name="Workspace")),
-    ), patch(
-        "app.gateway.routers.uploads.list_workspace_objects",
-        AsyncMock(return_value=[uploaded_object]),
-    ), patch.object(
-        uploads_router.WorkspaceRepository,
-        "update_workspace_file_path",
-        AsyncMock(),
+    with (
+        patch.object(
+            uploads_router.WorkspaceRepository,
+            "get_workspace_by_id",
+            AsyncMock(return_value=SimpleNamespace(id="workspace-1", user_id=7, file_path=root_prefix, name="Workspace")),
+        ),
+        patch(
+            "app.gateway.routers.uploads.list_workspace_objects",
+            AsyncMock(return_value=[uploaded_object]),
+        ),
+        patch.object(
+            uploads_router.WorkspaceRepository,
+            "update_workspace_file_path",
+            AsyncMock(),
+        ),
     ):
         with _build_client() as client:
             response = client.post(
@@ -187,13 +194,16 @@ def test_list_uploaded_files_includes_oss_uri(monkeypatch) -> None:
         content_type="text/markdown",
     )
 
-    with patch.object(
-        uploads_router.WorkspaceRepository,
-        "get_workspace_by_id",
-        AsyncMock(return_value=SimpleNamespace(id="workspace-1", user_id=7, file_path=root_prefix, name="Workspace")),
-    ), patch(
-        "app.gateway.routers.uploads.list_workspace_objects",
-        AsyncMock(return_value=[uploaded_object]),
+    with (
+        patch.object(
+            uploads_router.WorkspaceRepository,
+            "get_workspace_by_id",
+            AsyncMock(return_value=SimpleNamespace(id="workspace-1", user_id=7, file_path=root_prefix, name="Workspace")),
+        ),
+        patch(
+            "app.gateway.routers.uploads.list_workspace_objects",
+            AsyncMock(return_value=[uploaded_object]),
+        ),
     ):
         with _build_client() as client:
             response = client.get(f"/api/workspaces/{WORKSPACE_ID}/uploads/list")
@@ -215,20 +225,23 @@ def test_download_url_returns_presigned_url(monkeypatch) -> None:
     monkeypatch.setattr(uploads_router, "uses_oss_workspace_uploads", lambda: True)
     monkeypatch.setattr(uploads_router.OSSStorageBackend, "from_app_config", lambda: storage)
 
-    with patch.object(
-        uploads_router.WorkspaceRepository,
-        "get_workspace_by_id",
-        AsyncMock(return_value=SimpleNamespace(id="workspace-1", user_id=7, file_path=root_prefix, name="Workspace")),
-    ), patch.object(
-        uploads_router.WorkspaceRepository,
-        "update_workspace_file_path",
-        AsyncMock(),
+    with (
+        patch.object(
+            uploads_router.WorkspaceRepository,
+            "get_workspace_by_id",
+            AsyncMock(return_value=SimpleNamespace(id="workspace-1", user_id=7, file_path=root_prefix, name="Workspace")),
+        ),
+        patch.object(
+            uploads_router.WorkspaceRepository,
+            "update_workspace_file_path",
+            AsyncMock(),
+        ),
     ):
         with _build_client() as client:
-                response = client.get(
-                    f"/api/workspaces/{WORKSPACE_ID}/uploads/download-url",
-                    params={"object_key": object_key},
-                )
+            response = client.get(
+                f"/api/workspaces/{WORKSPACE_ID}/uploads/download-url",
+                params={"object_key": object_key},
+            )
 
     assert response.status_code == 200
     assert response.json() == {

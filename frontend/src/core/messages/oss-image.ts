@@ -22,7 +22,9 @@ function getBackendBaseURL(): string {
   const backendBaseURL = process.env.NEXT_PUBLIC_BACKEND_BASE_URL;
 
   if (backendBaseURL) {
-    return new URL(backendBaseURL, getBaseOrigin()).toString().replace(/\/+$/, "");
+    return new URL(backendBaseURL, getBaseOrigin())
+      .toString()
+      .replace(/\/+$/, "");
   }
 
   return "";
@@ -42,7 +44,9 @@ async function resolveWorkspaceDownloadUrl(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "Failed to get download URL" }));
+    const error = await response
+      .json()
+      .catch(() => ({ detail: "Failed to get download URL" }));
     throw new Error(error.detail ?? "Failed to get download URL");
   }
 
@@ -84,9 +88,7 @@ function extractOssUris(content: string): string[] {
 
   return Array.from(
     new Set(
-      matches
-        .map((match) => normalizeOssUriCandidate(match))
-        .filter(Boolean),
+      matches.map((match) => normalizeOssUriCandidate(match)).filter(Boolean),
     ),
   );
 }
@@ -133,7 +135,8 @@ export function remarkRewriteResolvedOssUrls(urlMap: Record<string, string>) {
           return;
         }
 
-    const resolved = urlMap[normalizeOssUriCandidate(node.url)] ?? urlMap[node.url];
+        const resolved =
+          urlMap[normalizeOssUriCandidate(node.url)] ?? urlMap[node.url];
         if (resolved) {
           node.url = resolved;
         }
@@ -146,16 +149,19 @@ export function rewriteMarkdownImageUrls(
   content: string,
   urlMap: Record<string, string>,
 ) {
-    return content.replace(/(!\[[^\]]*\]\()([^\s)]+)(\))/g, (match, prefix, url, suffix) => {
-    if (typeof url !== "string") {
-      return match;
-    }
-    const resolved = urlMap[normalizeOssUriCandidate(url)] ?? urlMap[url];
-    if (!resolved) {
-      return match;
-    }
-    return `${prefix}${resolved}${suffix}`;
-  });
+  return content.replace(
+    /(!\[[^\]]*\]\()([^\s)]+)(\))/g,
+    (match, prefix, url, suffix) => {
+      if (typeof url !== "string") {
+        return match;
+      }
+      const resolved = urlMap[normalizeOssUriCandidate(url)] ?? urlMap[url];
+      if (!resolved) {
+        return match;
+      }
+      return `${prefix}${resolved}${suffix}`;
+    },
+  );
 }
 
 export { extractOssUris, getObjectKeyFromOssUri };

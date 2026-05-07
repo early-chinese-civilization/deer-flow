@@ -40,10 +40,13 @@ export function MarkdownContent({
   remarkPlugins = streamdownPlugins.remarkPlugins,
   components: componentsFromProps,
 }: MarkdownContentProps) {
-  const effectiveRemarkPlugins = (
-    remarkPlugins ?? streamdownPlugins.remarkPlugins ?? []
-  ) as NonNullable<MessageResponseProps["remarkPlugins"]>;
-  const resolvedOssUrlMap = useResolvedOssUrlMap(workspaceId, isLoading ? "" : content);
+  const effectiveRemarkPlugins = (remarkPlugins ??
+    streamdownPlugins.remarkPlugins ??
+    []) as NonNullable<MessageResponseProps["remarkPlugins"]>;
+  const resolvedOssUrlMap = useResolvedOssUrlMap(
+    workspaceId,
+    isLoading ? "" : content,
+  );
   const renderedContent = useMemo(
     () => rewriteMarkdownImageUrls(content, resolvedOssUrlMap),
     [content, resolvedOssUrlMap],

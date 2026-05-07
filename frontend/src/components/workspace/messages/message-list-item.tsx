@@ -282,29 +282,18 @@ function formatBytes(bytes: number): string {
   return `${(kb / 1024).toFixed(1)} MB`;
 }
 
-function RichFilesList({
-  files,
-}: {
-  files: FileInMessage[];
-}) {
+function RichFilesList({ files }: { files: FileInMessage[] }) {
   if (files.length === 0) return null;
   return (
     <div className="mb-2 flex flex-wrap justify-end gap-2">
       {files.map((file, index) => (
-        <RichFileCard
-          key={`${file.filename}-${index}`}
-          file={file}
-        />
+        <RichFileCard key={`${file.filename}-${index}`} file={file} />
       ))}
     </div>
   );
 }
 
-function RichFileCard({
-  file,
-}: {
-  file: FileInMessage;
-}) {
+function RichFileCard({ file }: { file: FileInMessage }) {
   const { t } = useI18n();
   const { workspaceId } = useThread();
   const isUploading = file.status === "uploading";

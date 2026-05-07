@@ -25,55 +25,65 @@ const CJK_TEXT_RE =
 
 export function remarkLinkifyOssUris() {
   return (tree: unknown) => {
-    visit(tree as any, "text", (node: any, index: number | undefined, parent: any) => {
-      if (
-        !parent ||
-        typeof index !== "number" ||
-        (parent.type === "link" || parent.type === "linkReference" || parent.type === "inlineCode" || parent.type === "code")
-      ) {
-        return;
-      }
+    visit(
+      tree as any,
+      "text",
+      (node: any, index: number | undefined, parent: any) => {
+        if (
+          !parent ||
+          typeof index !== "number" ||
+          parent.type === "link" ||
+          parent.type === "linkReference" ||
+          parent.type === "inlineCode" ||
+          parent.type === "code"
+        ) {
+          return;
+        }
 
-      const value = typeof node.value === "string" ? node.value : "";
-      if (!OSS_URI_RE.test(value)) {
+        const value = typeof node.value === "string" ? node.value : "";
+        if (!OSS_URI_RE.test(value)) {
+          OSS_URI_RE.lastIndex = 0;
+          return;
+        }
+
         OSS_URI_RE.lastIndex = 0;
-        return;
-      }
+        const nextChildren: Array<Record<string, unknown>> = [];
+        let lastIndex = 0;
+        for (const match of value.matchAll(OSS_URI_RE)) {
+          const raw = match[0] ?? "";
+          const start = match.index ?? 0;
+          if (start > lastIndex) {
+            nextChildren.push({
+              type: "text",
+              value: value.slice(lastIndex, start),
+            });
+          }
 
-      OSS_URI_RE.lastIndex = 0;
-      const nextChildren: Array<Record<string, unknown>> = [];
-      let lastIndex = 0;
-      for (const match of value.matchAll(OSS_URI_RE)) {
-        const raw = match[0] ?? "";
-        const start = match.index ?? 0;
-        if (start > lastIndex) {
-          nextChildren.push({ type: "text", value: value.slice(lastIndex, start) });
+          const { text, suffix } = stripTrailingMarkdownPunctuation(raw);
+          if (text) {
+            nextChildren.push({
+              type: "link",
+              url: text,
+              children: [{ type: "text", value: text }],
+            });
+          }
+          if (suffix) {
+            nextChildren.push({ type: "text", value: suffix });
+          }
+
+          lastIndex = start + raw.length;
         }
 
-        const { text, suffix } = stripTrailingMarkdownPunctuation(raw);
-        if (text) {
-          nextChildren.push({
-            type: "link",
-            url: text,
-            children: [{ type: "text", value: text }],
-          });
-        }
-        if (suffix) {
-          nextChildren.push({ type: "text", value: suffix });
+        if (lastIndex < value.length) {
+          nextChildren.push({ type: "text", value: value.slice(lastIndex) });
         }
 
-        lastIndex = start + raw.length;
-      }
-
-      if (lastIndex < value.length) {
-        nextChildren.push({ type: "text", value: value.slice(lastIndex) });
-      }
-
-      if (nextChildren.length > 0 && Array.isArray(parent.children)) {
-        parent.children.splice(index, 1, ...nextChildren);
-        return index + nextChildren.length;
-      }
-    });
+        if (nextChildren.length > 0 && Array.isArray(parent.children)) {
+          parent.children.splice(index, 1, ...nextChildren);
+          return index + nextChildren.length;
+        }
+      },
+    );
   };
 }
 

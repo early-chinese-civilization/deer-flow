@@ -33,7 +33,9 @@ token_usage:
 # ============================================================================
 # Configure available LLM models for the agent to use
 
-models:
+models: []
+  # Example model configurations (uncomment and customize):
+  #
   # Example: Volcengine (Doubao) model
   # - name: doubao-seed-1.8
   #   display_name: Doubao-Seed-1.8
@@ -478,13 +480,16 @@ sandbox:
 # Configure canonical workspace file storage.
 
 uploads:
-  backend: oss
-  oss:
-    endpoint: $ALIYUN_OSS_ENDPOINT
-    bucket: $ALIYUN_OSS_BUCKET
-    access_key_id: $ALIYUN_OSS_ACCESS_KEY_ID
-    access_key_secret: $ALIYUN_OSS_ACCESS_KEY_SECRET
-    signed_url_expires_seconds: $ALIYUN_OSS_SIGNED_URL_EXPIRES_SECONDS
+  backend: local
+  # To use OSS for canonical workspace file storage, switch backend to 'oss'
+  # and configure the credentials below:
+  # backend: oss
+  # oss:
+  #   endpoint: $ALIYUN_OSS_ENDPOINT
+  #   bucket: $ALIYUN_OSS_BUCKET
+  #   access_key_id: $ALIYUN_OSS_ACCESS_KEY_ID
+  #   access_key_secret: $ALIYUN_OSS_ACCESS_KEY_SECRET
+  #   signed_url_expires_seconds: $ALIYUN_OSS_SIGNED_URL_EXPIRES_SECONDS
 
 # ============================================================================
 # Skills Configuration

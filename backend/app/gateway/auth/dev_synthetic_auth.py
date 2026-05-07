@@ -43,12 +43,8 @@ def is_dev_synthetic_auth_enabled() -> bool:
     if mode in _DEV_MODES:
         return True
     if mode in _PROD_MODES:
-        raise RuntimeError(
-            f"{_SYNTHETIC_AUTH_ENV} cannot be enabled in production mode"
-        )
-    raise RuntimeError(
-        f"{_SYNTHETIC_AUTH_ENV} requires DEER_FLOW_SERVER_MODE=dev or NODE_ENV=development"
-    )
+        raise RuntimeError(f"{_SYNTHETIC_AUTH_ENV} cannot be enabled in production mode")
+    raise RuntimeError(f"{_SYNTHETIC_AUTH_ENV} requires DEER_FLOW_SERVER_MODE=dev or NODE_ENV=development")
 
 
 def get_dev_synthetic_auth_identity() -> AuthIdentity:

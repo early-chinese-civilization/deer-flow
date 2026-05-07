@@ -14,7 +14,9 @@ function getBackendBaseURL(): string {
   const backendBaseURL = process.env.NEXT_PUBLIC_BACKEND_BASE_URL;
 
   if (backendBaseURL) {
-    return new URL(backendBaseURL, getBaseOrigin()).toString().replace(/\/+$/, "");
+    return new URL(backendBaseURL, getBaseOrigin())
+      .toString()
+      .replace(/\/+$/, "");
   }
 
   return "";
@@ -340,8 +342,7 @@ export async function downloadUploadedFile(
   url: string,
   filename: string,
 ): Promise<void> {
-  const response = await fetch(url, {
-  });
+  const response = await fetch(url, {});
 
   if (!response.ok) {
     throw new Error(await readErrorDetail(response, "Failed to download file"));

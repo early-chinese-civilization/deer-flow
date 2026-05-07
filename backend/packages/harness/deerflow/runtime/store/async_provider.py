@@ -45,9 +45,8 @@ def _ensure_compatible_event_loop() -> None:
         return
 
     if isinstance(loop, asyncio.ProactorEventLoop):
-        logger.warning(
-            "Detected ProactorEventLoop on Windows. psycopg-backed stores require SelectorEventLoop."
-        )
+        logger.warning("Detected ProactorEventLoop on Windows. psycopg-backed stores require SelectorEventLoop.")
+
 
 # ---------------------------------------------------------------------------
 # Internal backend factory

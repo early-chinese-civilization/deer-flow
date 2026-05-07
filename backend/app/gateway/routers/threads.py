@@ -387,9 +387,7 @@ async def create_thread(
         if existing_thread.user_id != current_user.id:
             raise HTTPException(status_code=403, detail=f"Thread belongs to user {existing_thread.user_id}")
         if requested_workspace_id is not None:
-            existing_workspace_id = (
-                str(existing_thread.workspace_id) if existing_thread.workspace_id is not None else None
-            )
+            existing_workspace_id = str(existing_thread.workspace_id) if existing_thread.workspace_id is not None else None
             if existing_workspace_id != requested_workspace_id:
                 raise HTTPException(
                     status_code=409,
@@ -559,10 +557,7 @@ async def search_threads(
         reverse=True,
     )
     paged_threads = matching_threads[body.offset : body.offset + body.limit]
-    return [
-        _build_thread_response(thread=thread, store_record=store_record)
-        for thread, store_record in paged_threads
-    ]
+    return [_build_thread_response(thread=thread, store_record=store_record) for thread, store_record in paged_threads]
 
 
 @router.patch("/{thread_id}", response_model=ThreadResponse)

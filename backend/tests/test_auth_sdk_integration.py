@@ -122,10 +122,7 @@ def test_callback_forwards_ecc_auth_exchange_error_code_and_logs_redacted_detail
         )
 
     assert callback_response.status_code == 302
-    assert (
-        callback_response.headers["location"]
-        == "http://frontend.local/?error=token_exchange_failed"
-    )
+    assert callback_response.headers["location"] == "http://frontend.local/?error=token_exchange_failed"
     assert "status_code=400" in caplog.text
     assert "response_body=" in caplog.text
     assert "super-secret" not in caplog.text
@@ -178,10 +175,7 @@ def test_callback_forwards_ecc_auth_user_sync_error_code() -> None:
         )
 
     assert callback_response.status_code == 302
-    assert (
-        callback_response.headers["location"]
-        == "http://frontend.local/?error=user_sync_failed"
-    )
+    assert callback_response.headers["location"] == "http://frontend.local/?error=user_sync_failed"
     sync_mock.assert_awaited_once()
 
 

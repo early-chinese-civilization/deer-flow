@@ -9,6 +9,7 @@ from psycopg import OperationalError
 
 THREADS_NS: tuple[str, ...] = ("threads",)
 
+
 class ThreadValues(TypedDict, total=False):
     """User-facing values mirrored into the thread metadata record."""
 
@@ -44,11 +45,7 @@ _THREAD_RECORD_KEYS = frozenset(ThreadRecord.__annotations__.keys())
 
 def _sanitize_thread_record(record: dict[str, Any]) -> ThreadRecord:
     """Keep only Store-supported runtime keys from raw thread metadata."""
-    sanitized = {
-        key: value
-        for key, value in dict(record).items()
-        if key in _THREAD_RECORD_KEYS
-    }
+    sanitized = {key: value for key, value in dict(record).items() if key in _THREAD_RECORD_KEYS}
     return cast(ThreadRecord, sanitized)
 
 

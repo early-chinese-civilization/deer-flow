@@ -265,11 +265,7 @@ class AioSandboxProvider(SandboxProvider):
             if skills_path.exists():
                 # Prefer the shared filesystem contract so runtime skill loading
                 # and sandbox mounts resolve to the same host path.
-                host_skills_root = (
-                    join_host_path(get_paths()._host_shared_fs_root_str(), "skills")
-                    if os.environ.get("DEER_FLOW_HOST_SHARED_FS_ROOT")
-                    else os.environ.get("DEER_FLOW_HOST_SKILLS_PATH") or str(skills_path)
-                )
+                host_skills_root = join_host_path(get_paths()._host_shared_fs_root_str(), "skills") if os.environ.get("DEER_FLOW_HOST_SHARED_FS_ROOT") else os.environ.get("DEER_FLOW_HOST_SKILLS_PATH") or str(skills_path)
                 host_skills = join_host_path(host_skills_root, skill_scope) if skill_scope else host_skills_root
                 return (host_skills, container_path, True)  # Read-only for security
         except Exception as e:
@@ -457,9 +453,7 @@ class AioSandboxProvider(SandboxProvider):
                     self._sandbox_infos[expected_sandbox_id] = info
                     self._last_activity[expected_sandbox_id] = time.time()
                     self._thread_sandboxes[thread_id] = expected_sandbox_id
-                    logger.info(
-                        f"Reclaimed warm-pool sandbox {expected_sandbox_id} for thread {thread_id} at {info.sandbox_url}"
-                    )
+                    logger.info(f"Reclaimed warm-pool sandbox {expected_sandbox_id} for thread {thread_id} at {info.sandbox_url}")
                     return expected_sandbox_id
 
         # ── Layer 2: Backend discovery + create (protected by cross-process lock) ──

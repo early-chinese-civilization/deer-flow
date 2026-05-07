@@ -41,6 +41,8 @@ from deerflow.uploads import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/workspaces/{workspace_id}/uploads", tags=["uploads"])
+
+
 class WorkspaceFileResponse(BaseModel):
     """Serialized metadata for a canonical workspace file."""
 
@@ -206,8 +208,6 @@ async def _resolve_workspace_upload_root(
     return workspace, await ensure_workspace_prefix(db, workspace)
 
 
-
-
 def _build_workspace_root_label(workspace: Workspace) -> str:
     """Build a friendly root label for the workspace panel."""
     if workspace.name and workspace.name.strip():
@@ -251,12 +251,7 @@ def _is_direct_workspace_upload_enabled() -> bool:
     if uploads_config.backend != "oss":
         return False
 
-    return bool(
-        uploads_config.oss.endpoint
-        and uploads_config.oss.bucket
-        and uploads_config.oss.access_key_id
-        and uploads_config.oss.access_key_secret
-    )
+    return bool(uploads_config.oss.endpoint and uploads_config.oss.bucket and uploads_config.oss.access_key_id and uploads_config.oss.access_key_secret)
 
 
 def _presign_workspace_put_upload(
@@ -504,10 +499,7 @@ async def upload_files(
         filenames=[filename for _, filename in normalized_files],
     )
 
-    task_inputs = [
-        ((file, normalized_filename), claimed_filename)
-        for (file, normalized_filename), claimed_filename in zip(normalized_files, claimed_filenames, strict=False)
-    ]
+    task_inputs = [((file, normalized_filename), claimed_filename) for (file, normalized_filename), claimed_filename in zip(normalized_files, claimed_filenames, strict=False)]
 
     tasks = [
         _process_single_file(

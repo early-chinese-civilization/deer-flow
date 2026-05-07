@@ -458,10 +458,7 @@ def get_skills_prompt_section(
     if not skills:
         return ""
 
-    skill_items = "\n".join(
-        f"    <skill>\n        <name>{skill['name']}</name>\n        <description>{skill['description']}</description>\n        <location>{skill['location']}</location>\n    </skill>"
-        for skill in skills
-    )
+    skill_items = "\n".join(f"    <skill>\n        <name>{skill['name']}</name>\n        <description>{skill['description']}</description>\n        <location>{skill['location']}</location>\n    </skill>" for skill in skills)
     skills_list = f"<available_skills>\n{skill_items}\n</available_skills>"
 
     return f"""<skill_system>

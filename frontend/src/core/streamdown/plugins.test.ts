@@ -18,7 +18,8 @@ void test("linkifies oss uris inside text nodes", () => {
         children: [
           {
             type: "text",
-            value: "See oss://demo-bucket/workspaces/ws-1/uploads/report.md for details.",
+            value:
+              "See oss://demo-bucket/workspaces/ws-1/uploads/report.md for details.",
           },
         ],
       },
@@ -51,7 +52,8 @@ void test("strips trailing markdown punctuation from oss links", () => {
         children: [
           {
             type: "text",
-            value: "See oss://demo-bucket/workspaces/ws-1/uploads/report.md** for details.",
+            value:
+              "See oss://demo-bucket/workspaces/ws-1/uploads/report.md** for details.",
           },
         ],
       },
@@ -62,11 +64,18 @@ void test("strips trailing markdown punctuation from oss links", () => {
 
   const paragraph: any = tree.children[0];
   assert.equal(paragraph.children[1].type, "link");
-  assert.equal(paragraph.children[1].url, "oss://demo-bucket/workspaces/ws-1/uploads/report.md");
+  assert.equal(
+    paragraph.children[1].url,
+    "oss://demo-bucket/workspaces/ws-1/uploads/report.md",
+  );
 });
 
 void test("exports oss linkifier in both message plugin sets", () => {
   assert.ok(streamdownPlugins.remarkPlugins?.includes(remarkLinkifyOssUris));
-  assert.ok(streamdownPluginsWithWordAnimation.remarkPlugins?.includes(remarkLinkifyOssUris));
+  assert.ok(
+    streamdownPluginsWithWordAnimation.remarkPlugins?.includes(
+      remarkLinkifyOssUris,
+    ),
+  );
   assert.ok(humanMessagePlugins.remarkPlugins?.includes(remarkLinkifyOssUris));
 });

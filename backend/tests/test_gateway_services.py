@@ -398,6 +398,7 @@ def test_build_run_config_no_request_config():
     assert config["configurable"] == {"thread_id": "thread-abc"}
     assert "context" not in config
 
+
 def test_resolve_requested_agent_name_prefers_context():
     from app.gateway.services.runtime import _resolve_requested_agent_name
 

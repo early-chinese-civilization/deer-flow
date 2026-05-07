@@ -77,23 +77,11 @@ def test_threads_migration_creates_threads_table_and_indexes():
     workspace_column = next(column for column in table_args if getattr(column, "name", None) == "workspace_id")
     assert workspace_column.nullable is True
 
-    unique_constraints = [
-        constraint
-        for constraint in table_args
-        if isinstance(constraint, sa.UniqueConstraint)
-    ]
+    unique_constraints = [constraint for constraint in table_args if isinstance(constraint, sa.UniqueConstraint)]
     assert not any("workspace_id" in constraint.columns.keys() for constraint in unique_constraints)
 
-    foreign_key_constraints = [
-        constraint
-        for constraint in table_args
-        if isinstance(constraint, sa.ForeignKeyConstraint)
-    ]
-    workspace_fk = next(
-        constraint
-        for constraint in foreign_key_constraints
-        if "workspace_id" in getattr(constraint, "column_keys", [])
-    )
+    foreign_key_constraints = [constraint for constraint in table_args if isinstance(constraint, sa.ForeignKeyConstraint)]
+    workspace_fk = next(constraint for constraint in foreign_key_constraints if "workspace_id" in getattr(constraint, "column_keys", []))
     assert workspace_fk.ondelete == "SET NULL"
 
     index_names = {call.args[0] for call in create_index.call_args_list}
