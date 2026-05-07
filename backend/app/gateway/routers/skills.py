@@ -1,5 +1,7 @@
 import asyncio
+import json
 import logging
+import re
 import shutil
 import tempfile
 import zipfile
@@ -50,6 +52,9 @@ SkillViewerRelation = Literal[
     "update_available",
     "forked",
 ]
+
+_FORK_SOURCE_VERSION_KEYS = ("source_version_id", "source_version", "skill_version_id", "skill_version")
+_FORK_SOURCE_VERSION_RE = re.compile(r"(?:^|[;,\s|])(?:source[_-]?version(?:[_-]?id)?|skill[_-]?version(?:[_-]?id)?)[:=#](\d+)(?:$|[;,\s|])")
 
 
 class SkillResponse(BaseModel):
@@ -659,6 +664,103 @@ async def _get_single_install_by_name(
     if install.current_version is None:
         raise HTTPException(status_code=409, detail=f"Skill install '{skill_name}' has no current version")
     return install
+
+
+def _definition_is_publishable_by_user(definition: SkillDefinition, *, user_id: int) -> bool:
+    """Return whether a definition represents a current-user authored publish target."""
+    if definition.owner_user_id != user_id:
+        return False
+    if definition.source_type == "user":
+        return definition.source_identifier == str(user_id)
+    return definition.source_type == "fork"
+
+
+async def _resolve_publish_definition_or_reject_downloaded(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    skill_name: str,
+) -> SkillDefinition | None:
+    """Resolve the current user's publishable definition, or reject downloaded same-name installs."""
+    definition = await SkillDefinitionRepository.get_by_name_and_owner(db, name=skill_name, owner_user_id=user_id)
+    if definition is not None:
+        return definition
+
+    publishable_definitions: list[SkillDefinition] = []
+    downloaded_install_found = False
+    for install in await SkillInstallRepository.list_by_user_and_name(db, user_id=user_id, name=skill_name):
+        definition = install.definition or (install.current_version.definition if install.current_version is not None else None)
+        if definition is None:
+            continue
+        if _definition_is_publishable_by_user(definition, user_id=user_id):
+            publishable_definitions.append(definition)
+        else:
+            downloaded_install_found = True
+
+    unique_publishable = {definition.id: definition for definition in publishable_definitions if definition.id is not None}
+    if len(unique_publishable) == 1:
+        return next(iter(unique_publishable.values()))
+    if len(unique_publishable) > 1:
+        raise HTTPException(status_code=400, detail=f"Skill '{skill_name}' has multiple authored definitions; submit a definition-aware publish request")
+    if downloaded_install_found:
+        raise HTTPException(status_code=403, detail=f"Skill '{skill_name}' was downloaded from Community Space. Create your own version before publishing it.")
+    return None
+
+
+def _parse_recorded_source_version_id(source_identifier: str | None) -> int | None:
+    """Extract a recorded source SkillVersion ID from fork attribution when present."""
+    if not source_identifier:
+        return None
+    source_identifier = source_identifier.strip()
+    if not source_identifier:
+        return None
+
+    try:
+        parsed_identifier = json.loads(source_identifier)
+    except json.JSONDecodeError:
+        parsed_identifier = None
+    if isinstance(parsed_identifier, dict):
+        for key in _FORK_SOURCE_VERSION_KEYS:
+            raw_value = parsed_identifier.get(key)
+            if raw_value is None:
+                continue
+            try:
+                source_version_id = int(raw_value)
+            except (TypeError, ValueError):
+                continue
+            return source_version_id if source_version_id > 0 else None
+
+    match = _FORK_SOURCE_VERSION_RE.search(source_identifier)
+    if match is None:
+        return None
+    source_version_id = int(match.group(1))
+    return source_version_id if source_version_id > 0 else None
+
+
+async def _get_recorded_fork_source_version(db: AsyncSession, definition: SkillDefinition) -> SkillVersion | None:
+    """Load the source version recorded by a fork definition, if current attribution encodes one."""
+    if definition.source_type != "fork":
+        return None
+    source_version_id = _parse_recorded_source_version_id(definition.source_identifier)
+    if source_version_id is None:
+        return None
+    return await SkillVersionRepository.get_by_id(db, skill_version_id=source_version_id)
+
+
+async def _reject_unchanged_fork_publish(
+    db: AsyncSession,
+    *,
+    definition: SkillDefinition,
+    current_version: SkillVersion,
+) -> None:
+    """Hard-block an attributed fork whose current content is exactly unchanged from its source."""
+    source_version = await _get_recorded_fork_source_version(db, definition)
+    if source_version is None:
+        return
+    same_file_manifest = bool(current_version.file_manifest_hash) and current_version.file_manifest_hash == source_version.file_manifest_hash
+    same_content = bool(current_version.content_hash) and current_version.content_hash == source_version.content_hash
+    if same_file_manifest or same_content:
+        raise HTTPException(status_code=409, detail=f"Skill '{definition.name}' is unchanged from its source version. Modify it before publishing to Community Space.")
 
 
 def _affected_agent_to_response(agent: Agent) -> SkillUpdateAffectedAgent:
@@ -1397,16 +1499,14 @@ async def publish_skill(
     artifact_committed = False
     try:
         _log_publish_phase(phase=phase, skill_name=skill_name, publisher_user_id=current_user.id)
-        definition = await SkillDefinitionRepository.get_by_name_and_owner(db, name=skill_name, owner_user_id=current_user.id)
-        custom_skill = (
-            await _get_user_skill_by_definition_or_legacy(
-                db,
-                user_id=current_user.id,
-                skill_name=skill_name,
-                skill_definition_id=definition.id,
-            )
-            if definition is not None
-            else None
+        definition = await _resolve_publish_definition_or_reject_downloaded(db, user_id=current_user.id, skill_name=skill_name)
+        if definition is None:
+            raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+        custom_skill = await _get_user_skill_by_definition_or_legacy(
+            db,
+            user_id=current_user.id,
+            skill_name=skill_name,
+            skill_definition_id=definition.id,
         )
         if custom_skill is None:
             raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
@@ -1418,6 +1518,7 @@ async def publish_skill(
         if install is None or install.current_version is None:
             raise HTTPException(status_code=409, detail=f"Skill '{skill_name}' has no installed platform version")
         current_version = install.current_version
+        await _reject_unchanged_fork_publish(db, definition=definition, current_version=current_version)
 
         source_dir = _resolve_skill_dir(current_version.artifact_uri)
         publish_metadata = _extract_publish_metadata(source_dir, expected_name=skill_name)
