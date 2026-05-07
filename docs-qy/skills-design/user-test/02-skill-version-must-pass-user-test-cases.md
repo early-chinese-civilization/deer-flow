@@ -276,7 +276,26 @@
 
 ## 六、前端状态与文案
 
-### 16 SkillHub 和我的 Skills 状态清楚
+### 16 SkillHub 区分作者视角和安装者视角
+- **优先级**: P0
+- **前置条件**:
+  - 用户 A 已上传或创建“运行验收 Skill”版本 1
+  - 用户 A 有发布权限
+  - 用户 B 尚未安装该 Skill
+- **步骤**:
+  1. 用户 A 打开 我的 Skills，查看自己创建的 Skill
+  2. 用户 A 发布版本 1 到 SkillHub
+  3. 用户 A 打开 SkillHub，查看自己发布的 Skill
+  4. 用户 B 打开 SkillHub，查看用户 A 发布的同一个 Skill
+  5. 用户 B 安装该 Skill 后打开 我的 Skills
+- **预期**:
+  - 用户 A 在 我的 Skills 中看到的是“我创建的 Skill”、当前平台版本和发布状态，不是“未安装”
+  - 用户 A 在 SkillHub 中看到自己的发布物时，主任务是管理发布或查看详情，不应被引导去“安装自己的 Skill”
+  - 用户 B 在 SkillHub 中看到的是来自用户 A 的可安装 Skill，主按钮是“安装”
+  - 用户 B 安装后，我的 Skills 中显示“从 SkillHub 安装”或“来自用户 A”，当前版本为版本 1
+  - 两个视角都不暴露 `public latest`、`custom`、`package version`、artifact 或内部 ID
+
+### 17 SkillHub 和我的 Skills 状态清楚
 - **优先级**: P1
 - **前置条件**: 用户已登录，SkillHub 中同时存在未安装、已安装、有更新的 Skills
 - **步骤**:
@@ -290,7 +309,7 @@
   - 状态区分 未安装、已安装、可更新、不可用
   - 用户不需要理解内部路径、artifact、Runtime Manifest 或 sandbox allowlist
 
-### 17 Agent 配置页和对话页展示运行相关状态
+### 18 Agent 配置页和对话页展示运行相关状态
 - **优先级**: P1
 - **前置条件**: 用户已有绑定 Skills 的 Agent
 - **步骤**:
@@ -305,7 +324,7 @@
   - 如支持展开详情，应能看到 Skill 名称和版本
   - Skill 不可用时，配置页和对话触发时都有明确提示
 
-### 18 旧文案不再出现在主流程
+### 19 旧文案不再出现在主流程
 - **优先级**: P1
 - **前置条件**: 用户可访问 SkillHub、我的 Skills、发布弹窗、更新确认页和 Agent 配置页
 - **步骤**:
