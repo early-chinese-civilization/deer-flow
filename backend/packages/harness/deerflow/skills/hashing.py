@@ -5,6 +5,8 @@ from pathlib import Path
 
 import yaml
 
+PLATFORM_GENERATED_CONTENT_PATHS = frozenset({".deerflow/fork.json"})
+
 
 def split_skill_md_frontmatter(content: str) -> tuple[dict, str]:
     """Return SKILL.md frontmatter and body text."""
@@ -56,6 +58,8 @@ def hash_skill_directory(skill_dir: Path) -> tuple[str, str]:
     canonical_hash = hashlib.sha256()
     for path in sorted(item for item in skill_dir.rglob("*") if item.is_file()):
         relative = path.relative_to(skill_dir).as_posix()
+        if relative in PLATFORM_GENERATED_CONTENT_PATHS:
+            continue
         raw_bytes = path.read_bytes()
         canonical_bytes = canonical_skill_md_bytes(path) if relative == "SKILL.md" else raw_bytes
         canonical_hash.update(relative.encode("utf-8"))

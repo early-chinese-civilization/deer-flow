@@ -18,6 +18,7 @@ from app.gateway.db.models import (
     Agent,
     AgentSkill,
     Memory,
+    PendingSkillForkClaim,
     RuntimeManifest,
     Skill,
     SkillDefinition,
@@ -1132,6 +1133,75 @@ class SkillReleaseRepository:
         return result.scalar_one_or_none()
 
 
+class PendingSkillForkClaimRepository:
+    """Persistence helpers for server-authorized local fork package claims."""
+
+    @staticmethod
+    def hash_claim_token(token: str) -> str:
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    async def create_claim(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        source_version: SkillVersion,
+        claim_token_hash: str,
+        source_snapshot: dict[str, Any],
+        expires_at: datetime,
+    ) -> PendingSkillForkClaim:
+        claim = PendingSkillForkClaim(
+            user_id=user_id,
+            source_skill_definition_id=source_version.skill_definition_id,
+            source_skill_version_id=source_version.id,
+            claim_token_hash=claim_token_hash,
+            source_snapshot=source_snapshot,
+            expires_at=expires_at,
+            status="pending",
+        )
+        db.add(claim)
+        await db.flush()
+        await db.refresh(claim)
+        return claim
+
+    @staticmethod
+    async def get_valid_claim(
+        db: AsyncSession,
+        *,
+        claim_id: int,
+        user_id: int,
+        claim_token: str,
+        now: datetime,
+    ) -> PendingSkillForkClaim | None:
+        token_hash = PendingSkillForkClaimRepository.hash_claim_token(claim_token)
+        result = await db.execute(
+            select(PendingSkillForkClaim)
+            .options(
+                selectinload(PendingSkillForkClaim.source_definition).selectinload(SkillDefinition.owner_user),
+                selectinload(PendingSkillForkClaim.source_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
+            )
+            .where(
+                PendingSkillForkClaim.id == claim_id,
+                PendingSkillForkClaim.user_id == user_id,
+                PendingSkillForkClaim.claim_token_hash == token_hash,
+                PendingSkillForkClaim.status.in_(("pending", "claimed")),
+                PendingSkillForkClaim.expires_at > now,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def mark_claimed(db: AsyncSession, *, claim: PendingSkillForkClaim, now: datetime) -> PendingSkillForkClaim:
+        if claim.status != "claimed":
+            claim.status = "claimed"
+        if claim.claimed_at is None:
+            claim.claimed_at = now
+        claim.updated_at = now
+        await db.flush()
+        await db.refresh(claim)
+        return claim
+
+
 class SkillRepository:
     """Persistence helpers for skill records."""
 
@@ -1290,6 +1360,25 @@ class SkillRepository:
         if owner_user_id is not None:
             stmt = stmt.where(Skill.owner_user_id == owner_user_id)
         stmt = SkillRepository._with_owner_user(stmt.order_by(Skill.updated_at.desc(), Skill.created_at.desc()).limit(1))
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_public_skill_by_definition(
+        db: AsyncSession,
+        *,
+        skill_definition_id: int,
+    ) -> Skill | None:
+        """Load an active public skill by concrete definition identity."""
+        stmt = SkillRepository._with_owner_user(
+            SkillRepository._active_skill_stmt()
+            .where(
+                Skill.user_id.is_(None),
+                Skill.skill_definition_id == skill_definition_id,
+            )
+            .order_by(Skill.updated_at.desc(), Skill.created_at.desc())
+            .limit(1)
+        )
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 

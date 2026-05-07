@@ -501,6 +501,59 @@ class SkillRelease(Base):
     )
 
 
+class PendingSkillForkClaim(Base):
+    """Server-side claim that authorizes a later local upload as a fork."""
+
+    __tablename__ = "pending_skill_fork_claims"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="Pending fork claim ID")
+    user_id = Column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="User that requested the fork package",
+    )
+    source_skill_definition_id = Column(
+        BigInteger,
+        ForeignKey("skill_definitions.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="Source SkillDefinition selected for fork",
+    )
+    source_skill_version_id = Column(
+        BigInteger,
+        ForeignKey("skill_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="Source SkillVersion selected for fork",
+    )
+    claim_token_hash = Column(String(128), nullable=False, comment="SHA-256 hash of the package-carried claim token")
+    status = Column(String(32), nullable=False, default="pending", comment="pending, claimed, expired, or revoked")
+    source_snapshot = Column(JSONB(astext_type=Text()), nullable=False, default=dict, comment="Display/source metadata captured when exporting")
+    expires_at = Column(DateTime(timezone=True), nullable=False, comment="Claim expiry")
+    claimed_at = Column(DateTime(timezone=True), nullable=True, comment="First successful upload claim timestamp")
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        comment="Created at",
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        comment="Updated at",
+    )
+
+    user = relationship("User", foreign_keys=[user_id])
+    source_definition = relationship("SkillDefinition", foreign_keys=[source_skill_definition_id])
+    source_version = relationship("SkillVersion", foreign_keys=[source_skill_version_id])
+
+    __table_args__ = (
+        Index("ix_pending_skill_fork_claims_user_status", "user_id", "status", "expires_at"),
+        Index("ix_pending_skill_fork_claims_source_version", "source_skill_version_id"),
+    )
+
+
 class AgentSkill(Base):
     """Many-to-many relationship between agents and skills."""
 
