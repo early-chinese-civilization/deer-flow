@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import zipfile
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
-from app.gateway.db.models import Agent, AgentSkill, Skill, SkillDefinition, SkillInstall, SkillRelease, SkillVersion
-from app.gateway.db.repository import AgentRepository, RuntimeManifestResolutionError
+from app.gateway.db.models import Agent, AgentSkill, RuntimeManifest, Skill, SkillDefinition, SkillInstall, SkillRelease, SkillVersion, User
+from app.gateway.db.repository import AgentRepository, MemoryRepository, RuntimeManifestResolutionError
+from app.gateway.routers import agents as agents_router
+from app.gateway.routers import skills as skills_router
 from deerflow.sandbox.tools import skill_load_tool
 
 
@@ -42,6 +48,562 @@ class _FakeManifestSession:
 
     async def refresh(self, value) -> None:
         return None
+
+
+class _ApiFlowDb(_FakeManifestSession):
+    def __init__(self) -> None:
+        super().__init__()
+        self.commits = 0
+        self.rollbacks = 0
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
+
+
+class _ApiFlowStore:
+    def __init__(self) -> None:
+        self.next_definition_id = 1
+        self.next_version_id = 101
+        self.next_install_id = 201
+        self.next_skill_id = 301
+        self.next_release_id = 401
+        self.next_agent_id = 501
+        self.next_agent_skill_id = 601
+        self.definitions: list[SkillDefinition] = []
+        self.versions: list[SkillVersion] = []
+        self.installs: list[SkillInstall] = []
+        self.skills: list[Skill] = []
+        self.releases: list[SkillRelease] = []
+        self.agents: list[Agent] = []
+
+    def definition_by_id(self, definition_id: int) -> SkillDefinition:
+        return next(definition for definition in self.definitions if definition.id == definition_id)
+
+    def version_by_id(self, version_id: int) -> SkillVersion:
+        return next(version for version in self.versions if version.id == version_id)
+
+    def install_by_id(self, install_id: int) -> SkillInstall:
+        return next(install for install in self.installs if install.id == install_id)
+
+    def active_skill_by_id(self, skill_id: int) -> Skill | None:
+        return next((skill for skill in self.skills if skill.id == skill_id and skill.deleted_at is None), None)
+
+    def latest_release_for_definition(self, definition_id: int) -> SkillRelease | None:
+        releases = [
+            release
+            for release in self.releases
+            if release.status == "published"
+            and release.skill_version is not None
+            and release.skill_version.skill_definition_id == definition_id
+        ]
+        return max(releases, key=lambda release: release.skill_version.version_number, default=None)
+
+    async def get_or_create_definition(self, db, *, name, display_name, description, owner_user_id):
+        definition = next((item for item in self.definitions if item.name == name and item.deleted_at is None), None)
+        if definition is not None:
+            definition.display_name = display_name or definition.display_name
+            definition.description = description or definition.description
+            return definition
+        definition = SkillDefinition(
+            id=self.next_definition_id,
+            name=name,
+            display_name=display_name,
+            description=description,
+            owner_user_id=owner_user_id,
+        )
+        self.next_definition_id += 1
+        self.definitions.append(definition)
+        return definition
+
+    async def get_definition_by_name(self, db, *, name):
+        return next((item for item in self.definitions if item.name == name and item.deleted_at is None), None)
+
+    async def get_version_by_hash(self, db, *, skill_definition_id, content_hash):
+        return next(
+            (
+                version
+                for version in self.versions
+                if version.skill_definition_id == skill_definition_id and version.content_hash == content_hash
+            ),
+            None,
+        )
+
+    async def get_latest_version(self, db, *, skill_definition_id):
+        versions = [version for version in self.versions if version.skill_definition_id == skill_definition_id]
+        return max(versions, key=lambda version: version.version_number, default=None)
+
+    async def get_version_by_id(self, db, *, skill_version_id):
+        return next((version for version in self.versions if version.id == skill_version_id), None)
+
+    async def create_version(
+        self,
+        db,
+        *,
+        definition,
+        source_package_version,
+        description,
+        content_hash,
+        file_manifest_hash,
+        artifact_uri,
+        created_by_user_id,
+    ):
+        latest = await self.get_latest_version(db, skill_definition_id=definition.id)
+        version = SkillVersion(
+            id=self.next_version_id,
+            skill_definition_id=definition.id,
+            version_number=1 if latest is None else latest.version_number + 1,
+            source_package_version=source_package_version,
+            description=description,
+            content_hash=content_hash,
+            file_manifest_hash=file_manifest_hash,
+            artifact_uri=artifact_uri,
+            created_by_user_id=created_by_user_id,
+            definition=definition,
+        )
+        self.next_version_id += 1
+        self.versions.append(version)
+        return version
+
+    async def get_install_by_user_and_definition(self, db, *, user_id, skill_definition_id):
+        return next(
+            (
+                install
+                for install in self.installs
+                if install.user_id == user_id
+                and install.skill_definition_id == skill_definition_id
+                and install.deleted_at is None
+            ),
+            None,
+        )
+
+    async def get_install_by_user_and_name(self, db, *, user_id, name):
+        definition = await self.get_definition_by_name(db, name=name)
+        if definition is None:
+            return None
+        return await self.get_install_by_user_and_definition(
+            db,
+            user_id=user_id,
+            skill_definition_id=definition.id,
+        )
+
+    async def upsert_install(self, db, *, user_id, definition, version):
+        install = await self.get_install_by_user_and_definition(
+            db,
+            user_id=user_id,
+            skill_definition_id=definition.id,
+        )
+        if install is None:
+            install = SkillInstall(
+                id=self.next_install_id,
+                user_id=user_id,
+                skill_definition_id=definition.id,
+                installed_version_id=version.id,
+                current_version_id=version.id,
+                definition=definition,
+                installed_version=version,
+                current_version=version,
+            )
+            self.next_install_id += 1
+            self.installs.append(install)
+        else:
+            install.current_version_id = version.id
+            install.current_version = version
+        return install
+
+    async def update_current_version(self, db, *, install, version):
+        install.current_version_id = version.id
+        install.current_version = version
+        return install
+
+    async def get_user_skill_by_name(self, db, *, user_id, name):
+        return next((skill for skill in self.skills if skill.user_id == user_id and skill.name == name and skill.deleted_at is None), None)
+
+    async def get_public_skill_by_name(self, db, *, name):
+        public_skills = [skill for skill in self.skills if skill.user_id is None and skill.name == name and skill.deleted_at is None]
+        return max(public_skills, key=lambda skill: skill.id, default=None)
+
+    async def list_public_skills_by_name(self, db, *, name):
+        return [skill for skill in self.skills if skill.user_id is None and skill.name == name and skill.deleted_at is None]
+
+    async def create_skill(self, db, *, user_id, owner_user_id, name, display_name, description, file_path, commit=True):
+        skill = Skill(
+            id=self.next_skill_id,
+            user_id=user_id,
+            owner_user_id=owner_user_id,
+            name=name,
+            display_name=display_name,
+            description=description,
+            file_path=file_path,
+        )
+        self.next_skill_id += 1
+        self.skills.append(skill)
+        if commit:
+            await db.commit()
+        return skill
+
+    async def get_skill_by_id(self, db, skill_id):
+        return self.active_skill_by_id(skill_id)
+
+    async def soft_delete_skill(self, db, *, skill, commit=True):
+        from datetime import UTC, datetime
+
+        skill.deleted_at = datetime.now(UTC)
+        if commit:
+            await db.commit()
+
+    async def create_release(
+        self,
+        db,
+        *,
+        skill_name,
+        package_version,
+        description,
+        release_notes=None,
+        artifact_path,
+        publisher_user_id,
+        source_skill_id,
+        published_skill_id,
+        skill_version_id=None,
+        status="published",
+        release_version=None,
+        commit=True,
+    ):
+        version = self.version_by_id(skill_version_id)
+        release = SkillRelease(
+            id=self.next_release_id,
+            skill_name=skill_name,
+            release_version=release_version or f"rel-{self.next_release_id}",
+            package_version=package_version,
+            description=description,
+            release_notes=release_notes,
+            status=status,
+            artifact_path=artifact_path,
+            publisher_user_id=publisher_user_id,
+            source_skill_id=source_skill_id,
+            published_skill_id=published_skill_id,
+            skill_version_id=skill_version_id,
+            skill_version=version,
+        )
+        self.next_release_id += 1
+        self.releases.append(release)
+        if commit:
+            await db.commit()
+        return release
+
+    async def get_latest_published_version_by_name(self, db, *, skill_name):
+        release = await self.get_latest_published_release_by_name(db, skill_name=skill_name)
+        return release.skill_version if release is not None else None
+
+    async def get_latest_published_release_by_name(self, db, *, skill_name):
+        releases = [release for release in self.releases if release.skill_name == skill_name and release.status == "published"]
+        return max(releases, key=lambda release: release.skill_version.version_number, default=None)
+
+    async def get_latest_release_for_public_skill(self, db, *, published_skill_id):
+        releases = [release for release in self.releases if release.published_skill_id == published_skill_id and release.status == "published"]
+        return max(releases, key=lambda release: release.skill_version.version_number, default=None)
+
+    async def get_latest_published_release_for_definition(self, db, *, skill_definition_id):
+        return self.latest_release_for_definition(skill_definition_id)
+
+    async def get_published_release_by_version_id(self, db, *, skill_version_id):
+        return next((release for release in self.releases if release.skill_version_id == skill_version_id and release.status == "published"), None)
+
+    async def create_agent(self, db, *, user_id, name, description=None, soul=None, mcp_config=None, commit=True):
+        agent = Agent(
+            id=self.next_agent_id,
+            user_id=user_id,
+            name=name,
+            description=description,
+            soul=soul,
+            mcp_config=mcp_config,
+        )
+        agent.agent_skills = []
+        self.next_agent_id += 1
+        self.agents.append(agent)
+        if commit:
+            await db.commit()
+        return agent
+
+    async def get_agent_by_name(self, db, *, user_id, name):
+        return next((agent for agent in self.agents if agent.user_id == user_id and agent.name == name and agent.deleted_at is None), None)
+
+    async def get_agent_by_id(self, db, agent_id):
+        return next((agent for agent in self.agents if agent.id == agent_id and agent.deleted_at is None), None)
+
+    async def replace_agent_skills(self, db, *, agent, skill_ids, skill_install_ids, commit=True):
+        del skill_ids
+        agent.agent_skills = [
+            AgentSkill(
+                id=self.next_agent_skill_id + display_order,
+                agent_id=agent.id,
+                skill_id=None,
+                skill_install_id=install_id,
+                display_order=display_order,
+                enabled=True,
+                skill_install=self.install_by_id(install_id),
+            )
+            for display_order, install_id in enumerate(skill_install_ids)
+        ]
+        self.next_agent_skill_id += len(agent.agent_skills)
+        if commit:
+            await db.commit()
+        return agent
+
+    async def list_bound_agents_for_install(self, db, *, user_id, skill_install_id):
+        return [
+            agent
+            for agent in self.agents
+            if agent.user_id == user_id
+            and any(
+                association.skill_install_id == skill_install_id
+                and association.enabled
+                and association.deleted_at is None
+                for association in agent.agent_skills
+            )
+        ]
+
+
+def _skill_zip_bytes(
+    *,
+    name: str = "probe-skill",
+    description: str,
+    package_version: str,
+    marker: str,
+) -> bytes:
+    content = (
+        "---\n"
+        f"name: {name}\n"
+        f"description: {description}\n"
+        f"version: {package_version}\n"
+        "---\n\n"
+        f"# {name}\n\n"
+        f"{marker}\n"
+    )
+    archive = BytesIO()
+    with zipfile.ZipFile(archive, "w") as zip_file:
+        zip_file.writestr(f"{name}/SKILL.md", content)
+    archive.seek(0)
+    return archive.getvalue()
+
+
+def _install_api_flow_repositories(monkeypatch, store: _ApiFlowStore) -> None:
+    async def no_memory(db, user_id):
+        return None
+
+    monkeypatch.setattr(skills_router.SkillDefinitionRepository, "get_or_create", store.get_or_create_definition)
+    monkeypatch.setattr(skills_router.SkillDefinitionRepository, "get_by_name", store.get_definition_by_name)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "get_by_definition_and_hash", store.get_version_by_hash)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "get_latest_for_definition", store.get_latest_version)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "create_version", store.create_version)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "get_by_id", store.get_version_by_id)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_definition", store.get_install_by_user_and_definition)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_name", store.get_install_by_user_and_name)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "upsert_install", store.upsert_install)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "update_current_version", store.update_current_version)
+    monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_name", store.get_user_skill_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "get_public_skill_by_name", store.get_public_skill_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_public_skills_by_name", store.list_public_skills_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "create_skill", store.create_skill)
+    monkeypatch.setattr(skills_router.SkillRepository, "get_skill_by_id", store.get_skill_by_id)
+    monkeypatch.setattr(skills_router.SkillRepository, "soft_delete_skill", store.soft_delete_skill)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_bound_agents_for_install", store.list_bound_agents_for_install)
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "create_release", store.create_release)
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_published_version_by_name", store.get_latest_published_version_by_name)
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_release_for_public_skill", store.get_latest_release_for_public_skill)
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_published_release_for_definition", store.get_latest_published_release_for_definition)
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_published_release_by_version_id", store.get_published_release_by_version_id)
+    monkeypatch.setattr(agents_router.AgentRepository, "create_agent", store.create_agent)
+    monkeypatch.setattr(agents_router.AgentRepository, "get_agent_by_name", store.get_agent_by_name)
+    monkeypatch.setattr(agents_router.AgentRepository, "get_agent_by_id", store.get_agent_by_id)
+    monkeypatch.setattr(agents_router.AgentRepository, "replace_agent_skills", store.replace_agent_skills)
+    monkeypatch.setattr(agents_router.SkillInstallRepository, "get_by_user_and_name", store.get_install_by_user_and_name)
+    monkeypatch.setattr(AgentRepository, "get_agent_by_name", store.get_agent_by_name)
+    monkeypatch.setattr(MemoryRepository, "get_memory_by_user_id", no_memory)
+
+
+def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_path, monkeypatch):
+    skills_root = tmp_path / "skills"
+    store = _ApiFlowStore()
+    db = _ApiFlowDb()
+    publisher = User(id=7, external_auth_id="publisher", username="publisher", display_name="Publisher")
+    installer = User(id=22, external_auth_id="installer", username="installer", display_name="Installer")
+    current_user = {"value": publisher}
+    monkeypatch.setattr("deerflow.config.get_app_config", lambda: _runtime_config(skills_root))
+    monkeypatch.setattr(skills_router, "get_app_config", lambda: _runtime_config(skills_root))
+    _install_api_flow_repositories(monkeypatch, store)
+
+    async def db_override():
+        return db
+
+    app = FastAPI()
+    app.include_router(skills_router.router)
+    app.include_router(agents_router.router)
+    app.dependency_overrides[skills_router.get_current_user] = lambda: current_user["value"]
+    app.dependency_overrides[agents_router.get_current_user] = lambda: current_user["value"]
+    app.dependency_overrides[skills_router.get_db] = db_override
+    app.dependency_overrides[agents_router.get_db] = db_override
+
+    def upload(marker: str, package_version: str) -> dict:
+        response = client.post(
+            "/api/skills/uploads",
+            files=[
+                (
+                    "files",
+                    (
+                        "probe-skill.zip",
+                        _skill_zip_bytes(
+                            description=f"Probe {marker}",
+                            package_version=package_version,
+                            marker=marker,
+                        ),
+                        "application/zip",
+                    ),
+                )
+            ],
+        )
+        assert response.status_code == 200, response.text
+        result = response.json()["results"][0]
+        assert result["success"] is True
+        return result
+
+    def manifest_and_load(expected_version_id: int) -> tuple[RuntimeManifest, str, str, str, str]:
+        def fail_scan(*args, **kwargs):
+            raise AssertionError("runtime truth must use exact manifest artifacts, not filesystem scans")
+
+        with (
+            patch.object(Path, "glob", fail_scan),
+            patch.object(Path, "rglob", fail_scan),
+        ):
+            bundle = asyncio.run(
+                AgentRepository.get_runtime_agent_bundle(
+                    db,
+                    user_id=installer.id,
+                    agent_name="probe-agent",
+                )
+            )
+            manifest = db.added[-1]
+            runtime = _runtime_for_manifest(tmp_path, manifest)
+            loaded = _load_skill(runtime, skills_root, "/mnt/skills/probe-skill/SKILL.md")
+            public_denied = _load_skill(runtime, skills_root, "/mnt/skills/public/probe-skill/SKILL.md")
+            legacy_denied = _load_skill(runtime, skills_root, "/mnt/skills/22/probe-skill/SKILL.md")
+            missing_denied = _load_skill(runtime, skills_root, "/mnt/skills/missing-artifact/probe-skill/SKILL.md")
+
+        assert bundle.manifest_id == str(manifest.id)
+        assert bundle.skills[0].skill_version_id == expected_version_id
+        return manifest, loaded, public_denied, legacy_denied, missing_denied
+
+    with TestClient(app) as client:
+        upload_v1 = upload("SKILL_RUNTIME_OK_V1", "99.0.0")
+        assert upload_v1["platform_version"] == 1
+        v1 = store.version_by_id(upload_v1["skill_version_id"])
+        definition = store.definition_by_id(v1.skill_definition_id)
+        publisher_install = asyncio.run(store.get_install_by_user_and_definition(db, user_id=publisher.id, skill_definition_id=definition.id))
+
+        publish_v1 = client.post("/api/skills/probe-skill/publish", json={"release_notes": "publish v1"})
+        assert publish_v1.status_code == 200, publish_v1.text
+        release_v1 = store.releases[-1]
+        public_v1 = store.active_skill_by_id(release_v1.published_skill_id)
+
+        current_user["value"] = installer
+        install_v1 = client.post("/api/skills/probe-skill/download", json={"overwrite": False})
+        assert install_v1.status_code == 200, install_v1.text
+        installer_install = asyncio.run(store.get_install_by_user_and_definition(db, user_id=installer.id, skill_definition_id=definition.id))
+        installer_custom_skill = asyncio.run(store.get_user_skill_by_name(db, user_id=installer.id, name="probe-skill"))
+
+        create_agent = client.post(
+            "/api/agents",
+            json={"name": "probe-agent", "description": "Probe Agent", "skills": ["probe-skill"], "soul": "probe"},
+        )
+        assert create_agent.status_code == 201, create_agent.text
+        agent = asyncio.run(store.get_agent_by_name(db, user_id=installer.id, name="probe-agent"))
+        agent_skill = agent.agent_skills[0]
+
+        current_user["value"] = publisher
+        upload_v2 = upload("SKILL_RUNTIME_OK_V2", "100.0.0")
+        v2 = store.version_by_id(upload_v2["skill_version_id"])
+        publish_v2 = client.post("/api/skills/probe-skill/publish", json={"release_notes": "publish v2"})
+        assert publish_v2.status_code == 200, publish_v2.text
+        release_v2 = store.releases[-1]
+        public_v2 = store.active_skill_by_id(release_v2.published_skill_id)
+
+        _write_artifact(skills_root, "22/probe-skill", "SKILL_RUNTIME_OK_V2_LEGACY_CUSTOM")
+        _write_artifact(skills_root, "probe-skill", "SKILL_RUNTIME_OK_V2_SAME_NAME_ROOT")
+        (skills_root / "artifacts/skills/1/v-missing-skill-md/probe-skill").mkdir(parents=True)
+        agent_skill.skill_id = installer_custom_skill.id
+        agent_skill.skill = Skill(
+            id=999,
+            user_id=installer.id,
+            name="probe-skill",
+            file_path="22/probe-skill",
+        )
+
+        assert definition.name == "probe-skill"
+        assert v1.skill_definition_id == definition.id
+        assert v2.skill_definition_id == definition.id
+        assert v1.version_number == 1
+        assert v2.version_number == 2
+        assert v1.source_package_version == "99.0.0"
+        assert v2.source_package_version == "100.0.0"
+        assert v1.artifact_uri.startswith(f"artifacts/skills/{definition.id}/v1-")
+        assert v2.artifact_uri.startswith(f"artifacts/skills/{definition.id}/v2-")
+        assert publisher_install.current_version_id == v2.id
+        assert release_v1.skill_version_id == v1.id
+        assert release_v1.artifact_path == v1.artifact_uri
+        assert release_v2.skill_version_id == v2.id
+        assert release_v2.artifact_path == v2.artifact_uri
+        assert public_v1.deleted_at is not None
+        assert public_v2.file_path == "public/probe-skill"
+        assert installer_install.installed_version_id == v1.id
+        assert installer_install.current_version_id == v1.id
+        assert install_v1.json()["skill_install_id"] == installer_install.id
+        assert agent_skill.skill_install_id == installer_install.id
+        assert agent_skill.skill_id == installer_custom_skill.id
+
+        before_update_manifest, before_update_load, public_denied, legacy_denied, missing_denied = manifest_and_load(v1.id)
+        before_entry = before_update_manifest.manifest_json["skills"][0]
+        assert before_update_manifest.user_id == installer.id
+        assert before_update_manifest.agent_id == agent.id
+        assert before_update_manifest.agent_name == "probe-agent"
+        assert before_entry["skill_definition_id"] == definition.id
+        assert before_entry["skill_version_id"] == v1.id
+        assert before_entry["skill_install_id"] == installer_install.id
+        assert before_entry["version_number"] == 1
+        assert before_entry["artifact_uri"] == v1.artifact_uri
+        assert before_entry["file_path"] == v1.artifact_uri
+        assert before_entry["source_package_version"] == "99.0.0"
+        assert "SKILL_RUNTIME_OK_V1" in before_update_load
+        assert "SKILL_RUNTIME_OK_V2" not in before_update_load
+        assert "SKILL_RUNTIME_OK_V2_SAME_NAME_ROOT" not in before_update_load
+        assert "Permission denied" in public_denied
+        assert "Permission denied" in legacy_denied
+        assert "Permission denied" in missing_denied
+
+        current_user["value"] = installer
+        update = client.post("/api/skills/probe-skill/update-install", json={})
+        assert update.status_code == 200, update.text
+        assert update.json()["current_skill_version_id"] == v1.id
+        assert update.json()["target_skill_version_id"] == v2.id
+        assert update.json()["update_available"] is True
+        assert installer_install.current_version_id == v2.id
+
+        after_update_manifest, after_update_load, public_denied, legacy_denied, missing_denied = manifest_and_load(v2.id)
+        after_entry = after_update_manifest.manifest_json["skills"][0]
+        assert after_entry["skill_definition_id"] == definition.id
+        assert after_entry["skill_version_id"] == v2.id
+        assert after_entry["skill_install_id"] == installer_install.id
+        assert after_entry["version_number"] == 2
+        assert after_entry["artifact_uri"] == v2.artifact_uri
+        assert after_entry["file_path"] == v2.artifact_uri
+        assert after_entry["source_package_version"] == "100.0.0"
+        assert "SKILL_RUNTIME_OK_V2" in after_update_load
+        assert "SKILL_RUNTIME_OK_V1" not in after_update_load
+        assert "SKILL_RUNTIME_OK_V2_SAME_NAME_ROOT" not in after_update_load
+        assert "Permission denied" in public_denied
+        assert "Permission denied" in legacy_denied
+        assert "Permission denied" in missing_denied
 
 
 def _bound_agent_with_install(install: SkillInstall, *, legacy_skill: Skill | None = None) -> Agent:
