@@ -84,6 +84,9 @@ export const zhCN: Translations = {
     createSkillPrompt:
       "我们一起用 skill-creator 技能来创建一个技能吧。先问问我希望这个技能能做什么。",
     addAttachments: "添加附件",
+    addAttachmentsWithLimit: (limit) => `添加附件（单文件最大 ${limit}）`,
+    uploadFileSizeExceeded: (filename, limit) =>
+      `${filename} 超过单文件最大上传限制 ${limit}。`,
     mode: "模式",
     flashMode: "闪速",
     flashModeDescription: "快速且高效的完成任务，但可能不够精准",

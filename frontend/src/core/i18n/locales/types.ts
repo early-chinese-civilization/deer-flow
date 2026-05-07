@@ -68,6 +68,8 @@ export interface Translations {
     placeholder: string;
     createSkillPrompt: string;
     addAttachments: string;
+    addAttachmentsWithLimit: (limit: string) => string;
+    uploadFileSizeExceeded: (filename: string, limit: string) => string;
     mode: string;
     flashMode: string;
     flashModeDescription: string;

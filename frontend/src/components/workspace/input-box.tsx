@@ -1,12 +1,7 @@
 "use client";
 
 import type { ChatStatus } from "ai";
-import {
-  PaperclipIcon,
-  PlusIcon,
-  SparklesIcon,
-  XIcon,
-} from "lucide-react";
+import { PaperclipIcon, PlusIcon, SparklesIcon, XIcon } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import {
   useCallback,
@@ -47,6 +42,12 @@ import {
 import { getBackendBaseURL } from "@/core/config";
 import { useI18n } from "@/core/i18n/hooks";
 import { textOfMessage } from "@/core/threads/utils";
+import {
+  MAX_COMPOSER_UPLOAD_FILE_SIZE_BYTES,
+  MAX_COMPOSER_UPLOAD_FILE_SIZE_LABEL,
+  assertCanSubmitComposerMessage,
+  hasBlockingAttachmentUploads,
+} from "@/core/uploads/composer-core";
 import { cn } from "@/lib/utils";
 
 import { Suggestion, Suggestions } from "../ai-elements/suggestion";
@@ -91,6 +92,7 @@ export function InputBox({
   const [mounted, setMounted] = useState(false);
   const { thread, isMock } = useThread();
   const { textInput } = usePromptInputController();
+  const attachments = usePromptInputAttachments();
   const promptRootRef = useRef<HTMLDivElement | null>(null);
 
   const [followups, setFollowups] = useState<string[]>([]);
@@ -114,9 +116,10 @@ export function InputBox({
         onStop?.();
         return;
       }
-      if (!message.text) {
-        return;
-      }
+      assertCanSubmitComposerMessage({
+        text: message.text,
+        attachments: message.files,
+      });
       setFollowups([]);
       setFollowupsHidden(false);
       setFollowupsLoading(false);
@@ -261,7 +264,10 @@ export function InputBox({
   }
 
   const showSuggestionList = isNewThread && mode !== "skill";
-  const showNewThreadFooter = isNewThread && (agentControl != null || showSuggestionList);
+  const showNewThreadFooter =
+    isNewThread && (agentControl != null || showSuggestionList);
+  const hasBlockingUploads = hasBlockingAttachmentUploads(attachments.files);
+  const submitDisabled = (disabled ?? false) || hasBlockingUploads;
 
   return (
     <div ref={promptRootRef} className="relative">
@@ -272,6 +278,7 @@ export function InputBox({
         )}
         disabled={disabled}
         globalDrop
+        maxFileSize={MAX_COMPOSER_UPLOAD_FILE_SIZE_BYTES}
         multiple
         onSubmit={handleSubmit}
         {...props}
@@ -305,7 +312,7 @@ export function InputBox({
           <PromptInputTools>
             <PromptInputSubmit
               className="rounded-full"
-              disabled={disabled}
+              disabled={submitDisabled}
               variant="outline"
               status={status}
             />
@@ -461,7 +468,11 @@ function AddAttachmentsButton({ className }: { className?: string }) {
   const { t } = useI18n();
   const attachments = usePromptInputAttachments();
   return (
-    <Tooltip content={t.inputBox.addAttachments}>
+    <Tooltip
+      content={t.inputBox.addAttachmentsWithLimit(
+        MAX_COMPOSER_UPLOAD_FILE_SIZE_LABEL,
+      )}
+    >
       <PromptInputButton
         className={cn("px-2!", className)}
         onClick={() => attachments.openFileDialog()}
