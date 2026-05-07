@@ -516,6 +516,7 @@ export const enUS: Translations = {
       mySkillsTab: "My Skills",
       communitySpaceTab: "Community Space",
       personalSpaceTab: "Personal Space",
+      communitySearchPlaceholder: "Search Community Skills by name or author",
       allSegment: "All",
       downloadedSegment: "Added",
       authoredSegment: "My Skills",
@@ -587,6 +588,7 @@ export const enUS: Translations = {
         `Skill "${skillName}" already exists. Do you want to overwrite it?`,
       noMySkills: "No Skills in your workspace yet.",
       noSkillHubSkills: "No SkillHub Skills available.",
+      noCommunitySearchResults: "No Community Skills match that search.",
     },
     notification: {
       title: "Notification",

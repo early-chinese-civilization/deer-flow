@@ -16,6 +16,7 @@ const {
   getSkillWorkspaceCardState,
   isAgentSkillBindingUnavailable,
   isSelfAuthoredCommunitySkill,
+  skillMatchesCommunitySearch,
   skillMatchesWorkspaceSegment,
 } = await import(new URL("./display.ts", import.meta.url).href);
 
@@ -526,6 +527,183 @@ void test("keeps same-name Community cards distinguishable without user-facing I
   assert.equal(bob.owner_display_name, "Bob");
   assert.equal(getSkillIdentityKey(alice).startsWith("definition:"), true);
   assert.equal(getSkillIdentityKey(bob).startsWith("definition:"), true);
+});
+
+void test("filters Community Space by first-class Skill name and author fields", () => {
+  const official = skill({
+    name: "deep-research",
+    space: "community",
+    source_kind: "official",
+    viewer_relation: "official_available",
+    owner_display_name: "official",
+    skill_definition_id: 1100,
+  });
+  const community = skill({
+    name: "deck-builder",
+    space: "community",
+    source_kind: "community",
+    viewer_relation: "community_available",
+    owner_display_name: "Avery Chen",
+    skill_definition_id: 1101,
+  });
+  const downloaded = skill({
+    name: "market-scan",
+    space: "community",
+    source_kind: "community",
+    viewer_relation: "downloaded",
+    owner_display_name: "Mina Park",
+    skill_definition_id: 1102,
+    skill_install_id: 2102,
+  });
+  const updateAvailable = skill({
+    name: "analysis-runner",
+    space: "community",
+    source_kind: "community",
+    viewer_relation: "update_available",
+    owner_display_name: "Update Publisher",
+    skill_definition_id: 1103,
+    skill_install_id: 2103,
+    current_platform_version: 1,
+    latest_platform_version: 2,
+    update_available: true,
+  });
+  const sameNameAlice = skill({
+    name: "duplicate-skill",
+    space: "community",
+    source_kind: "community",
+    viewer_relation: "community_available",
+    owner_display_name: "Alice",
+    skill_definition_id: 1104,
+  });
+  const sameNameBob = skill({
+    name: "duplicate-skill",
+    space: "community",
+    source_kind: "community",
+    viewer_relation: "community_available",
+    owner_display_name: "Bob",
+    skill_definition_id: 1105,
+  });
+  const personalDownloaded = skill({
+    name: "deck-builder",
+    category: "custom",
+    space: "personal",
+    source_kind: "community",
+    viewer_relation: "downloaded",
+    owner_display_name: "Avery Chen",
+    skill_definition_id: 1101,
+    skill_install_id: 2101,
+  });
+  const rows = [
+    official,
+    community,
+    downloaded,
+    updateAvailable,
+    sameNameAlice,
+    sameNameBob,
+    personalDownloaded,
+  ];
+
+  assert.deepEqual(
+    rows.filter((row) => skillMatchesCommunitySearch(row, "official")),
+    [official],
+  );
+  assert.deepEqual(
+    rows.filter((row) => skillMatchesCommunitySearch(row, "avery")),
+    [community],
+  );
+  assert.deepEqual(
+    rows.filter((row) => skillMatchesCommunitySearch(row, "market")),
+    [downloaded],
+  );
+  assert.deepEqual(
+    rows.filter((row) => skillMatchesCommunitySearch(row, "update publisher")),
+    [updateAvailable],
+  );
+  assert.deepEqual(
+    rows.filter((row) => skillMatchesCommunitySearch(row, "duplicate-skill")),
+    [sameNameAlice, sameNameBob],
+  );
+  assert.deepEqual(
+    rows.filter((row) => skillMatchesCommunitySearch(row, "duplicate Bob")),
+    [sameNameBob],
+  );
+  assert.deepEqual(
+    rows.filter((row) => skillMatchesCommunitySearch(row, "community")),
+    [
+      community,
+      downloaded,
+      updateAvailable,
+      sameNameAlice,
+      sameNameBob,
+    ],
+  );
+  assert.deepEqual(
+    [
+      official,
+      community,
+      downloaded,
+      updateAvailable,
+      sameNameAlice,
+      sameNameBob,
+    ].map((row) => ({
+      key: getSkillIdentityKey(row),
+      state: getSkillWorkspaceCardState(row),
+    })),
+    [
+      {
+        key: "definition:1100",
+        state: {
+          role: "official-community",
+          primaryAction: "add-to-personal",
+          segments: ["all"],
+        },
+      },
+      {
+        key: "definition:1101",
+        state: {
+          role: "community",
+          primaryAction: "add-to-personal",
+          segments: ["all"],
+        },
+      },
+      {
+        key: "definition:1102",
+        state: {
+          role: "community",
+          primaryAction: "view-personal",
+          segments: ["all", "downloaded"],
+        },
+      },
+      {
+        key: "definition:1103",
+        state: {
+          role: "community",
+          primaryAction: "view-update",
+          segments: ["all", "downloaded", "updates"],
+        },
+      },
+      {
+        key: "definition:1104",
+        state: {
+          role: "community",
+          primaryAction: "add-to-personal",
+          segments: ["all"],
+        },
+      },
+      {
+        key: "definition:1105",
+        state: {
+          role: "community",
+          primaryAction: "add-to-personal",
+          segments: ["all"],
+        },
+      },
+    ],
+  );
+  assert.notEqual(
+    getSkillIdentityKey(sameNameAlice),
+    getSkillIdentityKey(sameNameBob),
+  );
 });
 
 void test("reports not-installed when no install identity or version exists", () => {

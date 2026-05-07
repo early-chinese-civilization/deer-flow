@@ -330,6 +330,38 @@ export function skillMatchesWorkspaceSegment(
   );
 }
 
+function normalizeSearchText(value: string | null | undefined): string {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+export function skillMatchesCommunitySearch(
+  skill: Skill,
+  searchQuery: string,
+): boolean {
+  if (!isCommunitySkill(skill)) {
+    return false;
+  }
+
+  const terms = normalizeSearchText(searchQuery).split(/\s+/).filter(Boolean);
+  if (terms.length === 0) {
+    return true;
+  }
+
+  const display = getSkillDisplayContract(skill);
+  const searchableFields = [
+    skill.name,
+    skill.owner_display_name,
+    display.sourceKind,
+    display.sourceKind === "official" ? "official" : null,
+  ]
+    .map(normalizeSearchText)
+    .filter(Boolean);
+
+  return terms.every((term) =>
+    searchableFields.some((field) => field.includes(term)),
+  );
+}
+
 export function getPlatformVersionNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;

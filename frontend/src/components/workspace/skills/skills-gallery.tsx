@@ -1,6 +1,6 @@
 "use client";
 
-import { MoreVerticalIcon, UploadIcon } from "lucide-react";
+import { MoreVerticalIcon, SearchIcon, UploadIcon } from "lucide-react";
 import { type ChangeEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -20,6 +20,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group";
 import {
   Item,
   ItemActions,
@@ -52,6 +57,7 @@ import {
   isAuthoredSkillRelation,
   isCommunitySkill,
   isPersonalSkill,
+  skillMatchesCommunitySearch,
   skillMatchesWorkspaceSegment,
   type SkillInstallState,
   type SkillWorkspacePrimaryAction,
@@ -77,6 +83,7 @@ export function SkillsGallery() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [surface, setSurface] = useState<SkillsSurface>("community");
   const [segment, setSegment] = useState<SkillWorkspaceSegment>("all");
+  const [communitySearch, setCommunitySearch] = useState("");
   const [publishCandidate, setPublishCandidate] = useState<Skill | null>(null);
   const [updateCandidate, setUpdateCandidate] = useState<Skill | null>(null);
   const [releaseNotes, setReleaseNotes] = useState("");
@@ -97,8 +104,13 @@ export function SkillsGallery() {
       surface === "community"
         ? isCommunitySkill(skill)
         : isPersonalSkill(skill);
+    const matchesSearch =
+      surface !== "community" ||
+      skillMatchesCommunitySearch(skill, communitySearch);
     return (
-      inSurface && skillMatchesWorkspaceSegment(skill, segment, installedSkill)
+      inSurface &&
+      matchesSearch &&
+      skillMatchesWorkspaceSegment(skill, segment, installedSkill)
     );
   });
 
@@ -467,6 +479,22 @@ export function SkillsGallery() {
             </TabsList>
           </Tabs>
         </div>
+        {surface === "community" ? (
+          <div className="mb-5 max-w-xl">
+            <InputGroup>
+              <InputGroupAddon>
+                <SearchIcon className="size-4" />
+              </InputGroupAddon>
+              <InputGroupInput
+                type="search"
+                value={communitySearch}
+                placeholder={t.settings.skills.communitySearchPlaceholder}
+                aria-label={t.settings.skills.communitySearchPlaceholder}
+                onChange={(event) => setCommunitySearch(event.target.value)}
+              />
+            </InputGroup>
+          </div>
+        ) : null}
 
         {isLoading ? (
           <div className="text-muted-foreground text-sm">
@@ -476,9 +504,11 @@ export function SkillsGallery() {
           <div className="text-destructive text-sm">{error.message}</div>
         ) : filteredSkills.length === 0 ? (
           <div className="text-muted-foreground text-sm">
-            {surface === "community"
-              ? t.settings.skills.noSkillHubSkills
-              : t.settings.skills.noMySkills}
+            {surface === "community" && communitySearch.trim()
+              ? t.settings.skills.noCommunitySearchResults
+              : surface === "community"
+                ? t.settings.skills.noSkillHubSkills
+                : t.settings.skills.noMySkills}
           </div>
         ) : (
           <div className="space-y-4">
