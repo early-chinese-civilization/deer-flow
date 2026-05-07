@@ -764,7 +764,7 @@ class SkillVersionRepository:
 
     @staticmethod
     async def get_by_id(db: AsyncSession, *, skill_version_id: int) -> SkillVersion | None:
-        result = await db.execute(select(SkillVersion).options(selectinload(SkillVersion.definition)).where(SkillVersion.id == skill_version_id))
+        result = await db.execute(select(SkillVersion).options(selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user)).where(SkillVersion.id == skill_version_id))
         return result.scalar_one_or_none()
 
     @staticmethod
@@ -776,7 +776,7 @@ class SkillVersionRepository:
     ) -> SkillVersion | None:
         result = await db.execute(
             select(SkillVersion)
-            .options(selectinload(SkillVersion.definition))
+            .options(selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user))
             .where(
                 SkillVersion.skill_definition_id == skill_definition_id,
                 SkillVersion.content_hash == content_hash,
@@ -790,7 +790,13 @@ class SkillVersionRepository:
         *,
         skill_definition_id: int,
     ) -> SkillVersion | None:
-        result = await db.execute(select(SkillVersion).options(selectinload(SkillVersion.definition)).where(SkillVersion.skill_definition_id == skill_definition_id).order_by(SkillVersion.version_number.desc()).limit(1))
+        result = await db.execute(
+            select(SkillVersion)
+            .options(selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user))
+            .where(SkillVersion.skill_definition_id == skill_definition_id)
+            .order_by(SkillVersion.version_number.desc())
+            .limit(1)
+        )
         return result.scalar_one_or_none()
 
     @staticmethod
@@ -836,9 +842,9 @@ class SkillInstallRepository:
         result = await db.execute(
             select(SkillInstall)
             .options(
-                selectinload(SkillInstall.definition),
+                selectinload(SkillInstall.definition).selectinload(SkillDefinition.owner_user),
                 selectinload(SkillInstall.installed_version),
-                selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition),
+                selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
             )
             .where(
                 SkillInstall.user_id == user_id,
@@ -859,9 +865,9 @@ class SkillInstallRepository:
             select(SkillInstall)
             .join(SkillDefinition, SkillDefinition.id == SkillInstall.skill_definition_id)
             .options(
-                selectinload(SkillInstall.definition),
+                selectinload(SkillInstall.definition).selectinload(SkillDefinition.owner_user),
                 selectinload(SkillInstall.installed_version),
-                selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition),
+                selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
             )
             .where(
                 SkillInstall.user_id == user_id,
@@ -885,9 +891,9 @@ class SkillInstallRepository:
             select(SkillInstall)
             .join(SkillDefinition, SkillDefinition.id == SkillInstall.skill_definition_id)
             .options(
-                selectinload(SkillInstall.definition),
+                selectinload(SkillInstall.definition).selectinload(SkillDefinition.owner_user),
                 selectinload(SkillInstall.installed_version),
-                selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition),
+                selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
             )
             .where(
                 SkillInstall.user_id == user_id,
@@ -909,9 +915,9 @@ class SkillInstallRepository:
         result = await db.execute(
             select(SkillInstall)
             .options(
-                selectinload(SkillInstall.definition),
+                selectinload(SkillInstall.definition).selectinload(SkillDefinition.owner_user),
                 selectinload(SkillInstall.installed_version),
-                selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition),
+                selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
             )
             .where(
                 SkillInstall.id == skill_install_id,
@@ -1022,7 +1028,7 @@ class SkillReleaseRepository:
         result = await db.execute(
             select(SkillVersion)
             .join(SkillRelease, SkillRelease.skill_version_id == SkillVersion.id)
-            .options(selectinload(SkillVersion.definition))
+            .options(selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user))
             .where(
                 SkillRelease.skill_name == skill_name,
                 SkillRelease.status == "published",
@@ -1044,7 +1050,7 @@ class SkillReleaseRepository:
             select(SkillRelease)
             .join(SkillVersion, SkillVersion.id == SkillRelease.skill_version_id)
             .options(
-                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition),
+                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
                 selectinload(SkillRelease.publisher_user),
             )
             .where(
@@ -1068,7 +1074,7 @@ class SkillReleaseRepository:
             select(SkillRelease)
             .join(SkillVersion, SkillVersion.id == SkillRelease.skill_version_id)
             .options(
-                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition),
+                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
                 selectinload(SkillRelease.publisher_user),
             )
             .where(
@@ -1091,7 +1097,7 @@ class SkillReleaseRepository:
         result = await db.execute(
             select(SkillRelease)
             .options(
-                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition),
+                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
                 selectinload(SkillRelease.publisher_user),
             )
             .where(
@@ -1112,7 +1118,10 @@ class SkillReleaseRepository:
         """Load the latest published release that produced a public skill row, if any."""
         result = await db.execute(
             select(SkillRelease)
-            .options(selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition))
+            .options(
+                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
+                selectinload(SkillRelease.publisher_user),
+            )
             .where(
                 SkillRelease.published_skill_id == published_skill_id,
                 SkillRelease.status == "published",
@@ -1132,7 +1141,7 @@ class SkillRepository:
 
     @staticmethod
     def _with_owner_user(stmt):
-        return stmt.options(selectinload(Skill.owner_user), selectinload(Skill.definition))
+        return stmt.options(selectinload(Skill.owner_user), selectinload(Skill.definition).selectinload(SkillDefinition.owner_user))
 
     @staticmethod
     def _dedupe_public_skills(skills: list[Skill]) -> list[Skill]:

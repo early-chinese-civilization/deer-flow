@@ -1,7 +1,22 @@
+export type SkillSpace = "community" | "personal";
+export type SkillSourceKind = "official" | "community" | "personal" | "fork";
+export type SkillViewerRelation =
+  | "official_available"
+  | "community_available"
+  | "downloaded"
+  | "authored"
+  | "authored_published"
+  | "authored_unpublished_changes"
+  | "update_available"
+  | "forked";
+
 export interface Skill {
   name: string;
   description: string;
   category: "public" | "custom";
+  space?: SkillSpace | null;
+  source_kind?: SkillSourceKind | null;
+  viewer_relation?: SkillViewerRelation | null;
   license: string | null;
   enabled: boolean;
   version?: string | null;

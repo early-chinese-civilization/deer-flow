@@ -55,6 +55,33 @@ from deerflow.uploads.manager import (
 logger = logging.getLogger(__name__)
 
 
+def _legacy_loader_skill_response(skill) -> dict[str, Any]:
+    """Map legacy loader Skill objects to the Gateway SkillResponse shape."""
+    category = getattr(skill, "category", "public")
+    if category == "public":
+        space = "community"
+        source_kind = "official"
+        viewer_relation = "official_available"
+        owner_display_name = "official"
+    else:
+        space = "personal"
+        source_kind = "personal"
+        viewer_relation = "authored"
+        owner_display_name = None
+
+    return {
+        "name": skill.name,
+        "description": skill.description,
+        "license": skill.license,
+        "category": category,
+        "space": space,
+        "source_kind": source_kind,
+        "viewer_relation": viewer_relation,
+        "enabled": skill.enabled,
+        "owner_display_name": owner_display_name,
+    }
+
+
 @dataclass
 class StreamEvent:
     """A single event from the streaming agent response.
@@ -492,13 +519,7 @@ class DeerFlowClient:
 
         return {
             "skills": [
-                {
-                    "name": s.name,
-                    "description": s.description,
-                    "license": s.license,
-                    "category": s.category,
-                    "enabled": s.enabled,
-                }
+                _legacy_loader_skill_response(s)
                 for s in load_skills(enabled_only=enabled_only)
             ]
         }
@@ -613,13 +634,7 @@ class DeerFlowClient:
         skill = next((s for s in load_skills(enabled_only=False) if s.name == name), None)
         if skill is None:
             return None
-        return {
-            "name": skill.name,
-            "description": skill.description,
-            "license": skill.license,
-            "category": skill.category,
-            "enabled": skill.enabled,
-        }
+        return _legacy_loader_skill_response(skill)
 
     def update_skill(self, name: str, *, enabled: bool) -> dict:
         """Update a skill's enabled status.

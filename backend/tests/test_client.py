@@ -132,7 +132,11 @@ class TestConfigQueries:
             "description": "Search the web",
             "license": "MIT",
             "category": "public",
+            "space": "community",
+            "source_kind": "official",
+            "viewer_relation": "official_available",
             "enabled": True,
+            "owner_display_name": "official",
         }
 
     def test_list_skills_enabled_only(self, client):
@@ -1678,6 +1682,9 @@ class TestGatewayConformance:
         parsed = SkillsListResponse(**result)
         assert len(parsed.skills) == 1
         assert parsed.skills[0].name == "web-search"
+        assert parsed.skills[0].space == "community"
+        assert parsed.skills[0].source_kind == "official"
+        assert parsed.skills[0].viewer_relation == "official_available"
 
     def test_get_skill(self, client):
         skill = MagicMock()
@@ -1693,6 +1700,9 @@ class TestGatewayConformance:
         assert result is not None
         parsed = SkillResponse(**result)
         assert parsed.name == "web-search"
+        assert parsed.space == "community"
+        assert parsed.source_kind == "official"
+        assert parsed.viewer_relation == "official_available"
 
     def test_install_skill(self, client, tmp_path):
         skill_dir = tmp_path / "my-skill"

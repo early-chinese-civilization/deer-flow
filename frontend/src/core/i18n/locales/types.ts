@@ -440,6 +440,7 @@ export interface Translations {
       published: string;
       unpublished: string;
       officialSource: string;
+      communitySpaceSource: string;
       communitySource: (ownerDisplayName: string) => string;
       installedSource: string;
       createdSource: string;
