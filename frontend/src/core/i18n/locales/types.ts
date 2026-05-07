@@ -205,9 +205,6 @@ export interface Translations {
   conversation: {
     noMessages: string;
     startConversation: string;
-    threadNotFound: string;
-    threadNotFoundDescription: string;
-    startNewConversation: string;
   };
 
   // Chats

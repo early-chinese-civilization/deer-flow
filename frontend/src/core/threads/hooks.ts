@@ -26,7 +26,6 @@ import {
   shouldShowOptimisticMessageBeforeEnsureThread,
 } from "./send-lifecycle";
 import { shouldSuppressPassiveStreamError } from "./stream-error";
-import { resolveNextStreamThreadId } from "./stream-thread-id";
 import {
   buildThreadSubmitContext,
   buildThreadSubmitMetadata,
@@ -166,17 +165,13 @@ export function useThreadStream({
 
   useEffect(() => {
     const normalizedThreadId = threadId ?? null;
-    const nextOnStreamThreadId = resolveNextStreamThreadId(
-      onStreamThreadId,
-      normalizedThreadId,
-    );
     if (!normalizedThreadId) {
-      // Reset for new thread creation when threadId becomes null/undefined.
+      // Just reset for new thread creation when threadId becomes null/undefined
       startedRef.current = false;
+      setOnStreamThreadId(normalizedThreadId);
     }
-    setOnStreamThreadId(nextOnStreamThreadId);
     threadIdRef.current = normalizedThreadId;
-  }, [onStreamThreadId, threadId]);
+  }, [threadId]);
 
   const _handleOnStart = useCallback((id: string) => {
     if (!startedRef.current) {

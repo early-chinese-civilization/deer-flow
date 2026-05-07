@@ -1,9 +1,14 @@
 import { getBackendBaseURL } from "../config";
 
-import { throwThreadApiError } from "./api-error";
 import type { ThreadRecord } from "./types";
 
-export { isThreadApiError } from "./api-error";
+async function readErrorDetail(
+  response: Response,
+  fallback: string,
+): Promise<string> {
+  const error = await response.json().catch(() => ({ detail: fallback }));
+  return error.detail ?? fallback;
+}
 
 export async function ensureThread(
   threadId: string,
@@ -22,7 +27,7 @@ export async function ensureThread(
   });
 
   if (!response.ok) {
-    return throwThreadApiError(response, "Failed to ensure thread");
+    throw new Error(await readErrorDetail(response, "Failed to ensure thread"));
   }
 
   return response.json();
@@ -37,7 +42,7 @@ export async function getThread(threadId: string): Promise<ThreadRecord> {
   );
 
   if (!response.ok) {
-    return throwThreadApiError(response, "Failed to load thread");
+    throw new Error(await readErrorDetail(response, "Failed to load thread"));
   }
 
   return response.json();
