@@ -21,6 +21,7 @@ REQUIRED_GATEWAY_TABLES = frozenset(
         "skill_versions",
         "skill_installs",
         "skill_releases",
+        "pending_skill_fork_claims",
         "runtime_manifests",
     }
 )
@@ -157,6 +158,21 @@ REQUIRED_GATEWAY_COLUMNS = {
             "created_at",
             "updated_at",
             "deleted_at",
+        }
+    ),
+    "pending_skill_fork_claims": frozenset(
+        {
+            "id",
+            "user_id",
+            "source_skill_definition_id",
+            "source_skill_version_id",
+            "claim_token_hash",
+            "status",
+            "source_snapshot",
+            "expires_at",
+            "claimed_at",
+            "created_at",
+            "updated_at",
         }
     ),
     "runtime_manifests": frozenset(

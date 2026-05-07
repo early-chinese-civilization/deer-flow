@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   confirmSkillInstallUpdate,
   deleteSkill,
+  downloadSkillForkPackage,
   enableSkill,
   installSkillHubSkill,
   previewSkillInstallUpdate,
@@ -87,6 +88,24 @@ export function useInstallSkillHubSkill() {
 }
 
 export const useDownloadSkill = useInstallSkillHubSkill;
+
+export function useDownloadSkillForkPackage() {
+  return useMutation({
+    mutationFn: async ({
+      skillName,
+      ownerUserId,
+      skillDefinitionId,
+    }: {
+      skillName: string;
+      ownerUserId?: number | null;
+      skillDefinitionId?: number | null;
+    }) =>
+      downloadSkillForkPackage(skillName, {
+        owner_user_id: ownerUserId,
+        skill_definition_id: skillDefinitionId,
+      }),
+  });
+}
 
 export function usePreviewSkillInstallUpdate(skillName: string | null) {
   return useQuery({

@@ -2,6 +2,7 @@ import type {
   SkillHubInstallCheckRequest,
   SkillHubInstallRequest,
   SkillInstallUpdateRequest,
+  SkillForkPackageRequest,
 } from "./api";
 
 function buildSkillRoute(baseUrl: string, skillName: string, suffix: string) {
@@ -33,6 +34,24 @@ export function buildSkillHubInstallRequest(
 ): [string, RequestInit] {
   return [
     buildSkillRoute(baseUrl, skillName, "download"),
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+      credentials: "include",
+    },
+  ];
+}
+
+export function buildSkillForkPackageRequest(
+  baseUrl: string,
+  skillName: string,
+  request: SkillForkPackageRequest,
+): [string, RequestInit] {
+  return [
+    buildSkillRoute(baseUrl, skillName, "fork-package"),
     {
       method: "POST",
       headers: {

@@ -1,6 +1,11 @@
 "use client";
 
-import { MoreVerticalIcon, SearchIcon, UploadIcon } from "lucide-react";
+import {
+  GitForkIcon,
+  MoreVerticalIcon,
+  SearchIcon,
+  UploadIcon,
+} from "lucide-react";
 import { type ChangeEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -40,6 +45,7 @@ import {
   getSkillInstallUpdateDialogState,
   useConfirmSkillInstallUpdate,
   useDeleteSkill,
+  useDownloadSkillForkPackage,
   useInstallSkillHubSkill,
   usePublishSkill,
   usePreviewSkillInstallUpdate,
@@ -77,6 +83,7 @@ export function SkillsGallery() {
   const { skills, isLoading, error } = useSkills();
   const deleteSkill = useDeleteSkill();
   const installSkillHubSkill = useInstallSkillHubSkill();
+  const downloadForkPackage = useDownloadSkillForkPackage();
   const confirmSkillUpdate = useConfirmSkillInstallUpdate();
   const publishSkill = usePublishSkill();
   const uploadSkills = useUploadSkills();
@@ -86,6 +93,7 @@ export function SkillsGallery() {
   const [communitySearch, setCommunitySearch] = useState("");
   const [publishCandidate, setPublishCandidate] = useState<Skill | null>(null);
   const [updateCandidate, setUpdateCandidate] = useState<Skill | null>(null);
+  const [forkCandidate, setForkCandidate] = useState<Skill | null>(null);
   const [releaseNotes, setReleaseNotes] = useState("");
   const updatePreview = usePreviewSkillInstallUpdate(
     updateCandidate?.name ?? null,
@@ -178,9 +186,17 @@ export function SkillsGallery() {
       );
     }
     if (display.viewerRelation === "forked") {
+      if (skill.fork_source_skill_name) {
+        return t.settings.skills.forkedSourceDetail(
+          skill.fork_source_skill_name,
+          skill.fork_source_owner_display_name ??
+            t.settings.skills.communitySpaceSource,
+          skill.fork_source_platform_version ?? null,
+        );
+      }
       return skill.owner_display_name
         ? t.settings.skills.forkedSource(skill.owner_display_name)
-        : t.settings.skills.forkedSkill;
+        : t.settings.skills.createdSource;
     }
     return t.settings.skills.createdSource;
   }
@@ -314,6 +330,27 @@ export function SkillsGallery() {
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t.settings.skills.installError,
+      );
+    }
+  }
+
+  async function handleForkDownloadConfirmed() {
+    if (!forkCandidate) {
+      return;
+    }
+    try {
+      await downloadForkPackage.mutateAsync({
+        skillName: forkCandidate.name,
+        ownerUserId: forkCandidate.owner_user_id ?? null,
+        skillDefinitionId: forkCandidate.skill_definition_id ?? null,
+      });
+      toast.success(t.settings.skills.forkDownloadSuccess);
+      setForkCandidate(null);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t.settings.skills.forkDownloadError,
       );
     }
   }
@@ -576,38 +613,51 @@ export function SkillsGallery() {
                   </ItemContent>
                   <ItemActions>
                     {display.space === "community" ? (
-                      <Button
-                        size="sm"
-                        variant={
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant={
+                            cardState.primaryAction === "add-to-personal"
+                              ? "default"
+                              : "outline"
+                          }
+                          disabled={
+                            installSkillHubSkill.isPending &&
+                            cardState.primaryAction === "add-to-personal"
+                          }
+                          onClick={() => {
+                            if (
+                              cardState.primaryAction === "manage-published"
+                            ) {
+                              moveToPersonalSpace("published");
+                              return;
+                            }
+                            if (cardState.primaryAction === "view-personal") {
+                              moveToPersonalSpace("downloaded");
+                              return;
+                            }
+                            if (cardState.primaryAction === "view-update") {
+                              setUpdateCandidate(installedSkill ?? skill);
+                              return;
+                            }
+                            void handleInstall(skill);
+                          }}
+                        >
+                          {installSkillHubSkill.isPending &&
                           cardState.primaryAction === "add-to-personal"
-                            ? "default"
-                            : "outline"
-                        }
-                        disabled={
-                          installSkillHubSkill.isPending &&
-                          cardState.primaryAction === "add-to-personal"
-                        }
-                        onClick={() => {
-                          if (cardState.primaryAction === "manage-published") {
-                            moveToPersonalSpace("published");
-                            return;
-                          }
-                          if (cardState.primaryAction === "view-personal") {
-                            moveToPersonalSpace("downloaded");
-                            return;
-                          }
-                          if (cardState.primaryAction === "view-update") {
-                            setUpdateCandidate(installedSkill ?? skill);
-                            return;
-                          }
-                          void handleInstall(skill);
-                        }}
-                      >
-                        {installSkillHubSkill.isPending &&
-                        cardState.primaryAction === "add-to-personal"
-                          ? t.settings.skills.installPending
-                          : primaryActionText}
-                      </Button>
+                            ? t.settings.skills.installPending
+                            : primaryActionText}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={downloadForkPackage.isPending}
+                          onClick={() => setForkCandidate(skill)}
+                        >
+                          <GitForkIcon className="mr-1.5 h-4 w-4" />
+                          {t.settings.skills.createMyVersion}
+                        </Button>
+                      </div>
                     ) : (
                       <div className="flex items-center gap-1">
                         {primaryActionText ? (
@@ -689,6 +739,56 @@ export function SkillsGallery() {
           </div>
         )}
       </div>
+
+      <Dialog
+        open={forkCandidate !== null}
+        onOpenChange={(open) => {
+          if (!open && !downloadForkPackage.isPending) {
+            setForkCandidate(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t.settings.skills.forkDialogTitle}</DialogTitle>
+            <DialogDescription>
+              {t.settings.skills.forkDialogDescription}
+            </DialogDescription>
+          </DialogHeader>
+          {forkCandidate ? (
+            <div className="space-y-4 text-sm">
+              <div className="bg-muted/30 rounded-md border p-3">
+                <div className="font-medium">{forkCandidate.name}</div>
+                <div className="text-muted-foreground mt-1">
+                  {getSkillHubVersionDetail(forkCandidate)}
+                </div>
+              </div>
+              <div className="bg-muted/30 text-muted-foreground rounded-md border p-3">
+                {t.settings.skills.forkUploadBackNotice}
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={downloadForkPackage.isPending}
+              onClick={() => setForkCandidate(null)}
+            >
+              {t.common.cancel}
+            </Button>
+            <Button
+              type="button"
+              disabled={downloadForkPackage.isPending}
+              onClick={() => void handleForkDownloadConfirmed()}
+            >
+              {downloadForkPackage.isPending
+                ? t.settings.skills.forkDownloadPending
+                : t.settings.skills.confirmForkDownload}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={publishCandidate !== null}

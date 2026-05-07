@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.gateway.db.models import RuntimeManifest, SkillDefinition, SkillInstall, SkillRelease, SkillVersion
+from app.gateway.db.models import PendingSkillForkClaim, RuntimeManifest, SkillDefinition, SkillInstall, SkillRelease, SkillVersion
 from app.gateway.db.repository import SkillReleaseRepository
 
 
@@ -215,6 +215,20 @@ def test_platform_skill_version_install_models_declares_manifest_foundation_colu
     assert "manifest_hash" in manifest_columns
 
 
+def test_pending_skill_fork_claim_model_declares_claim_columns():
+    claim_columns = PendingSkillForkClaim.__table__.columns
+
+    assert PendingSkillForkClaim.__tablename__ == "pending_skill_fork_claims"
+    assert "user_id" in claim_columns
+    assert "source_skill_definition_id" in claim_columns
+    assert "source_skill_version_id" in claim_columns
+    assert "claim_token_hash" in claim_columns
+    assert "status" in claim_columns
+    assert "source_snapshot" in claim_columns
+    assert "expires_at" in claim_columns
+    assert "claimed_at" in claim_columns
+
+
 def test_skill_versions_installs_manifest_migration_exists():
     migration_path = Path("alembic/versions/a7c9e2d5f604_add_skill_versions_installs_runtime_manifest.py")
 
@@ -245,3 +259,13 @@ def test_skill_definition_namespace_migration_exists():
     assert "source_identifier" in migration
     assert "uq_skill_definitions_source_name_active" in migration
     assert "skill_definition_id" in migration
+
+
+def test_pending_skill_fork_claims_migration_exists():
+    migration_path = Path("alembic/versions/2b7c6d8e9f10_add_pending_skill_fork_claims.py")
+
+    assert migration_path.exists()
+    migration = migration_path.read_text(encoding="utf-8")
+    assert "pending_skill_fork_claims" in migration
+    assert "claim_token_hash" in migration
+    assert "source_skill_version_id" in migration

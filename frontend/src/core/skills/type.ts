@@ -36,6 +36,10 @@ export interface Skill {
   release_status?: "published" | null;
   release_notes?: string | null;
   published_at?: string | null;
+  fork_source_skill_name?: string | null;
+  fork_source_owner_display_name?: string | null;
+  fork_source_platform_version?: number | null;
+  fork_source_skill_version_id?: number | null;
   owner_user_id?: number | null;
   owner_display_name?: string | null;
 }

@@ -4,6 +4,7 @@ import test from "node:test";
 const {
   buildSkillHubInstallCheckRequest,
   buildSkillHubInstallRequest,
+  buildSkillForkPackageRequest,
   buildSkillInstallUpdateConfirmRequest,
   buildSkillInstallUpdatePreviewRequest,
   getSkillHubInstallCheckFallbackError,
@@ -33,6 +34,21 @@ void test("builds SkillHub install request through compatibility route payload",
     owner_user_id: null,
     overwrite: true,
   });
+  assert.equal(init.credentials, "include");
+});
+
+void test("builds editable fork package request without install route semantics", () => {
+  const [url, init] = buildSkillForkPackageRequest("", "demo-skill", {
+    owner_user_id: 7,
+    skill_definition_id: 42,
+  });
+
+  assert.match(url, /\/api\/skills\/demo-skill\/fork-package$/);
+  assert.deepEqual(JSON.parse(String(init.body)), {
+    owner_user_id: 7,
+    skill_definition_id: 42,
+  });
+  assert.equal(init.method, "POST");
   assert.equal(init.credentials, "include");
 });
 

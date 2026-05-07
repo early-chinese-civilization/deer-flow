@@ -76,6 +76,7 @@ async def test_assert_gateway_schema_ready_requires_threads_table():
         "skill_versions",
         "skill_installs",
         "skill_releases",
+        "pending_skill_fork_claims",
         "runtime_manifests",
     ]
     engine = SimpleNamespace(
@@ -93,6 +94,7 @@ async def test_assert_gateway_schema_ready_requires_threads_table():
                     "skill_versions",
                     "skill_installs",
                     "skill_releases",
+                    "pending_skill_fork_claims",
                     "runtime_manifests",
                 ),
             )
@@ -137,6 +139,7 @@ async def test_assert_gateway_schema_ready_requires_skill_release_columns():
         "skill_versions",
         "skill_installs",
         "skill_releases",
+        "pending_skill_fork_claims",
         "runtime_manifests",
     )
     columns["skill_releases"] = tuple(column for column in columns["skill_releases"] if column != "release_version")
@@ -155,6 +158,7 @@ async def test_assert_gateway_schema_ready_requires_skill_release_columns():
                     "skill_versions",
                     "skill_installs",
                     "skill_releases",
+                    "pending_skill_fork_claims",
                     "runtime_manifests",
                 ],
                 revisions=["e2a7c9d4f601"],
@@ -183,6 +187,7 @@ async def test_assert_gateway_schema_ready_requires_agent_skill_install_column()
         "skill_versions",
         "skill_installs",
         "skill_releases",
+        "pending_skill_fork_claims",
         "runtime_manifests",
     ]
     columns = _complete_columns(*(table for table in tables if table != "alembic_version"))

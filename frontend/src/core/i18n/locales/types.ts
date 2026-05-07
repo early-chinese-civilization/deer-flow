@@ -431,6 +431,7 @@ export interface Translations {
       personalSpaceTab: string;
       communitySearchPlaceholder: string;
       allSegment: string;
+      systemSegment: string;
       downloadedSegment: string;
       authoredSegment: string;
       publishedSegment: string;
@@ -460,9 +461,22 @@ export interface Translations {
       communitySource: (ownerDisplayName: string) => string;
       downloadedSource: (ownerDisplayName: string) => string;
       forkedSource: (ownerDisplayName: string) => string;
+      forkedSourceDetail: (
+        sourceName: string,
+        ownerDisplayName: string,
+        sourcePlatformVersion: number | null,
+      ) => string;
       installedSource: string;
       createdSource: string;
       addToPersonalSpace: string;
+      createMyVersion: string;
+      forkDialogTitle: string;
+      forkDialogDescription: string;
+      forkUploadBackNotice: string;
+      confirmForkDownload: string;
+      forkDownloadPending: string;
+      forkDownloadSuccess: string;
+      forkDownloadError: string;
       viewInPersonalSpace: string;
       managePublished: string;
       publishUpdate: string;

@@ -37,6 +37,7 @@ function collectSkillsCopy(skillsCopy: typeof enUS.settings.skills): string[] {
     skillsCopy.communitySpaceTab,
     skillsCopy.personalSpaceTab,
     skillsCopy.allSegment,
+    skillsCopy.systemSegment,
     skillsCopy.downloadedSegment,
     skillsCopy.authoredSegment,
     skillsCopy.publishedSegment,
@@ -62,9 +63,18 @@ function collectSkillsCopy(skillsCopy: typeof enUS.settings.skills): string[] {
     skillsCopy.communitySource("Demo Publisher"),
     skillsCopy.downloadedSource("Demo Publisher"),
     skillsCopy.forkedSource("Demo Publisher"),
+    skillsCopy.forkedSourceDetail("demo-skill", "Demo Publisher", 1),
     skillsCopy.installedSource,
     skillsCopy.createdSource,
     skillsCopy.addToPersonalSpace,
+    skillsCopy.createMyVersion,
+    skillsCopy.forkDialogTitle,
+    skillsCopy.forkDialogDescription,
+    skillsCopy.forkUploadBackNotice,
+    skillsCopy.confirmForkDownload,
+    skillsCopy.forkDownloadPending,
+    skillsCopy.forkDownloadSuccess,
+    skillsCopy.forkDownloadError,
     skillsCopy.viewInPersonalSpace,
     skillsCopy.managePublished,
     skillsCopy.publishUpdate,
@@ -115,24 +125,73 @@ function collectAgentSkillCopy(agentsCopy: typeof enUS.agents): string[] {
 }
 
 void test("Skills locale copy uses SkillHub and install terminology", () => {
-  assert.equal(enUS.settings.skills.communitySpaceTab, "Community Space");
-  assert.equal(enUS.settings.skills.personalSpaceTab, "Personal Space");
-  assert.equal(
-    enUS.settings.skills.addToPersonalSpace,
-    "Add to Personal Space",
-  );
-  assert.equal(zhCN.settings.skills.communitySpaceTab, "社区空间");
-  assert.equal(zhCN.settings.skills.personalSpaceTab, "我的空间");
-  assert.equal(zhCN.settings.skills.addToPersonalSpace, "添加到我的空间");
+  assert.equal(enUS.settings.skills.communitySpaceTab, "Community Skills");
+  assert.equal(enUS.settings.skills.personalSpaceTab, "My Skills");
+  assert.equal(enUS.settings.skills.addToPersonalSpace, "Install");
+  assert.equal(zhCN.settings.skills.communitySpaceTab, "社区 Skills");
+  assert.equal(zhCN.settings.skills.personalSpaceTab, "我的 Skills");
+  assert.equal(zhCN.settings.skills.addToPersonalSpace, "安装");
 });
 
-void test("Skills locale copy does not expose download terminology", () => {
+void test("Skills visible IA avoids Space and Fork labels", () => {
+  const englishIaCopy = [
+    enUS.settings.skills.communitySpaceTab,
+    enUS.settings.skills.personalSpaceTab,
+    enUS.settings.skills.allSegment,
+    enUS.settings.skills.systemSegment,
+    enUS.settings.skills.downloadedSegment,
+    enUS.settings.skills.authoredSegment,
+    enUS.settings.skills.updatesSegment,
+    enUS.settings.skills.forksSegment,
+    enUS.settings.skills.availableInCommunity,
+    enUS.settings.skills.downloadedToPersonal,
+    enUS.settings.skills.forkedSkill,
+    enUS.settings.skills.officialSource,
+    enUS.settings.skills.installedSource,
+    enUS.settings.skills.createdSource,
+    enUS.settings.skills.viewInPersonalSpace,
+  ].join(" ");
+  const chineseIaCopy = [
+    zhCN.settings.skills.communitySpaceTab,
+    zhCN.settings.skills.personalSpaceTab,
+    zhCN.settings.skills.allSegment,
+    zhCN.settings.skills.systemSegment,
+    zhCN.settings.skills.downloadedSegment,
+    zhCN.settings.skills.authoredSegment,
+    zhCN.settings.skills.updatesSegment,
+    zhCN.settings.skills.forksSegment,
+    zhCN.settings.skills.availableInCommunity,
+    zhCN.settings.skills.downloadedToPersonal,
+    zhCN.settings.skills.forkedSkill,
+    zhCN.settings.skills.officialSource,
+    zhCN.settings.skills.installedSource,
+    zhCN.settings.skills.createdSource,
+    zhCN.settings.skills.viewInPersonalSpace,
+  ].join(" ");
+
+  assert.doesNotMatch(englishIaCopy, /\bspace\b|\bforks?\b/i);
+  assert.doesNotMatch(chineseIaCopy, /空间|Forks?|forks?/i);
+});
+
+void test("SkillHub install copy does not expose download terminology", () => {
   assert.doesNotMatch(
-    collectSkillsCopy(enUS.settings.skills).join(" "),
+    [
+      enUS.settings.skills.addToPersonalSpace,
+      enUS.settings.skills.installSkill,
+      enUS.settings.skills.installPending,
+      enUS.settings.skills.installSuccess("demo-skill"),
+      enUS.settings.skills.installError,
+    ].join(" "),
     /download/i,
   );
   assert.doesNotMatch(
-    collectSkillsCopy(zhCN.settings.skills).join(" "),
+    [
+      zhCN.settings.skills.addToPersonalSpace,
+      zhCN.settings.skills.installSkill,
+      zhCN.settings.skills.installPending,
+      zhCN.settings.skills.installSuccess("demo-skill"),
+      zhCN.settings.skills.installError,
+    ].join(" "),
     /下载/,
   );
 });
