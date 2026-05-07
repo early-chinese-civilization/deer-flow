@@ -37,4 +37,6 @@ jobs:
 
       - name: Run unit tests of backend
         working-directory: backend
+        env:
+          DEER_FLOW_CONFIG_PATH: ../config.example.yaml
         run: make test
