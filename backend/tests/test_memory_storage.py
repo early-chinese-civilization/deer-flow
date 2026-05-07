@@ -2,6 +2,7 @@
 
 import threading
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,8 +11,10 @@ from deerflow.agents.memory.storage import (
     DatabaseMemoryStorage,
     FileMemoryStorage,
     MemoryStorage,
+    clear_database_memory_handlers,
     create_empty_memory,
     get_memory_storage,
+    register_database_memory_handlers,
 )
 from deerflow.config.memory_config import MemoryConfig
 
@@ -206,6 +209,40 @@ class TestGetMemoryStorage:
 
 
 class TestDatabaseMemoryStorage:
+    @pytest.fixture(autouse=True)
+    def reset_database_handlers(self):
+        clear_database_memory_handlers()
+        yield
+        clear_database_memory_handlers()
+
+    def test_registered_database_handlers_are_used(self):
+        saved: dict[str, Any] = {}
+
+        async def load_handler(user_id: int) -> dict[str, Any]:
+            assert user_id == 42
+            return {"version": "1.0", "facts": [{"content": "from db"}]}
+
+        async def save_handler(user_id: int, memory_data: dict[str, Any]) -> None:
+            saved["user_id"] = user_id
+            saved["memory_data"] = memory_data
+
+        register_database_memory_handlers(load_handler=load_handler, save_handler=save_handler)
+
+        storage = DatabaseMemoryStorage()
+        memory = storage.load(user_id=42)
+        assert memory["facts"][0]["content"] == "from db"
+
+        memory["facts"].append({"content": "saved"})
+        assert storage.save(memory, user_id=42) is True
+        assert saved["user_id"] == 42
+        assert saved["memory_data"]["facts"][-1]["content"] == "saved"
+
+    def test_load_requires_registered_database_handler(self):
+        storage = DatabaseMemoryStorage()
+
+        with pytest.raises(RuntimeError, match="Database memory storage is not registered"):
+            storage.load(user_id=42)
+
     def test_load_returns_empty_memory_when_db_row_missing(self, monkeypatch):
         storage = DatabaseMemoryStorage()
         monkeypatch.setattr(

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import yaml
@@ -388,9 +390,74 @@ def _make_test_app(tmp_path: Path):
 def agent_client(tmp_path):
     """TestClient with agents router, using tmp_path as base_dir."""
     paths_instance = _make_paths(tmp_path)
+    agents = {}
+    next_id = 1
 
-    with patch("deerflow.config.agents_config.get_paths", return_value=paths_instance), patch("app.gateway.routers.agents.get_paths", return_value=paths_instance):
+    async def _list_agents(db, user_id):
+        del db
+        return [agent for agent in agents.values() if agent.user_id == user_id and agent.deleted_at is None]
+
+    async def _get_agent_by_name(db, user_id, name):
+        del db
+        agent = agents.get((user_id, name))
+        return agent if agent is not None and agent.deleted_at is None else None
+
+    async def _get_agent_by_id(db, agent_id):
+        del db
+        return next((agent for agent in agents.values() if agent.id == agent_id and agent.deleted_at is None), None)
+
+    async def _create_agent(db, *, user_id, name, description, soul, mcp_config, commit):
+        del db, mcp_config, commit
+        nonlocal next_id
+        agent = SimpleNamespace(
+            id=next_id,
+            user_id=user_id,
+            name=name,
+            description=description,
+            soul=soul,
+            agent_skills=[],
+            deleted_at=None,
+        )
+        next_id += 1
+        agents[(user_id, name)] = agent
+        agent_dir = tmp_path / "agents" / name
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        (agent_dir / "config.yaml").write_text(f"name: {name}\n", encoding="utf-8")
+        (agent_dir / "SOUL.md").write_text(soul, encoding="utf-8")
+        return agent
+
+    async def _update_agent(db, *, agent, description=None, soul=None, commit=False):
+        del db, commit
+        if description is not None:
+            agent.description = description
+        if soul is not None:
+            agent.soul = soul
+            (tmp_path / "agents" / agent.name / "SOUL.md").write_text(soul, encoding="utf-8")
+        return agent
+
+    async def _soft_delete_agent(db, *, agent, commit):
+        del db, commit
+        agent.deleted_at = object()
+        shutil.rmtree(tmp_path / "agents" / agent.name, ignore_errors=True)
+
+    async def _db_dependency():
+        yield SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+
+    with (
+        patch("deerflow.config.agents_config.get_paths", return_value=paths_instance),
+        patch("app.gateway.routers.agents.get_paths", return_value=paths_instance),
+        patch("app.gateway.routers.agents.AgentRepository.list_agents", _list_agents),
+        patch("app.gateway.routers.agents.AgentRepository.get_agent_by_name", _get_agent_by_name),
+        patch("app.gateway.routers.agents.AgentRepository.get_agent_by_id", _get_agent_by_id),
+        patch("app.gateway.routers.agents.AgentRepository.create_agent", _create_agent),
+        patch("app.gateway.routers.agents.AgentRepository.update_agent", _update_agent),
+        patch("app.gateway.routers.agents.AgentRepository.soft_delete_agent", _soft_delete_agent),
+    ):
         app = _make_test_app(tmp_path)
+        from app.gateway.routers import agents as agents_router
+
+        app.dependency_overrides[agents_router.get_current_user] = lambda: SimpleNamespace(id=7)
+        app.dependency_overrides[agents_router.get_db] = _db_dependency
         with TestClient(app) as client:
             client._tmp_path = tmp_path  # type: ignore[attr-defined]
             yield client
@@ -495,8 +562,8 @@ class TestAgentsAPI:
         response = agent_client.post("/api/agents", json=payload)
         assert response.status_code == 201
         data = response.json()
-        assert data["model"] == "deepseek-v3"
-        assert data["tool_groups"] == ["file:read", "bash"]
+        assert data["name"] == "specialized"
+        assert data["description"] == "Specialized agent"
 
     def test_create_persists_files_on_disk(self, agent_client, tmp_path):
         agent_client.post("/api/agents", json={"name": "disk-check", "soul": "disk soul"})

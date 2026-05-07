@@ -1,6 +1,28 @@
-import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
-import { visit } from "unist-util-visit";
+import { useMemo } from "react";
+
+type MarkdownNode = {
+  type: string;
+  value?: unknown;
+  url?: unknown;
+  children?: MarkdownNode[];
+};
+
+function rewriteResolvedOssUrlNodes(
+  node: MarkdownNode,
+  urlMap: Record<string, string>,
+) {
+  if ((node.type === "image" || node.type === "link") && typeof node.url === "string") {
+    const resolved = urlMap[normalizeOssUriCandidate(node.url)] ?? urlMap[node.url];
+    if (resolved) {
+      node.url = resolved;
+    }
+  }
+
+  for (const child of node.children ?? []) {
+    rewriteResolvedOssUrlNodes(child, urlMap);
+  }
+}
 
 function normalizeOssUriCandidate(value: string) {
   let text = value;
@@ -103,9 +125,13 @@ export function useResolvedOssUrlMap(
         queryKey: ["oss", "download-url", workspaceId, objectKey] as const,
         enabled: Boolean(workspaceId && objectKey),
         queryFn: async () => {
+          if (!workspaceId || !objectKey) {
+            throw new Error("Missing OSS URI source for download URL resolution");
+          }
+
           const result = await resolveWorkspaceDownloadUrl(
-            workspaceId as string,
-            objectKey as string,
+            workspaceId,
+            objectKey,
           );
           return result.download_url;
         },
@@ -128,16 +154,7 @@ export function useResolvedOssUrlMap(
 export function remarkRewriteResolvedOssUrls(urlMap: Record<string, string>) {
   return () => {
     return (tree: unknown) => {
-      visit(tree as any, ["image", "link"], (node: any) => {
-        if (typeof node.url !== "string") {
-          return;
-        }
-
-    const resolved = urlMap[normalizeOssUriCandidate(node.url)] ?? urlMap[node.url];
-        if (resolved) {
-          node.url = resolved;
-        }
-      });
+      rewriteResolvedOssUrlNodes(tree as MarkdownNode, urlMap);
     };
   };
 }
@@ -146,7 +163,7 @@ export function rewriteMarkdownImageUrls(
   content: string,
   urlMap: Record<string, string>,
 ) {
-    return content.replace(/(!\[[^\]]*\]\()([^\s)]+)(\))/g, (match, prefix, url, suffix) => {
+  return content.replace(/(!\[[^\]]*\]\()([^\s)]+)(\))/g, (match, prefix, url, suffix) => {
     if (typeof url !== "string") {
       return match;
     }

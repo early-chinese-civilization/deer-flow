@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { resolveWorkspaceDownloadUrl } from "./api";
-import type { BrowserOssSource } from "./source";
 import {
   getResolvedOssUrlQueryKey,
   isResolvedOssUrlQueryEnabled,
 } from "./query";
+import type { BrowserOssSource } from "./source";
 
 export function useResolvedOssUrl(
   workspaceId: string | null | undefined,
@@ -19,9 +19,13 @@ export function useResolvedOssUrl(
         return source.httpUri;
       }
 
+      if (!workspaceId || !source?.objectKey) {
+        throw new Error("Missing OSS source for download URL resolution");
+      }
+
       const result = await resolveWorkspaceDownloadUrl(
-        workspaceId as string,
-        source?.objectKey as string,
+        workspaceId,
+        source.objectKey,
       );
 
       return result.download_url;

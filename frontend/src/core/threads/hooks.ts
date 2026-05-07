@@ -17,13 +17,13 @@ import type { FileInMessage } from "../messages/utils";
 import type { LocalSettings } from "../settings";
 import { useUpdateSubtask } from "../tasks/context";
 import type { UploadedFileInfo } from "../uploads";
+import { getCanonicalUploadedFilePath } from "../uploads/composer-core";
 
 import { ensureThread } from "./api";
 import {
   applyPendingUploadedFiles,
   type PendingUploadedFiles,
 } from "./message-attachments";
-import { getCanonicalUploadedFilePath } from "../uploads/composer-core";
 import { getRunReconnectStorage } from "./reconnect-storage";
 import { shouldSuppressPassiveStreamError } from "./stream-error";
 import {

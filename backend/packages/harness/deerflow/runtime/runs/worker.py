@@ -92,7 +92,7 @@ async def run_agent(
         runtime_context = {}
         if "context" in config and isinstance(config["context"], dict):
             runtime_context.update(config["context"])
-        runtime_context.setdefault("thread_id", thread_id)
+        runtime_context["thread_id"] = thread_id
 
         configurable = config.setdefault("configurable", {})
         workspace_id = configurable.get("workspace_id")

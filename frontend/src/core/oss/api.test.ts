@@ -34,8 +34,17 @@ void test("requests a fresh presigned download url for a workspace file", async 
       oss_uri: "oss://demo-bucket/workspaces/ws-123/uploads/report.md",
     });
     assert.equal(calls.length, 1);
+    const firstCall = calls[0];
+    assert.ok(firstCall);
+    const requestInput = firstCall[0];
+    const requestUrl =
+      typeof requestInput === "string"
+        ? requestInput
+        : requestInput instanceof URL
+          ? requestInput.toString()
+          : requestInput.url;
     assert.match(
-      String(calls[0]?.[0]),
+      requestUrl,
       /\/api\/workspaces\/ws-123\/uploads\/download-url\?object_key=uploads%2Freport\.md$/,
     );
   } finally {

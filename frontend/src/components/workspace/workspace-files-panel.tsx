@@ -30,6 +30,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useI18n } from "@/core/i18n/hooks";
 import { extractPresentFilesFromMessage } from "@/core/messages/utils";
+import {
+  getBrowserOssSource,
+  useResolvedOssUrl,
+} from "@/core/oss";
 import type { ThreadRecord } from "@/core/threads";
 import { getThread } from "@/core/threads/api";
 import {
@@ -42,10 +46,6 @@ import {
 import { addObservedWorkspaceFilesToList } from "@/core/uploads/cache";
 import { getFileIcon } from "@/core/utils/files";
 import { cn } from "@/lib/utils";
-import {
-  getBrowserOssSource,
-  useResolvedOssUrl,
-} from "@/core/oss";
 
 import { useArtifacts } from "./artifacts/context";
 import { useThread } from "./messages/context";
