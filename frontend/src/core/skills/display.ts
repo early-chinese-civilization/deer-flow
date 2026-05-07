@@ -24,6 +24,48 @@ export function getSkillPlatformVersion(skill: Skill): number | null {
   );
 }
 
+export interface AgentSkillDisplayFields {
+  current_platform_version?: unknown;
+  source?: string | null;
+  source_label?: string | null;
+  update_available?: boolean | null;
+  available?: boolean | null;
+  status?: string | null;
+}
+
+export function formatPlatformVersion(value: unknown): string | null {
+  const version = getPlatformVersionNumber(value);
+  return version == null ? null : `v${version}`;
+}
+
+export function getAgentSkillBindingPlatformVersion(
+  skill: AgentSkillDisplayFields,
+): number | null {
+  return getPlatformVersionNumber(skill.current_platform_version);
+}
+
+export function isAgentSkillBindingUnavailable(
+  skill: AgentSkillDisplayFields,
+): boolean {
+  return skill.available === false || skill.status === "unavailable";
+}
+
+export function getAgentSkillSourceLabel(
+  skill: AgentSkillDisplayFields,
+): string {
+  const explicit = skill.source_label?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  if (skill.source === "skillhub") {
+    return "SkillHub";
+  }
+  if (skill.source === "my_skills") {
+    return "My Skills";
+  }
+  return "Unknown source";
+}
+
 export function getSkillHubLatestPlatformVersion(skill: Skill): number | null {
   return (
     getPlatformVersionNumber(skill.latest_platform_version) ??

@@ -5,9 +5,13 @@ import type { Skill } from "./type";
 
 const {
   findInstalledSkillForSkillHubItem,
+  formatPlatformVersion,
+  getAgentSkillBindingPlatformVersion,
+  getAgentSkillSourceLabel,
   getSkillHubLatestPlatformVersion,
   getSkillInstallState,
   getSkillPlatformVersion,
+  isAgentSkillBindingUnavailable,
 } = await import(new URL("./display.ts", import.meta.url).href);
 
 function skill(overrides: Partial<Skill>): Skill {
@@ -91,5 +95,31 @@ void test("reports not-installed when no install identity or version exists", ()
       }),
     ),
     "not-installed",
+  );
+});
+
+void test("formats Agent skill binding metadata without package metadata", () => {
+  assert.equal(formatPlatformVersion(12), "v12");
+  assert.equal(formatPlatformVersion("13"), "v13");
+  assert.equal(formatPlatformVersion("pkg-ignored"), null);
+  assert.equal(
+    getAgentSkillBindingPlatformVersion({
+      current_platform_version: 4,
+    }),
+    4,
+  );
+  assert.equal(
+    getAgentSkillSourceLabel({
+      source: "my_skills",
+      source_label: null,
+    }),
+    "My Skills",
+  );
+  assert.equal(
+    isAgentSkillBindingUnavailable({
+      available: false,
+      status: "unavailable",
+    }),
+    true,
   );
 });

@@ -166,6 +166,14 @@ export interface Translations {
     createSkillsHint: string;
     createSkillsEmpty: string;
     createSkillsLoading: string;
+    skillSourceMySkills: string;
+    skillSourceSkillHub: string;
+    skillSourceUnknown: string;
+    skillVersionUnavailable: string;
+    skillUpdateAvailable: string;
+    skillMetadataUnavailable: string;
+    enabledSkillsLabel: string;
+    noBoundSkills: string;
     createButton: string;
     createButtonPending: string;
     createSuccess: string;

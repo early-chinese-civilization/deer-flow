@@ -1,6 +1,12 @@
 "use client";
 
-import { BotIcon, CheckIcon, ChevronDownIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  BotIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  SparklesIcon,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -9,11 +15,105 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { Agent } from "@/core/agents/types";
+import type { Agent, AgentSkillMetadata } from "@/core/agents/types";
 import { useI18n } from "@/core/i18n/hooks";
+import {
+  formatPlatformVersion,
+  getAgentSkillBindingPlatformVersion,
+  isAgentSkillBindingUnavailable,
+} from "@/core/skills/display";
 import { cn } from "@/lib/utils";
 
-type AgentOption = Pick<Agent, "name" | "description">;
+type AgentOption = Pick<Agent, "name" | "description" | "skill_metadata">;
+
+function getAgentSkillVersionLabel(
+  skill: AgentSkillMetadata,
+  unavailableLabel: string,
+): string {
+  return (
+    formatPlatformVersion(getAgentSkillBindingPlatformVersion(skill)) ??
+    unavailableLabel
+  );
+}
+
+function getAgentSkillSourceLabel(
+  skill: AgentSkillMetadata,
+  labels: {
+    skillhub: string;
+    mySkills: string;
+    unknown: string;
+  },
+): string {
+  if (skill.source === "skillhub") {
+    return labels.skillhub;
+  }
+  if (skill.source === "my_skills") {
+    return labels.mySkills;
+  }
+  return skill.source_label || labels.unknown;
+}
+
+function AgentSkillSummary({
+  skills,
+}: {
+  skills: AgentSkillMetadata[] | null | undefined;
+}) {
+  const { t } = useI18n();
+  const visibleSkills = skills ?? [];
+
+  if (visibleSkills.length === 0) {
+    return (
+      <div className="text-muted-foreground px-2 py-2 text-xs">
+        {t.agents.noBoundSkills}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1 px-2 py-2">
+      {visibleSkills.map((skill) => {
+        const unavailable = isAgentSkillBindingUnavailable(skill);
+        return (
+          <div key={`${skill.skill_install_id ?? "legacy"}:${skill.name}`}>
+            <div className="flex min-w-0 items-center gap-2 text-xs">
+              <SparklesIcon className="text-muted-foreground size-3.5 shrink-0" />
+              <span className="truncate font-medium">{skill.name}</span>
+              {unavailable && (
+                <AlertTriangleIcon className="text-destructive size-3.5 shrink-0" />
+              )}
+            </div>
+            <div
+              className={cn(
+                "text-muted-foreground mt-0.5 flex flex-wrap gap-2 pl-5 text-xs",
+                unavailable && "text-destructive",
+              )}
+            >
+              <span>
+                {getAgentSkillVersionLabel(
+                  skill,
+                  t.agents.skillVersionUnavailable,
+                )}
+              </span>
+              <span>
+                {getAgentSkillSourceLabel(skill, {
+                  skillhub: t.agents.skillSourceSkillHub,
+                  mySkills: t.agents.skillSourceMySkills,
+                  unknown: t.agents.skillSourceUnknown,
+                })}
+              </span>
+              {skill.update_available && (
+                <span className="text-primary">
+                  {t.agents.skillUpdateAvailable}
+                </span>
+              )}
+              {unavailable && <span>{t.agents.skillMetadataUnavailable}</span>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export function DraftAgentControl({
   agentName,
@@ -71,6 +171,11 @@ export function DraftAgentControl({
                     {agent.description}
                   </div>
                 )}
+                {agent.skill_metadata && agent.skill_metadata.length > 0 && (
+                  <div className="text-muted-foreground truncate pt-1 text-xs">
+                    {agent.skill_metadata.length} {t.agents.enabledSkillsLabel}
+                  </div>
+                )}
               </div>
               {isSelected && <CheckIcon className="size-4" />}
             </DropdownMenuItem>
@@ -87,28 +192,50 @@ export function DraftAgentControl({
 }
 
 export function ThreadAgentBadge({
+  agent,
   agentName,
   isLoading,
 }: {
+  agent?: Agent | null;
   agentName?: string | null;
   isLoading?: boolean;
 }) {
   const { t } = useI18n();
   const label = isLoading ? t.agents.loadingAgent : agentName;
+  const skills = agent?.skill_metadata ?? [];
+  const unavailable = skills.some((skill) => isAgentSkillBindingUnavailable(skill));
 
   if (!label) {
     return null;
   }
 
   return (
-    <div
-      className={cn(
-        "bg-background/80 text-muted-foreground flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-medium backdrop-blur-sm",
-        !isLoading && "border-primary/30 text-foreground",
-      )}
-    >
-      <BotIcon className="size-4" />
-      <span>{label}</span>
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "bg-background/80 text-muted-foreground flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-medium backdrop-blur-sm",
+            !isLoading && "border-primary/30 text-foreground",
+            unavailable && "border-destructive/50",
+          )}
+        >
+          <BotIcon className="size-4" />
+          <span>{label}</span>
+          {!isLoading && skills.length > 0 && (
+            <span className="text-muted-foreground">
+              {skills.length} {t.agents.enabledSkillsLabel}
+            </span>
+          )}
+          {unavailable && (
+            <AlertTriangleIcon className="text-destructive size-4" />
+          )}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" side="top" className="w-72">
+        <div className="border-b px-2 py-2 text-xs font-medium">{label}</div>
+        <AgentSkillSummary skills={skills} />
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.db.models import Agent, User
-from app.gateway.db.repository import AgentRepository, SkillInstallRepository
+from app.gateway.db.repository import AgentRepository, SkillInstallRepository, SkillReleaseRepository
 from app.gateway.deps import get_current_user, get_db
 from deerflow.config.paths import get_paths
 
@@ -20,12 +22,28 @@ router = APIRouter(prefix="/api", tags=["agents"])
 AGENT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9-]+$")
 
 
+class AgentSkillMetadataResponse(BaseModel):
+    """Installed skill binding metadata for Agent display surfaces."""
+
+    name: str = Field(..., description="Skill name resolved from the bound install/current version")
+    skill_install_id: int | None = Field(default=None, description="Agent-bound SkillInstall ID")
+    skill_definition_id: int | None = Field(default=None, description="Stable SkillDefinition ID")
+    skill_version_id: int | None = Field(default=None, description="Current installed SkillVersion ID")
+    current_platform_version: int | None = Field(default=None, description="Current installed platform version")
+    source: Literal["skillhub", "my_skills", "unknown"] = Field(default="unknown", description="Installed skill source enum for display")
+    source_label: str = Field(default="Unknown source", description="Installed skill source label for display")
+    update_available: bool | None = Field(default=None, description="Whether a published platform update is available")
+    available: bool = Field(default=False, description="Whether install/current version metadata is complete")
+    status: Literal["available", "unavailable"] = Field(default="unavailable", description="Display availability status")
+
+
 class AgentResponse(BaseModel):
     """Response model for a custom agent."""
 
     name: str = Field(..., description="Agent name (hyphen-case)")
     description: str = Field(default="", description="Agent description")
     skills: list[str] | None = Field(default=None, description="Optional skills whitelist")
+    skill_metadata: list[AgentSkillMetadataResponse] | None = Field(default=None, description="Installed skill binding metadata for display")
     soul: str | None = Field(default=None, description="SOUL.md content (included on GET /{name})")
 
 
@@ -68,7 +86,7 @@ def _normalize_agent_name(name: str) -> str:
 
 def _active_skill_names(agent: Agent) -> list[str] | None:
     """Return ordered active skill names for an agent, or None when unrestricted."""
-    active_associations = [association for association in agent.agent_skills if association.deleted_at is None and (association.skill_install is not None or association.skill is not None)]
+    active_associations = [association for association in agent.agent_skills if association.deleted_at is None and association.enabled and (association.skill_install is not None or association.skill is not None)]
     if not active_associations:
         return None
 
@@ -77,17 +95,111 @@ def _active_skill_names(agent: Agent) -> list[str] | None:
     for association in active_associations:
         if association.skill_install is not None and association.skill_install.definition is not None:
             names.append(association.skill_install.definition.name)
+        elif association.skill_install is not None and association.skill_install.current_version is not None and association.skill_install.current_version.definition is not None:
+            names.append(association.skill_install.current_version.definition.name)
         elif association.skill is not None:
             names.append(association.skill.name)
     return names
 
 
-def _agent_to_response(agent: Agent, *, include_soul: bool = False) -> AgentResponse:
+def _skill_source_for_agent(agent: Agent, definition_owner_user_id: int | None) -> tuple[Literal["skillhub", "my_skills", "unknown"], str]:
+    """Return a display source without consulting public/latest rows."""
+    if definition_owner_user_id is None:
+        return "skillhub", "SkillHub"
+    if agent.user_id is not None and definition_owner_user_id == agent.user_id:
+        return "my_skills", "My Skills"
+    return "skillhub", "SkillHub"
+
+
+def _active_skill_metadata(agent: Agent, *, latest_versions_by_definition_id: Mapping[int, int] | None = None) -> list[AgentSkillMetadataResponse] | None:
+    """Return ordered display metadata for active agent skill bindings."""
+    active_associations = [association for association in agent.agent_skills if association.deleted_at is None and association.enabled and (association.skill_install is not None or association.skill is not None)]
+    if not active_associations:
+        return None
+
+    latest_versions_by_definition_id = latest_versions_by_definition_id or {}
+    active_associations.sort(key=lambda association: (association.display_order, association.id))
+    metadata: list[AgentSkillMetadataResponse] = []
+    for association in active_associations:
+        install = association.skill_install
+        install_active = install is not None and install.deleted_at is None
+        current_version = install.current_version if install is not None else None
+        definition = install.definition if install is not None else None
+        if definition is None and current_version is not None:
+            definition = current_version.definition
+
+        name = None
+        if definition is not None:
+            name = definition.name
+        elif association.skill is not None:
+            name = association.skill.name
+        if name is None:
+            name = "unknown"
+
+        skill_definition_id = definition.id if definition is not None else (current_version.skill_definition_id if current_version is not None else None)
+        current_version_matches_install = install is not None and current_version is not None and current_version.id == install.current_version_id
+        current_version_matches_definition = install is not None and current_version is not None and current_version.skill_definition_id == install.skill_definition_id
+        available = install_active and definition is not None and current_version_matches_install and current_version_matches_definition
+        latest_version_id = latest_versions_by_definition_id.get(skill_definition_id) if skill_definition_id is not None else None
+        update_available = None
+        if available and install is not None and latest_version_id is not None:
+            update_available = latest_version_id != install.current_version_id
+        source, source_label = _skill_source_for_agent(agent, definition.owner_user_id) if definition is not None else ("unknown", "Unknown source")
+
+        metadata.append(
+            AgentSkillMetadataResponse(
+                name=name,
+                skill_install_id=install.id if install is not None else None,
+                skill_definition_id=skill_definition_id,
+                skill_version_id=current_version.id if current_version is not None else None,
+                current_platform_version=current_version.version_number if current_version is not None else None,
+                source=source,
+                source_label=source_label,
+                update_available=update_available,
+                available=available,
+                status="available" if available else "unavailable",
+            )
+        )
+    return metadata
+
+
+def _collect_bound_definition_ids(agents: list[Agent]) -> set[int]:
+    """Collect definition IDs from active install-backed bindings."""
+    definition_ids: set[int] = set()
+    for agent in agents:
+        for association in agent.agent_skills:
+            if association.deleted_at is not None or not association.enabled or association.skill_install is None:
+                continue
+            install = association.skill_install
+            if install.deleted_at is not None:
+                continue
+            if install.skill_definition_id is not None:
+                definition_ids.add(install.skill_definition_id)
+    return definition_ids
+
+
+async def _load_latest_version_ids_by_definition(db: AsyncSession, definition_ids: set[int]) -> dict[int, int]:
+    """Load latest published platform version IDs for update badges only."""
+    latest_versions_by_definition_id: dict[int, int] = {}
+    for definition_id in definition_ids:
+        release = await SkillReleaseRepository.get_latest_published_release_for_definition(db, skill_definition_id=definition_id)
+        if release is not None and release.skill_version_id is not None:
+            latest_versions_by_definition_id[definition_id] = release.skill_version_id
+    return latest_versions_by_definition_id
+
+
+def _agent_to_response(
+    agent: Agent,
+    *,
+    include_soul: bool = False,
+    latest_versions_by_definition_id: Mapping[int, int] | None = None,
+) -> AgentResponse:
     """Convert a database agent row to the API response model."""
     return AgentResponse(
         name=agent.name,
         description=agent.description or "",
         skills=_active_skill_names(agent),
+        skill_metadata=_active_skill_metadata(agent, latest_versions_by_definition_id=latest_versions_by_definition_id),
         soul=agent.soul if include_soul else None,
     )
 
@@ -125,7 +237,8 @@ async def list_agents(
 ) -> AgentsListResponse:
     try:
         agents = await AgentRepository.list_agents(db, current_user.id)
-        return AgentsListResponse(agents=[_agent_to_response(agent) for agent in agents])
+        latest_versions_by_definition_id = await _load_latest_version_ids_by_definition(db, _collect_bound_definition_ids(agents))
+        return AgentsListResponse(agents=[_agent_to_response(agent, latest_versions_by_definition_id=latest_versions_by_definition_id) for agent in agents])
     except Exception as e:
         logger.error(f"Failed to list agents: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list agents: {str(e)}")
@@ -166,7 +279,8 @@ async def get_agent(
         agent = await AgentRepository.get_agent_by_name(db, user_id=current_user.id, name=normalized_name)
         if agent is None:
             raise HTTPException(status_code=404, detail=f"Agent '{normalized_name}' not found")
-        return _agent_to_response(agent, include_soul=True)
+        latest_versions_by_definition_id = await _load_latest_version_ids_by_definition(db, _collect_bound_definition_ids([agent]))
+        return _agent_to_response(agent, include_soul=True, latest_versions_by_definition_id=latest_versions_by_definition_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -216,7 +330,8 @@ async def create_agent_endpoint(
             agent = refreshed
 
         logger.info(f"Created agent '{normalized_name}' for user {current_user.id}")
-        return _agent_to_response(agent, include_soul=True)
+        latest_versions_by_definition_id = await _load_latest_version_ids_by_definition(db, _collect_bound_definition_ids([agent]))
+        return _agent_to_response(agent, include_soul=True, latest_versions_by_definition_id=latest_versions_by_definition_id)
     except HTTPException:
         await db.rollback()
         raise
@@ -267,7 +382,8 @@ async def update_agent(
             agent = refreshed
 
         logger.info(f"Updated agent '{normalized_name}' for user {current_user.id}")
-        return _agent_to_response(agent, include_soul=True)
+        latest_versions_by_definition_id = await _load_latest_version_ids_by_definition(db, _collect_bound_definition_ids([agent]))
+        return _agent_to_response(agent, include_soul=True, latest_versions_by_definition_id=latest_versions_by_definition_id)
     except HTTPException:
         await db.rollback()
         raise
