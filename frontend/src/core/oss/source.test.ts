@@ -13,12 +13,14 @@ void test("maps a file-like object to a browser oss source only when complete", 
     getBrowserOssSource({
       oss_uri: "oss://demo-bucket/workspaces/ws-123/uploads/report.md",
       object_key: "uploads/report.md",
-      artifact_url: "/api/workspaces/ws-123/uploads/content?object_key=uploads%2Freport.md",
+      artifact_url:
+        "/api/workspaces/ws-123/uploads/content?object_key=uploads%2Freport.md",
     }),
     {
       ossUri: "oss://demo-bucket/workspaces/ws-123/uploads/report.md",
       objectKey: "uploads/report.md",
-      httpUri: "/api/workspaces/ws-123/uploads/content?object_key=uploads%2Freport.md",
+      httpUri:
+        "/api/workspaces/ws-123/uploads/content?object_key=uploads%2Freport.md",
     },
   );
 
@@ -36,6 +38,22 @@ void test("maps a file-like object to a browser oss source only when complete", 
       object_key: null,
     }),
     null,
+  );
+});
+
+void test("uses backend proxy url when a file has no OSS URI yet", () => {
+  assert.deepEqual(
+    getBrowserOssSource({
+      object_key: "workspaces/ws-123/outputs/report.md",
+      http_uri:
+        "/api/workspaces/ws-123/uploads/content?object_key=workspaces%2Fws-123%2Foutputs%2Freport.md",
+    }),
+    {
+      ossUri: null,
+      objectKey: "workspaces/ws-123/outputs/report.md",
+      httpUri:
+        "/api/workspaces/ws-123/uploads/content?object_key=workspaces%2Fws-123%2Foutputs%2Freport.md",
+    },
   );
 });
 

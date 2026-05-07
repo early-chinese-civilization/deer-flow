@@ -89,10 +89,9 @@ function mergeFilesByRelativePath(
 ) {
   const overwriteExisting = options?.overwriteExisting ?? true;
   const filesByRelativePath = new Map(
-    currentFiles.map((file) => [
-      normalizeRelativePathKey(file.relative_path),
-      file,
-    ] as const),
+    currentFiles.map(
+      (file) => [normalizeRelativePathKey(file.relative_path), file] as const,
+    ),
   );
 
   for (const file of nextFiles) {
@@ -143,8 +142,17 @@ function relativePathFromVirtualPath(virtualPath: string): string | null {
   return null;
 }
 
+function buildWorkspaceContentUrl(
+  workspaceId: string,
+  objectKey: string,
+): string {
+  const query = new URLSearchParams({ object_key: objectKey }).toString();
+  return `/api/workspaces/${encodeURIComponent(workspaceId)}/uploads/content?${query}`;
+}
+
 function buildObservedWorkspaceFile(
   virtualPath: string,
+  options?: { workspaceId?: string | null },
 ): UploadedFileInfo | null {
   const relativePath = relativePathFromVirtualPath(virtualPath);
   if (!relativePath) {
@@ -158,6 +166,13 @@ function buildObservedWorkspaceFile(
   }
 
   const extensionIndex = filename.lastIndexOf(".");
+  const workspaceId = options?.workspaceId?.trim();
+  const objectKey = workspaceId
+    ? `workspaces/${workspaceId}/${relativePath}`
+    : `virtual:${relativePath}`;
+  const httpUri = workspaceId
+    ? buildWorkspaceContentUrl(workspaceId, objectKey)
+    : null;
 
   return {
     filename,
@@ -165,10 +180,10 @@ function buildObservedWorkspaceFile(
     path: virtualPath,
     virtual_path: virtualPath,
     relative_path: relativePath,
-    artifact_url: null,
-    http_uri: null,
+    artifact_url: httpUri,
+    http_uri: httpUri,
     oss_uri: null,
-    object_key: `virtual:${relativePath}`,
+    object_key: objectKey,
     signed_url: null,
     extension: extensionIndex >= 0 ? filename.slice(extensionIndex) : null,
     markdown_oss_uri: null,
@@ -299,13 +314,14 @@ export function addUploadedFilesToList(
 export function addObservedWorkspaceFilesToList(
   current: ListFilesResponse | undefined,
   virtualPaths: string[],
+  options?: { workspaceId?: string | null },
 ): ListFilesResponse | undefined {
   if (!current || virtualPaths.length === 0) {
     return current;
   }
 
   const observedFiles = virtualPaths
-    .map(buildObservedWorkspaceFile)
+    .map((virtualPath) => buildObservedWorkspaceFile(virtualPath, options))
     .filter((file): file is UploadedFileInfo => file !== null);
 
   if (observedFiles.length === 0) {
