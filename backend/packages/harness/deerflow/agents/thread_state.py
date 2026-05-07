@@ -19,16 +19,47 @@ class ThreadDataState(TypedDict):
 class ViewedImageData(TypedDict):
     base64: str
     mime_type: str
+    virtual_path: NotRequired[str]
+    oss_uri: NotRequired[str]
+    http_uri: NotRequired[str | None]
+    object_key: NotRequired[str]
 
 
-def merge_artifacts(existing: list[str] | None, new: list[str] | None) -> list[str]:
-    """Reducer for artifacts list - merges and deduplicates artifacts."""
-    if existing is None:
-        return new or []
-    if new is None:
-        return existing
-    # Use dict.fromkeys to deduplicate while preserving order
-    return list(dict.fromkeys(existing + new))
+class WorkspaceFileState(TypedDict):
+    filename: str
+    size: int
+    path: str
+    virtual_path: str
+    oss_uri: str
+    http_uri: NotRequired[str | None]
+    object_key: str
+    extension: NotRequired[str | None]
+    modified: NotRequired[int | None]
+    original_filename: NotRequired[str]
+    markdown_file: NotRequired[str | None]
+    markdown_path: NotRequired[str | None]
+    markdown_virtual_path: NotRequired[str | None]
+    markdown_object_key: NotRequired[str | None]
+    markdown_oss_uri: NotRequired[str | None]
+    markdown_http_uri: NotRequired[str | None]
+
+
+def _normalize_artifacts(value: dict[str, str] | list[str] | None) -> dict[str, str]:
+    if value is None:
+        return {}
+    if isinstance(value, list):
+        return {path: path for path in value if isinstance(path, str)}
+    return {str(key): str(val) for key, val in value.items() if isinstance(key, str) and isinstance(val, str)}
+
+
+def merge_artifacts(
+    existing: dict[str, str] | list[str] | None,
+    new: dict[str, str] | list[str] | None,
+) -> dict[str, str]:
+    """Reducer for artifacts map - merges and deduplicates by virtual path."""
+    merged = _normalize_artifacts(existing)
+    merged.update(_normalize_artifacts(new))
+    return merged
 
 
 def merge_viewed_images(existing: dict[str, ViewedImageData] | None, new: dict[str, ViewedImageData] | None) -> dict[str, ViewedImageData]:
@@ -52,7 +83,7 @@ class ThreadState(AgentState):
     sandbox: NotRequired[SandboxState | None]
     thread_data: NotRequired[ThreadDataState | None]
     title: NotRequired[str | None]
-    artifacts: Annotated[list[str], merge_artifacts]
+    artifacts: Annotated[dict[str, str], merge_artifacts]
     todos: NotRequired[list | None]
-    uploaded_files: NotRequired[list[dict] | None]
+    uploaded_files: NotRequired[list[WorkspaceFileState] | None]
     viewed_images: Annotated[dict[str, ViewedImageData], merge_viewed_images]  # image_path -> {base64, mime_type}

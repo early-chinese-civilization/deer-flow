@@ -10,15 +10,16 @@ import {
 
 import { useSidebar } from "@/components/ui/sidebar";
 import { env } from "@/env";
+import type { BrowserOssSource } from "@/core/oss";
 
 export interface ArtifactSource {
   filepath: string;
-  viewUrl: string;
+  browserOssSource?: BrowserOssSource | null;
 }
 
 export interface ArtifactsContextType {
-  artifacts: string[];
-  setArtifacts: Dispatch<SetStateAction<string[]>>;
+  artifacts: Record<string, string>;
+  setArtifacts: Dispatch<SetStateAction<Record<string, string>>>;
   setArtifactSourcesForThread: (
     threadId: string,
     sources: ArtifactSource[],
@@ -47,7 +48,7 @@ interface ArtifactsProviderProps {
 }
 
 export function ArtifactsProvider({ children }: ArtifactsProviderProps) {
-  const [artifacts, setArtifacts] = useState<string[]>([]);
+  const [artifacts, setArtifacts] = useState<Record<string, string>>({});
   const [artifactSourcesByThread, setArtifactSourcesByThread] = useState<
     Record<string, Record<string, ArtifactSource>>
   >({});
@@ -95,7 +96,10 @@ export function ArtifactsProvider({ children }: ArtifactsProviderProps) {
             const nextSource = nextSources[key];
             return (
               currentSource?.filepath === nextSource?.filepath &&
-              currentSource?.viewUrl === nextSource?.viewUrl
+              currentSource?.browserOssSource?.ossUri ===
+                nextSource?.browserOssSource?.ossUri &&
+              currentSource?.browserOssSource?.objectKey ===
+                nextSource?.browserOssSource?.objectKey
             );
           });
 

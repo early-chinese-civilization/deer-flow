@@ -23,8 +23,11 @@ import { useThread } from "../messages/context";
 const CLOSE_MODE = { chat: 100, artifacts: 0 };
 const OPEN_MODE = { chat: 60, artifacts: 40 };
 
-function mergeArtifactPaths(primary: string[], secondary: string[]) {
-  return Array.from(new Set([...primary, ...secondary]));
+function mergeArtifacts(
+  primary: Record<string, string>,
+  secondary: Record<string, string>,
+) {
+  return { ...secondary, ...primary };
 }
 
 const ChatBox: React.FC<{ children: React.ReactNode; threadId: string }> = ({
@@ -47,6 +50,7 @@ const ChatBox: React.FC<{ children: React.ReactNode; threadId: string }> = ({
   } = useArtifacts();
 
   const [autoSelectFirstArtifact, setAutoSelectFirstArtifact] = useState(true);
+  const threadArtifacts = (thread.values.artifacts as Record<string, string>) ?? {};
   useEffect(() => {
     const hasThreadChanged = threadIdRef.current !== threadId;
 
@@ -55,12 +59,11 @@ const ChatBox: React.FC<{ children: React.ReactNode; threadId: string }> = ({
       deselect();
     }
 
-    const threadArtifacts = thread.values.artifacts ?? [];
     if (hasThreadChanged) {
       setArtifacts(threadArtifacts);
     } else {
       setArtifacts((currentArtifacts) =>
-        mergeArtifactPaths(threadArtifacts, currentArtifacts),
+        mergeArtifacts(threadArtifacts, currentArtifacts),
       );
     }
 
@@ -76,9 +79,9 @@ const ChatBox: React.FC<{ children: React.ReactNode; threadId: string }> = ({
       env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" &&
       autoSelectFirstArtifact
     ) {
-      if (thread?.values?.artifacts?.length > 0) {
+      if (Object.keys(threadArtifacts).length > 0) {
         setAutoSelectFirstArtifact(false);
-        selectArtifact(thread.values.artifacts[0]!);
+        selectArtifact(Object.keys(threadArtifacts)[0]!);
       }
     }
   }, [
@@ -93,7 +96,7 @@ const ChatBox: React.FC<{ children: React.ReactNode; threadId: string }> = ({
 
   const artifactPanelOpen = useMemo(() => {
     if (env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true") {
-      return artifactsOpen && artifacts?.length > 0;
+      return artifactsOpen && Object.keys(artifacts ?? {}).length > 0;
     }
     return artifactsOpen;
   }, [artifactsOpen, artifacts]);
@@ -162,7 +165,7 @@ const ChatBox: React.FC<{ children: React.ReactNode; threadId: string }> = ({
                   <XIcon />
                 </Button>
               </div>
-              {thread.values.artifacts?.length === 0 ? (
+              {Object.keys(threadArtifacts).length === 0 ? (
                 <ConversationEmptyState
                   icon={<FilesIcon />}
                   title="No artifact selected"
@@ -176,7 +179,7 @@ const ChatBox: React.FC<{ children: React.ReactNode; threadId: string }> = ({
                   <main className="min-h-0 grow">
                     <ArtifactFileList
                       className="max-w-(--container-width-sm) p-4 pt-12"
-                      files={thread.values.artifacts ?? []}
+                      files={threadArtifacts}
                       threadId={threadId}
                     />
                   </main>

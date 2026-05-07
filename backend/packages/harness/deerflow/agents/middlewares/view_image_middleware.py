@@ -109,14 +109,29 @@ class ViewImageMiddleware(AgentMiddleware[ViewImageMiddlewareState]):
             return [{"type": "text", "text": "No images have been viewed."}]
 
         # Build the message with image information
-        content_blocks: list[str | dict] = [{"type": "text", "text": "Here are the images you've viewed:"}]
+        content_blocks: list[str | dict] = [
+            {
+                "type": "text",
+                "text": "Here are the images you've viewed. Prefer oss_uri when referring to them in model-visible text and responses; use virtual_path only when a tool explicitly requires a sandbox path input:",
+            }
+        ]
 
         for image_path, image_data in viewed_images.items():
             mime_type = image_data.get("mime_type", "unknown")
             base64_data = image_data.get("base64", "")
+            http_uri = image_data.get("http_uri")
+            oss_uri = image_data.get("oss_uri")
+            virtual_path = image_data.get("virtual_path")
+            display_path = http_uri or oss_uri or image_path
 
             # Add text description
-            content_blocks.append({"type": "text", "text": f"\n- **{image_path}** ({mime_type})"})
+            content_blocks.append({"type": "text", "text": f"\n- **{display_path}** ({mime_type})"})
+            if oss_uri and oss_uri != display_path:
+                content_blocks.append({"type": "text", "text": f"  oss_uri: {oss_uri}"})
+            if http_uri and http_uri != display_path:
+                content_blocks.append({"type": "text", "text": f"  http_uri: {http_uri}"})
+            if virtual_path and virtual_path != display_path:
+                content_blocks.append({"type": "text", "text": f"  virtual_path: {virtual_path}"})
 
             # Add the actual image data so LLM can "see" it
             if base64_data:

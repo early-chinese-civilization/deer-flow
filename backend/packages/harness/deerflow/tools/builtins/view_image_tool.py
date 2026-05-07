@@ -11,6 +11,44 @@ from langgraph.typing import ContextT
 from deerflow.agents.thread_state import ThreadState
 
 
+def _resolve_uploaded_image_entry(
+    runtime: ToolRuntime[ContextT, ThreadState],
+    image_path: str,
+    actual_path: str,
+) -> dict[str, str] | None:
+    if runtime.state is None:
+        return None
+
+    uploaded_files = runtime.state.get("uploaded_files") or []
+    candidates = {image_path, actual_path}
+
+    for file_entry in uploaded_files:
+        if not isinstance(file_entry, dict):
+            continue
+
+        virtual_path = file_entry.get("virtual_path")
+        path = file_entry.get("path")
+        http_uri = file_entry.get("http_uri")
+        oss_uri = file_entry.get("oss_uri")
+        object_key = file_entry.get("object_key")
+
+        if virtual_path not in candidates and path not in candidates and http_uri not in candidates and oss_uri not in candidates:
+            continue
+
+        result: dict[str, str] = {}
+        if isinstance(virtual_path, str) and virtual_path:
+            result["virtual_path"] = virtual_path
+        if isinstance(http_uri, str) and http_uri:
+            result["http_uri"] = http_uri
+        if isinstance(oss_uri, str) and oss_uri.startswith("oss://"):
+            result["oss_uri"] = oss_uri
+        if isinstance(object_key, str) and object_key:
+            result["object_key"] = object_key
+        return result
+
+    return None
+
+
 @tool("view_image", parse_docstring=True)
 def view_image_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
@@ -88,7 +126,15 @@ def view_image_tool(
 
     # Update viewed_images in state
     # The merge_viewed_images reducer will handle merging with existing images
-    new_viewed_images = {image_path: {"base64": image_base64, "mime_type": mime_type}}
+    image_source = _resolve_uploaded_image_entry(runtime, image_path, actual_path)
+    image_key = (image_source or {}).get("http_uri") or (image_source or {}).get("oss_uri") or image_path
+    new_viewed_images = {
+        image_key: {
+            "base64": image_base64,
+            "mime_type": mime_type,
+            **(image_source or {}),
+        }
+    }
 
     return Command(
         update={"viewed_images": new_viewed_images, "messages": [ToolMessage("Successfully read image", tool_call_id=tool_call_id)]},

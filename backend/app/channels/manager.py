@@ -235,6 +235,10 @@ def _extract_artifacts(result: dict | list) -> list[str]:
     else:
         return []
 
+    artifact_map = _extract_artifact_map(result)
+    if artifact_map:
+        return [path for path in artifact_map.keys() if isinstance(path, str)]
+
     artifacts: list[str] = []
     for msg in reversed(messages):
         if not isinstance(msg, dict):
@@ -253,6 +257,17 @@ def _extract_artifacts(result: dict | list) -> list[str]:
     return artifacts
 
 
+def _extract_artifact_map(result: dict | list) -> dict[str, str]:
+    if not isinstance(result, dict):
+        return {}
+
+    artifacts = result.get("artifacts")
+    if not isinstance(artifacts, Mapping):
+        return {}
+
+    return {str(k): str(v) for k, v in artifacts.items() if isinstance(k, str) and isinstance(v, str)}
+
+
 def _format_artifact_text(artifacts: list[str]) -> str:
     """Format artifact paths into a human-readable text block listing filenames."""
     import posixpath
@@ -261,6 +276,13 @@ def _format_artifact_text(artifacts: list[str]) -> str:
     if len(filenames) == 1:
         return f"Created File: 📎 {filenames[0]}"
     return "Created Files: 📎 " + "、".join(filenames)
+
+
+def _rewrite_text_with_artifacts(text: str, artifact_map: dict[str, str]) -> str:
+    rewritten = text
+    for virtual_path, oss_uri in sorted(artifact_map.items(), key=lambda item: len(item[0]), reverse=True):
+        rewritten = rewritten.replace(virtual_path, oss_uri)
+    return rewritten
 
 
 _OUTPUTS_VIRTUAL_PREFIX = "/mnt/user-data/outputs/"
@@ -558,6 +580,7 @@ class ChannelManager:
 
         response_text = _extract_response_text(result)
         artifacts = _extract_artifacts(result)
+        response_text = _rewrite_text_with_artifacts(response_text, _extract_artifact_map(result))
 
         logger.info(
             "[Manager] agent response received: thread_id=%s, response_len=%d, artifacts=%d",
@@ -657,6 +680,7 @@ class ChannelManager:
             result = last_values if last_values is not None else {"messages": [{"type": "ai", "content": latest_text}]}
             response_text = _extract_response_text(result)
             artifacts = _extract_artifacts(result)
+            response_text = _rewrite_text_with_artifacts(response_text, _extract_artifact_map(result))
             response_text, attachments = _prepare_artifact_delivery(thread_id, response_text, artifacts)
 
             if not response_text:

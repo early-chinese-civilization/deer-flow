@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.gateway.db.schema_settings import get_gateway_db_schema
+
 REQUIRED_GATEWAY_TABLES = frozenset({"users", "workspaces", "threads"})
 REQUIRED_GATEWAY_COLUMNS = {
     "users": frozenset(
@@ -50,11 +52,11 @@ REQUIRED_GATEWAY_COLUMNS = {
 
 _TABLES_SQL = text(
     "select table_name from information_schema.tables "
-    "where table_schema='public' order by table_name"
+    "where table_schema=:schema order by table_name"
 )
 _COLUMNS_SQL = text(
     "select table_name, column_name from information_schema.columns "
-    "where table_schema='public' and table_name = any(:tables) "
+    "where table_schema=:schema and table_name = any(:tables) "
     "order by table_name, ordinal_position"
 )
 _ALEMBIC_VERSION_SQL = text("select version_num from alembic_version order by version_num")
@@ -71,8 +73,9 @@ class GatewaySchemaStatus:
 
 async def inspect_gateway_schema(engine: AsyncEngine) -> GatewaySchemaStatus:
     """Inspect required Gateway schema objects from the configured database."""
+    schema = get_gateway_db_schema()
     async with engine.connect() as connection:
-        tables = set((await connection.execute(_TABLES_SQL)).scalars().all())
+        tables = set((await connection.execute(_TABLES_SQL, {"schema": schema})).scalars().all())
 
         current_revision: str | None = None
         if "alembic_version" in tables:
@@ -84,7 +87,7 @@ async def inspect_gateway_schema(engine: AsyncEngine) -> GatewaySchemaStatus:
         if REQUIRED_GATEWAY_TABLES:
             for table_name, column_name in await connection.execute(
                 _COLUMNS_SQL,
-                {"tables": list(REQUIRED_GATEWAY_TABLES)},
+                {"schema": schema, "tables": list(REQUIRED_GATEWAY_TABLES)},
             ):
                 if table_name in observed_columns:
                     observed_columns[table_name].add(column_name)
@@ -115,6 +118,7 @@ def _build_schema_error(status: GatewaySchemaStatus) -> str:
         details.append(f"Missing columns: {missing_columns}.")
     return (
         "Gateway database schema is out of date for thread runtime. "
+        f"Schema: {get_gateway_db_schema()}. "
         f"Current alembic revision: {current_revision}. "
         f"{' '.join(details)} "
         "Run `make migrate` or `cd backend && uv run alembic upgrade head`, then restart the gateway."

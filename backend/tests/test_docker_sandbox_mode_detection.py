@@ -8,6 +8,7 @@ from pathlib import Path
 from shutil import which
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "docker.sh"
@@ -104,3 +105,14 @@ sandbox:
 """.strip()
 
     assert _detect_mode_with_config(config) == "local"
+
+
+def test_docker_compose_backend_services_export_dev_server_mode():
+    """Backend containers read root .env, so synthetic auth also needs dev mode."""
+    compose = yaml.safe_load(
+        (REPO_ROOT / "docker" / "docker-compose-dev.yaml").read_text(encoding="utf-8")
+    )
+
+    for service_name in ("gateway", "langgraph"):
+        environment = compose["services"][service_name]["environment"]
+        assert "DEER_FLOW_SERVER_MODE=dev" in environment

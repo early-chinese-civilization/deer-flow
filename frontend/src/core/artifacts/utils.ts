@@ -1,4 +1,4 @@
-import { getBackendBaseURL } from "../config";
+import { getBackendBaseURL } from "../config/index";
 import type { AgentThread } from "../threads";
 
 export function urlOfArtifact({

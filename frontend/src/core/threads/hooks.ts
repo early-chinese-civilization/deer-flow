@@ -19,6 +19,7 @@ import {
   applyPendingUploadedFiles,
   type PendingUploadedFiles,
 } from "./message-attachments";
+import { getCanonicalUploadedFilePath } from "../uploads/composer-core";
 import { getRunReconnectStorage } from "./reconnect-storage";
 import { shouldSuppressPassiveStreamError } from "./stream-error";
 import {
@@ -343,7 +344,10 @@ export function useThreadStream({
       const optimisticFiles: FileInMessage[] = uploadedFileInfo.map((info) => ({
         filename: info.filename,
         size: info.size,
-        path: info.virtual_path,
+        path: getCanonicalUploadedFilePath(info),
+        virtual_path: info.virtual_path,
+        oss_uri: info.oss_uri,
+        object_key: info.object_key,
         status: "uploaded" as const,
       }));
 
@@ -375,14 +379,15 @@ export function useThreadStream({
           );
         }
 
-        const filesForSubmit: FileInMessage[] = uploadedFileInfo.map(
-          (info) => ({
-            filename: info.filename,
-            size: info.size,
-            path: info.virtual_path,
-            status: "uploaded" as const,
-          }),
-        );
+        const filesForSubmit: FileInMessage[] = uploadedFileInfo.map((info) => ({
+          filename: info.filename,
+          size: info.size,
+          path: getCanonicalUploadedFilePath(info),
+          virtual_path: info.virtual_path,
+          oss_uri: info.oss_uri,
+          object_key: info.object_key,
+          status: "uploaded" as const,
+        }));
 
         setPendingUploadedFiles(
           filesForSubmit.length > 0
