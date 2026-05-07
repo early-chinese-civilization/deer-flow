@@ -34,6 +34,14 @@ function collectSkillsCopy(skillsCopy: typeof enUS.settings.skills): string[] {
     skillsCopy.publishedBy("Demo Publisher"),
     skillsCopy.skillHubTab,
     skillsCopy.mySkillsTab,
+    skillsCopy.communitySpaceTab,
+    skillsCopy.personalSpaceTab,
+    skillsCopy.allSegment,
+    skillsCopy.downloadedSegment,
+    skillsCopy.authoredSegment,
+    skillsCopy.publishedSegment,
+    skillsCopy.updatesSegment,
+    skillsCopy.forksSegment,
     skillsCopy.platformVersion(1),
     skillsCopy.skillHubVersion(2),
     skillsCopy.currentVersion(1),
@@ -42,12 +50,24 @@ function collectSkillsCopy(skillsCopy: typeof enUS.settings.skills): string[] {
     skillsCopy.installed,
     skillsCopy.notInstalled,
     skillsCopy.updateAvailable,
+    skillsCopy.availableInCommunity,
+    skillsCopy.downloadedToPersonal,
     skillsCopy.published,
     skillsCopy.unpublished,
+    skillsCopy.unpublishedChanges,
+    skillsCopy.mySkill,
+    skillsCopy.publishedByYou,
+    skillsCopy.forkedSkill,
     skillsCopy.officialSource,
     skillsCopy.communitySource("Demo Publisher"),
+    skillsCopy.downloadedSource("Demo Publisher"),
+    skillsCopy.forkedSource("Demo Publisher"),
     skillsCopy.installedSource,
     skillsCopy.createdSource,
+    skillsCopy.addToPersonalSpace,
+    skillsCopy.viewInPersonalSpace,
+    skillsCopy.managePublished,
+    skillsCopy.publishUpdate,
     skillsCopy.publishDialogTitle,
     skillsCopy.publishDialogDescription,
     skillsCopy.publishDescriptionLabel,
@@ -77,12 +97,15 @@ function collectSkillsCopy(skillsCopy: typeof enUS.settings.skills): string[] {
 }
 
 void test("Skills locale copy uses SkillHub and install terminology", () => {
-  assert.equal(enUS.settings.skills.skillHubTab, "SkillHub");
-  assert.equal(enUS.settings.skills.mySkillsTab, "My Skills");
-  assert.equal(enUS.settings.skills.installSkill, "Install");
-  assert.equal(zhCN.settings.skills.skillHubTab, "SkillHub");
-  assert.equal(zhCN.settings.skills.mySkillsTab, "我的 Skills");
-  assert.equal(zhCN.settings.skills.installSkill, "安装");
+  assert.equal(enUS.settings.skills.communitySpaceTab, "Community Space");
+  assert.equal(enUS.settings.skills.personalSpaceTab, "Personal Space");
+  assert.equal(
+    enUS.settings.skills.addToPersonalSpace,
+    "Add to Personal Space",
+  );
+  assert.equal(zhCN.settings.skills.communitySpaceTab, "社区空间");
+  assert.equal(zhCN.settings.skills.personalSpaceTab, "我的空间");
+  assert.equal(zhCN.settings.skills.addToPersonalSpace, "添加到我的空间");
 });
 
 void test("Skills locale copy does not expose download terminology", () => {
@@ -124,4 +147,18 @@ void test("update confirmation copy avoids public latest and package internals",
     /public latest|package version|release version|artifact/i,
   );
   assert.match(englishUpdateCopy, /version/i);
+});
+
+void test("Skills workspace copy avoids forbidden internal terms", () => {
+  const forbiddenTerms =
+    /public latest|custom|package version|artifact|Runtime Manifest|skill_definition_id|skill_install_id|source namespace/i;
+
+  assert.doesNotMatch(
+    collectSkillsCopy(enUS.settings.skills).join(" "),
+    forbiddenTerms,
+  );
+  assert.doesNotMatch(
+    collectSkillsCopy(zhCN.settings.skills).join(" "),
+    forbiddenTerms,
+  );
 });
