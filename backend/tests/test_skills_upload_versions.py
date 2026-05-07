@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-from app.gateway.db.models import SkillDefinition, SkillVersion, User
+from app.gateway.db.models import Skill, SkillDefinition, SkillVersion, User
 from app.gateway.routers import skills as skills_router
 
 
@@ -158,6 +158,150 @@ def test_ensure_skill_version_creates_v1_then_v2_and_reuses_identical_content(tm
     assert v2.version_number == 2
     assert v1.artifact_uri != v2.artifact_uri
     assert len(versions) == 2
+
+
+def test_ensure_skill_version_keeps_same_name_different_owners_distinct(tmp_path, monkeypatch):
+    definitions: list[SkillDefinition] = []
+    versions: list[SkillVersion] = []
+
+    async def get_or_create(db, *, name, display_name, description, owner_user_id, source_type=None, source_identifier=None):
+        source_type = source_type or "user"
+        source_identifier = source_identifier or str(owner_user_id)
+        existing = next(
+            (
+                definition
+                for definition in definitions
+                if definition.name == name and definition.source_type == source_type and definition.source_identifier == source_identifier
+            ),
+            None,
+        )
+        if existing is not None:
+            return existing
+        definition = SkillDefinition(
+            id=len(definitions) + 1,
+            name=name,
+            display_name=display_name,
+            description=description,
+            source_type=source_type,
+            source_identifier=source_identifier,
+            owner_user_id=owner_user_id,
+        )
+        definitions.append(definition)
+        return definition
+
+    async def get_by_definition_and_hash(db, *, skill_definition_id, content_hash):
+        return next((version for version in versions if version.skill_definition_id == skill_definition_id and version.content_hash == content_hash), None)
+
+    async def get_latest_for_definition(db, *, skill_definition_id):
+        scoped = [version for version in versions if version.skill_definition_id == skill_definition_id]
+        return scoped[-1] if scoped else None
+
+    async def create_version(db, *, definition, source_package_version, description, content_hash, file_manifest_hash, artifact_uri, created_by_user_id):
+        version = SkillVersion(
+            id=len(versions) + 1,
+            skill_definition_id=definition.id,
+            version_number=1,
+            source_package_version=source_package_version,
+            description=description,
+            content_hash=content_hash,
+            file_manifest_hash=file_manifest_hash,
+            artifact_uri=artifact_uri,
+            created_by_user_id=created_by_user_id,
+            definition=definition,
+        )
+        versions.append(version)
+        return version
+
+    monkeypatch.setattr(skills_router.SkillDefinitionRepository, "get_or_create", get_or_create)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "get_by_definition_and_hash", get_by_definition_and_hash)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "get_latest_for_definition", get_latest_for_definition)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "create_version", create_version)
+    monkeypatch.setattr(skills_router, "_copy_version_artifact", lambda source_dir, artifact_uri: None)
+
+    skill_dir = tmp_path / "same-name"
+    _write_skill_dir(skill_dir, version="pkg-a", marker="SAME_RUNTIME")
+
+    async def run():
+        owner_a = await skills_router._ensure_skill_version_from_dir(
+            FakeDb(),
+            user_id=7,
+            skill_name="demo-skill",
+            description="Owner A",
+            source_package_version="pkg-a",
+            skill_dir=skill_dir,
+        )
+        owner_b = await skills_router._ensure_skill_version_from_dir(
+            FakeDb(),
+            user_id=8,
+            skill_name="demo-skill",
+            description="Owner B",
+            source_package_version="pkg-a",
+            skill_dir=skill_dir,
+        )
+        return owner_a, owner_b
+
+    (version_a, created_a, definition_a), (version_b, created_b, definition_b) = asyncio.run(run())
+
+    assert created_a is True
+    assert created_b is True
+    assert definition_a.name == definition_b.name == "demo-skill"
+    assert definition_a.id != definition_b.id
+    assert definition_a.source_identifier == "7"
+    assert definition_b.source_identifier == "8"
+    assert version_a.skill_definition_id == definition_a.id
+    assert version_b.skill_definition_id == definition_b.id
+
+
+def test_user_skill_definition_lookup_ignores_same_name_other_source(monkeypatch):
+    other_source_skill = Skill(id=10, user_id=7, skill_definition_id=900, name="demo-skill", display_name="demo-skill", description="Other source", file_path="artifacts/skills/900/v1/demo-skill")
+
+    async def get_user_skill_by_definition(db, *, user_id, skill_definition_id):
+        assert user_id == 7
+        assert skill_definition_id == 100
+        return None
+
+    async def list_user_skills_by_name(db, *, user_id, name):
+        assert user_id == 7
+        assert name == "demo-skill"
+        return [other_source_skill]
+
+    monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_definition", get_user_skill_by_definition)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_user_skills_by_name", list_user_skills_by_name)
+
+    result = asyncio.run(
+        skills_router._get_user_skill_by_definition_or_legacy(
+            FakeDb(),
+            user_id=7,
+            skill_name="demo-skill",
+            skill_definition_id=100,
+        )
+    )
+
+    assert result is None
+
+
+def test_user_skill_definition_lookup_preserves_legacy_name_only_fallback(monkeypatch):
+    legacy_skill = Skill(id=11, user_id=7, skill_definition_id=None, name="demo-skill", display_name="demo-skill", description="Legacy", file_path="7/demo-skill")
+
+    async def get_user_skill_by_definition(db, *, user_id, skill_definition_id):
+        return None
+
+    async def list_user_skills_by_name(db, *, user_id, name):
+        return [legacy_skill]
+
+    monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_definition", get_user_skill_by_definition)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_user_skills_by_name", list_user_skills_by_name)
+
+    result = asyncio.run(
+        skills_router._get_user_skill_by_definition_or_legacy(
+            FakeDb(),
+            user_id=7,
+            skill_name="demo-skill",
+            skill_definition_id=100,
+        )
+    )
+
+    assert result is legacy_skill
 
 
 def test_version_artifact_copy_does_not_overwrite_prior_platform_version(tmp_path, monkeypatch):

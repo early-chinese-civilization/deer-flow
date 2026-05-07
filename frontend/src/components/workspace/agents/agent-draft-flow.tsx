@@ -80,6 +80,7 @@ interface CreateStep {
 }
 
 interface SkillDisplaySummary {
+  key: string;
   name: string;
   description: string;
   versionLabel: string;
@@ -118,26 +119,64 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
   const visibleSkills = useMemo(
     () =>
       skills
-        .filter((skill) => skill.category === "custom")
+        .filter((skill) => skill.category === "custom" && skill.skill_install_id != null)
         .sort((left, right) => {
-          if (left.category !== right.category) {
-            return left.category.localeCompare(right.category);
+          if (left.name !== right.name) {
+            return left.name.localeCompare(right.name);
           }
-          return left.name.localeCompare(right.name);
+          return (left.skill_install_id ?? 0) - (right.skill_install_id ?? 0);
         }),
     [skills],
   );
-  const visibleSkillByName = useMemo(
-    () => new Map(visibleSkills.map((skill) => [skill.name, skill])),
+  const visibleSkillByKey = useMemo(
+    () => new Map(visibleSkills.map((skill) => [getSkillSelectionKey(skill), skill])),
     [visibleSkills],
   );
-  const agentSkillMetadataByName = useMemo(
+  const agentSkillMetadataByKey = useMemo(
     () =>
       new Map(
-        (agent?.skill_metadata ?? []).map((skill) => [skill.name, skill]),
+        (agent?.skill_metadata ?? []).map((skill) => [
+          getMetadataSelectionKey(skill),
+          skill,
+        ]),
       ),
     [agent?.skill_metadata],
   );
+
+  function getSkillSelectionKey(skill: Skill): string {
+    return skill.skill_install_id != null
+      ? `install:${skill.skill_install_id}`
+      : `name:${skill.name}`;
+  }
+
+  function getMetadataSelectionKey(skill: AgentSkillMetadata): string {
+    return skill.skill_install_id != null
+      ? `install:${skill.skill_install_id}`
+      : `name:${skill.name}`;
+  }
+
+  function getSelectionInstallIds(): number[] {
+    const installIds: number[] = [];
+    for (const value of form.skills) {
+      if (!value.startsWith("install:")) {
+        continue;
+      }
+      const installId = Number(value.slice("install:".length));
+      if (Number.isInteger(installId)) {
+        installIds.push(installId);
+      }
+    }
+    return installIds;
+  }
+
+  function getSelectionSkillNames(): string[] {
+    return form.skills
+      .filter((value) => !value.startsWith("install:"))
+      .map((value) =>
+        value.startsWith("name:") ? value.slice("name:".length) : value,
+      )
+      .filter(Boolean);
+  }
 
   function getSkillSourceLabel(skill: Skill): string {
     if (skill.category === "public") {
@@ -164,6 +203,7 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
       skill.skill_version_id == null ||
       platformVersion == null;
     return {
+      key: getSkillSelectionKey(skill),
       name: skill.name,
       description: skill.description,
       versionLabel:
@@ -179,6 +219,7 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
     skill: AgentSkillMetadata,
   ): SkillDisplaySummary {
     return {
+      key: getMetadataSelectionKey(skill),
       name: skill.name,
       description: "",
       versionLabel:
@@ -191,16 +232,19 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
   }
 
   const selectedSkillSummaries = form.skills.map((skillName) => {
-    const visibleSkill = visibleSkillByName.get(skillName);
+    const visibleSkill = visibleSkillByKey.get(skillName);
     if (visibleSkill) {
       return getSkillSummary(visibleSkill);
     }
-    const metadata = agentSkillMetadataByName.get(skillName);
+    const metadata = agentSkillMetadataByKey.get(skillName);
     if (metadata) {
       return getMetadataSummary(metadata);
     }
     return {
-      name: skillName,
+      key: skillName,
+      name: skillName.startsWith("name:")
+        ? skillName.slice("name:".length)
+        : skillName,
       description: "",
       versionLabel: t.agents.skillVersionUnavailable,
       sourceLabel: t.agents.skillSourceUnknown,
@@ -209,65 +253,50 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
     };
   });
 
-  const createSteps = useMemo<CreateStep[]>(
-    () => [
-      {
-        id: "name",
-        label: t.agents.createSectionName,
-        icon: BotIcon,
-        preview: form.name.trim() || t.agents.confirmEmptyValue,
-        completed: isAgentDraftInputComplete("name", form),
-      },
-      {
-        id: "description",
-        label: t.agents.createSectionDescription,
-        icon: AlignLeftIcon,
-        preview: form.description.trim() || t.agents.confirmEmptyValue,
-        completed: isAgentDraftInputComplete("description", form),
-      },
-      {
-        id: "soul",
-        label: t.agents.createSectionSoul,
-        icon: FileTextIcon,
-        preview: form.soul.trim() || t.agents.confirmEmptyValue,
-        completed: isAgentDraftInputComplete("soul", form),
-      },
-      {
-        id: "skills",
-        label: t.agents.createSectionSkills,
-        icon: SparklesIcon,
-        preview:
-          form.skills.length > 0
-            ? form.skills.join(", ")
-            : t.agents.confirmEmptyValue,
-        completed: isAgentDraftInputComplete("skills", form),
-      },
-      {
-        id: "confirm",
-        label: t.agents.confirmSection,
-        icon: CheckCircle2Icon,
-        preview: t.agents.confirmSubmitHint,
-        completed: false,
-      },
-    ],
-    [
-      form,
-      t.agents.confirmEmptyValue,
-      t.agents.confirmSection,
-      t.agents.confirmSubmitHint,
-      t.agents.createSectionDescription,
-      t.agents.createSectionName,
-      t.agents.createSectionSkills,
-      t.agents.createSectionSoul,
-    ],
-  );
+  const createSteps: CreateStep[] = [
+    {
+      id: "name",
+      label: t.agents.createSectionName,
+      icon: BotIcon,
+      preview: form.name.trim() || t.agents.confirmEmptyValue,
+      completed: isAgentDraftInputComplete("name", form),
+    },
+    {
+      id: "description",
+      label: t.agents.createSectionDescription,
+      icon: AlignLeftIcon,
+      preview: form.description.trim() || t.agents.confirmEmptyValue,
+      completed: isAgentDraftInputComplete("description", form),
+    },
+    {
+      id: "soul",
+      label: t.agents.createSectionSoul,
+      icon: FileTextIcon,
+      preview: form.soul.trim() || t.agents.confirmEmptyValue,
+      completed: isAgentDraftInputComplete("soul", form),
+    },
+    {
+      id: "skills",
+      label: t.agents.createSectionSkills,
+      icon: SparklesIcon,
+      preview:
+        form.skills.length > 0
+          ? selectedSkillSummaries.map((skill) => skill.name).join(", ")
+          : t.agents.confirmEmptyValue,
+      completed: isAgentDraftInputComplete("skills", form),
+    },
+    {
+      id: "confirm",
+      label: t.agents.confirmSection,
+      icon: CheckCircle2Icon,
+      preview: t.agents.confirmSubmitHint,
+      completed: false,
+    },
+  ];
 
-  const completedCreateStepCount = useMemo(
-    () =>
-      createSteps.filter((step) => step.id !== "confirm" && step.completed)
-        .length,
-    [createSteps],
-  );
+  const completedCreateStepCount = createSteps.filter(
+    (step) => step.id !== "confirm" && step.completed,
+  ).length;
 
   const activeCreateStep =
     createSteps.find((step) => step.id === activeCreateTab) ?? createSteps[0]!;
@@ -306,8 +335,8 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
         description: agent?.description ?? "",
         soul: agent?.soul ?? "",
         skills:
-          agent?.skills ??
-          agent?.skill_metadata?.map((skill) => skill.name) ??
+          agent?.skill_metadata?.map((skill) => getMetadataSelectionKey(skill)) ??
+          agent?.skills?.map((skill) => `name:${skill}`) ??
           [],
       });
 
@@ -348,13 +377,13 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
     }
   }
 
-  function toggleSkill(skillName: string, options?: { canAdd?: boolean }) {
+  function toggleSkill(skillKey: string, options?: { canAdd?: boolean }) {
     setSubmitError("");
     setForm((current) => {
-      if (current.skills.includes(skillName)) {
+      if (current.skills.includes(skillKey)) {
         return {
           ...current,
-          skills: current.skills.filter((name) => name !== skillName),
+          skills: current.skills.filter((name) => name !== skillKey),
         };
       }
       if (options?.canAdd === false) {
@@ -362,7 +391,7 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
       }
       return {
         ...current,
-        skills: [...current.skills, skillName],
+        skills: [...current.skills, skillKey],
       };
     });
   }
@@ -431,19 +460,25 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
 
     try {
       if (mode === "create") {
+        const skillInstallIds = getSelectionInstallIds();
+        const skillNames = getSelectionSkillNames();
         await createAgentMutation.mutateAsync({
           name: normalizedName,
           description: form.description.trim(),
           soul: form.soul.trim(),
-          skills: form.skills.length > 0 ? form.skills : null,
+          skill_install_ids: skillInstallIds.length > 0 ? skillInstallIds : null,
+          skills: skillNames.length > 0 ? skillNames : null,
         });
       } else {
+        const skillInstallIds = getSelectionInstallIds();
+        const skillNames = getSelectionSkillNames();
         await updateAgentMutation.mutateAsync({
           name: agentName!,
           request: {
             description: form.description.trim(),
             soul: form.soul.trim(),
-            skills: form.skills,
+            skill_install_ids: skillInstallIds,
+            skills: skillNames,
           },
         });
       }
@@ -566,17 +601,18 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
             </div>
           ) : (
             visibleSkills.map((skill) => {
-              const checked = form.skills.includes(skill.name);
+              const skillKey = getSkillSelectionKey(skill);
+              const checked = form.skills.includes(skillKey);
               const summary = getSkillSummary(skill);
               const cannotAdd = summary.unavailable && !checked;
               return (
                 <button
-                  key={skill.name}
+                  key={skillKey}
                   type="button"
                   aria-pressed={checked}
                   disabled={cannotAdd}
                   onClick={() =>
-                    toggleSkill(skill.name, { canAdd: !summary.unavailable })
+                    toggleSkill(skillKey, { canAdd: !summary.unavailable })
                   }
                   className="block w-full text-left"
                 >
@@ -672,7 +708,7 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
               ) : (
                 selectedSkillSummaries.map((skill) => (
                   <span
-                    key={skill.name}
+                    key={skill.key}
                     className={cn(
                       "text-muted-foreground rounded-md border px-2.5 py-1 text-xs",
                       skill.unavailable && "border-destructive/40 text-destructive",

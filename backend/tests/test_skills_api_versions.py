@@ -190,14 +190,18 @@ def test_install_public_skill_records_install_without_copying_public_latest(monk
     async def get_latest_published_version_by_name(db_arg, *, skill_name):
         return version
 
+    async def get_latest_release_for_public_skill(db_arg, *, published_skill_id):
+        return _release(published_skill_id, version)
+
     async def get_user_skill_by_name(db_arg, *, user_id, name):
+        return None
+
+    async def get_user_skill_by_definition(db_arg, *, user_id, skill_definition_id):
+        assert skill_definition_id == version.skill_definition_id
         return None
 
     async def get_install_by_user_and_name(db_arg, *, user_id, name):
         return None
-
-    async def get_latest_release_for_public_skill(db_arg, *, published_skill_id):
-        return _release(published_skill_id, version)
 
     async def upsert_install(db_arg, *, user_id, definition, version):
         return install
@@ -210,13 +214,19 @@ def test_install_public_skill_records_install_without_copying_public_latest(monk
     async def get_skill_by_id(db_arg, skill_id):
         return created
 
+    install_lookup_count = 0
+
     async def get_install_by_user_and_definition(db_arg, *, user_id, skill_definition_id):
-        return install
+        nonlocal install_lookup_count
+        assert skill_definition_id == version.skill_definition_id
+        install_lookup_count += 1
+        return None if install_lookup_count == 1 else install
 
     monkeypatch.setattr(skills_router, "_get_download_source_skill", get_download_source_skill)
     monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_published_version_by_name", get_latest_published_version_by_name)
     monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_release_for_public_skill", get_latest_release_for_public_skill)
     monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_name", get_user_skill_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_definition", get_user_skill_by_definition)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_name", get_install_by_user_and_name)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "upsert_install", upsert_install)
     monkeypatch.setattr(skills_router.SkillRepository, "create_skill", create_skill)
@@ -251,16 +261,28 @@ def test_install_public_skill_existing_install_without_overwrite_returns_409(mon
     async def get_latest_published_version_by_name(db_arg, *, skill_name):
         return version
 
+    async def get_latest_release_for_public_skill(db_arg, *, published_skill_id):
+        return _release(published_skill_id, version)
+
     async def get_install_by_user_and_name(db_arg, *, user_id, name):
+        return _install(version)
+
+    async def get_install_by_user_and_definition(db_arg, *, user_id, skill_definition_id):
         return _install(version)
 
     async def get_user_skill_by_name(db_arg, *, user_id, name):
         return None
 
+    async def get_user_skill_by_definition(db_arg, *, user_id, skill_definition_id):
+        return None
+
     monkeypatch.setattr(skills_router, "_get_download_source_skill", get_download_source_skill)
     monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_published_version_by_name", get_latest_published_version_by_name)
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_release_for_public_skill", get_latest_release_for_public_skill)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_name", get_install_by_user_and_name)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_definition", get_install_by_user_and_definition)
     monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_name", get_user_skill_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_definition", get_user_skill_by_definition)
 
     async def run():
         with pytest.raises(HTTPException) as exc_info:
@@ -286,8 +308,8 @@ def test_manual_update_install_switches_current_platform_version(monkeypatch):
     touched_user_skill = False
     touched_agent_bindings = False
 
-    async def get_install_by_user_and_name(db_arg, *, user_id, name):
-        return install
+    async def list_installs_by_user_and_name(db_arg, *, user_id, name):
+        return [install]
 
     async def get_published_release_by_version_id(db_arg, *, skill_version_id):
         assert skill_version_id == v2.id
@@ -311,7 +333,7 @@ def test_manual_update_install_switches_current_platform_version(monkeypatch):
         touched_agent_bindings = True
         raise AssertionError("update confirmation must not mutate AgentSkill rows")
 
-    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_name", get_install_by_user_and_name)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "list_by_user_and_name", list_installs_by_user_and_name)
     monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_published_release_by_version_id", get_published_release_by_version_id)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "update_current_version", update_current_version)
     monkeypatch.setattr(skills_router.SkillRepository, "list_bound_agents_for_install", list_bound_agents_for_install)
@@ -345,8 +367,8 @@ def test_update_preview_is_read_only_and_lists_affected_agents(monkeypatch):
     install = _install(v1)
     affected_agent = type("AgentRow", (), {"id": 55, "name": "demo-agent"})()
 
-    async def get_install_by_user_and_name(db_arg, *, user_id, name):
-        return install
+    async def list_installs_by_user_and_name(db_arg, *, user_id, name):
+        return [install]
 
     async def get_latest_published_release_for_definition(db_arg, *, skill_definition_id):
         assert skill_definition_id == install.skill_definition_id
@@ -356,7 +378,7 @@ def test_update_preview_is_read_only_and_lists_affected_agents(monkeypatch):
         assert skill_install_id == install.id
         return [affected_agent]
 
-    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_name", get_install_by_user_and_name)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "list_by_user_and_name", list_installs_by_user_and_name)
     monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_published_release_for_definition", get_latest_published_release_for_definition)
     monkeypatch.setattr(skills_router.SkillRepository, "list_bound_agents_for_install", list_bound_agents_for_install)
     monkeypatch.setattr(skills_router, "_is_skill_version_artifact_available", lambda version: True)
@@ -381,6 +403,34 @@ def test_update_preview_is_read_only_and_lists_affected_agents(monkeypatch):
     assert [agent.name for agent in response.affected_agents] == ["demo-agent"]
 
 
+def test_update_preview_rejects_ambiguous_same_name_installs(monkeypatch):
+    db = FakeDb()
+    v1 = _version(1)
+    install_a = _install(v1)
+    install_b = _install(v1)
+    install_b.id = 301
+    install_b.skill_definition_id = 999
+
+    async def list_installs_by_user_and_name(db_arg, *, user_id, name):
+        return [install_a, install_b]
+
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "list_by_user_and_name", list_installs_by_user_and_name)
+
+    async def run():
+        with pytest.raises(HTTPException) as exc_info:
+            await skills_router.preview_skill_install_update(
+                "demo-skill",
+                current_user=_user(),
+                db=db,
+            )
+        return exc_info.value
+
+    exc = asyncio.run(run())
+
+    assert exc.status_code == 400
+    assert "ambiguous" in exc.detail
+
+
 def test_update_confirm_rejects_missing_artifact_without_fallback(monkeypatch):
     db = FakeDb()
     v1 = _version(1)
@@ -388,8 +438,8 @@ def test_update_confirm_rejects_missing_artifact_without_fallback(monkeypatch):
     install = _install(v1)
     update_called = False
 
-    async def get_install_by_user_and_name(db_arg, *, user_id, name):
-        return install
+    async def list_installs_by_user_and_name(db_arg, *, user_id, name):
+        return [install]
 
     async def get_latest_published_release_for_definition(db_arg, *, skill_definition_id):
         assert skill_definition_id == install.skill_definition_id
@@ -402,7 +452,7 @@ def test_update_confirm_rejects_missing_artifact_without_fallback(monkeypatch):
         nonlocal update_called
         update_called = True
 
-    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_name", get_install_by_user_and_name)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "list_by_user_and_name", list_installs_by_user_and_name)
     monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_published_release_for_definition", get_latest_published_release_for_definition)
     monkeypatch.setattr(skills_router.SkillRepository, "list_bound_agents_for_install", list_bound_agents_for_install)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "update_current_version", update_current_version)
@@ -435,8 +485,8 @@ def test_update_confirm_rejects_missing_current_artifact_without_fallback(monkey
     install = _install(v1)
     update_called = False
 
-    async def get_install_by_user_and_name(db_arg, *, user_id, name):
-        return install
+    async def list_installs_by_user_and_name(db_arg, *, user_id, name):
+        return [install]
 
     async def get_latest_published_release_for_definition(db_arg, *, skill_definition_id):
         return _release(12, v2)
@@ -448,7 +498,7 @@ def test_update_confirm_rejects_missing_current_artifact_without_fallback(monkey
         nonlocal update_called
         update_called = True
 
-    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_name", get_install_by_user_and_name)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "list_by_user_and_name", list_installs_by_user_and_name)
     monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_published_release_for_definition", get_latest_published_release_for_definition)
     monkeypatch.setattr(skills_router.SkillRepository, "list_bound_agents_for_install", list_bound_agents_for_install)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "update_current_version", update_current_version)
@@ -482,8 +532,8 @@ def test_update_confirm_rejects_selected_version_from_other_definition(monkeypat
     install = _install(v1)
     update_called = False
 
-    async def get_install_by_user_and_name(db_arg, *, user_id, name):
-        return install
+    async def list_installs_by_user_and_name(db_arg, *, user_id, name):
+        return [install]
 
     async def get_published_release_by_version_id(db_arg, *, skill_version_id):
         assert skill_version_id == other_version.id
@@ -493,7 +543,7 @@ def test_update_confirm_rejects_selected_version_from_other_definition(monkeypat
         nonlocal update_called
         update_called = True
 
-    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_name", get_install_by_user_and_name)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "list_by_user_and_name", list_installs_by_user_and_name)
     monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_published_release_by_version_id", get_published_release_by_version_id)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "update_current_version", update_current_version)
 

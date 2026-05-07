@@ -229,6 +229,12 @@ class Skill(Base):
     display_name = Column(String(255), nullable=True, comment="Display name")
     description = Column(Text, nullable=True, comment="Skill description")
     file_path = Column(String(500), nullable=False, comment="Shared skills filesystem path")
+    skill_definition_id = Column(
+        BigInteger,
+        ForeignKey("skill_definitions.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Stable platform skill definition ID for install-aware catalog rows",
+    )
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -246,17 +252,25 @@ class Skill(Base):
 
     user = relationship("User", back_populates="skills", foreign_keys=[user_id])
     owner_user = relationship("User", foreign_keys=[owner_user_id])
+    definition = relationship("SkillDefinition", foreign_keys=[skill_definition_id])
     agent_skills = relationship("AgentSkill", back_populates="skill", cascade="all, delete-orphan")
     source_releases = relationship("SkillRelease", foreign_keys="SkillRelease.source_skill_id", back_populates="source_skill")
     published_releases = relationship("SkillRelease", foreign_keys="SkillRelease.published_skill_id", back_populates="published_skill")
 
     __table_args__ = (
         Index(
-            "uq_skills_user_name_active",
+            "uq_skills_user_definition_active",
+            "user_id",
+            "skill_definition_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND user_id IS NOT NULL AND skill_definition_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_skills_user_name_legacy_active",
             "user_id",
             "name",
             unique=True,
-            postgresql_where=text("deleted_at IS NULL AND user_id IS NOT NULL"),
+            postgresql_where=text("deleted_at IS NULL AND user_id IS NOT NULL AND skill_definition_id IS NULL"),
         ),
         Index(
             "uq_skills_public_owner_name_active",
@@ -267,6 +281,7 @@ class Skill(Base):
         ),
         Index("ix_skills_user_id", "user_id"),
         Index("ix_skills_owner_user_id", "owner_user_id"),
+        Index("ix_skills_skill_definition_id", "skill_definition_id"),
         Index("ix_skills_deleted_at", "deleted_at"),
     )
 
@@ -280,6 +295,8 @@ class SkillDefinition(Base):
     name = Column(String(255), nullable=False, comment="Stable skill name")
     display_name = Column(String(255), nullable=True, comment="Display name")
     description = Column(Text, nullable=True, comment="Latest description")
+    source_type = Column(String(50), nullable=False, default="legacy", comment="Definition source namespace type")
+    source_identifier = Column(String(255), nullable=False, default="legacy", comment="Definition source namespace identifier")
     owner_user_id = Column(
         BigInteger,
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -307,11 +324,14 @@ class SkillDefinition(Base):
 
     __table_args__ = (
         Index(
-            "uq_skill_definitions_name_active",
+            "uq_skill_definitions_source_name_active",
+            "source_type",
+            "source_identifier",
             "name",
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
+        Index("ix_skill_definitions_source", "source_type", "source_identifier"),
         Index("ix_skill_definitions_deleted_at", "deleted_at"),
     )
 

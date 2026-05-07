@@ -374,7 +374,7 @@ export function SkillsGallery() {
 
               return (
                 <Item
-                  key={`${skill.category}-${skill.name}-${skill.owner_user_id ?? "system"}`}
+                  key={`${skill.category}-${skill.skill_definition_id ?? skill.owner_user_id ?? "system"}-${skill.name}`}
                   className="w-full"
                   variant="outline"
                 >

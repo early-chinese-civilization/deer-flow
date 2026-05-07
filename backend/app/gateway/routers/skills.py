@@ -51,6 +51,8 @@ class SkillResponse(BaseModel):
     version: str | None = Field(default=None, description="Platform-managed version number for the skill")
     platform_version: int | None = Field(default=None, description="Platform-managed immutable content version")
     skill_definition_id: int | None = Field(default=None, description="Stable platform skill definition ID")
+    skill_definition_source_type: str | None = Field(default=None, description="Stable skill definition source namespace type")
+    skill_definition_source_identifier: str | None = Field(default=None, description="Stable skill definition source namespace identifier")
     skill_version_id: int | None = Field(default=None, description="Immutable platform skill version ID")
     skill_install_id: int | None = Field(default=None, description="Current user's install ID when installed")
     current_platform_version: int | None = Field(default=None, description="Current installed platform version")
@@ -221,6 +223,8 @@ def _skill_to_response(
     release_notes = getattr(release, "release_notes", None) if release is not None else None
     published_at = release_created_at.isoformat() if release_created_at is not None else None
     platform_version = skill_version.version_number if skill_version is not None else None
+    definition = skill_version.definition if skill_version is not None and skill_version.definition is not None else skill.definition
+    definition_id = skill_version.skill_definition_id if skill_version is not None else skill.skill_definition_id
     current_platform_version = skill_install.current_version.version_number if skill_install is not None and skill_install.current_version is not None else None
     installed_platform_version = skill_install.installed_version.version_number if skill_install is not None and skill_install.installed_version is not None else current_platform_version
     latest_platform_version = latest_skill_version.version_number if latest_skill_version is not None else None
@@ -238,7 +242,9 @@ def _skill_to_response(
         owner_display_name=owner_display_name,
         version=str(platform_version) if platform_version is not None else None,
         platform_version=platform_version,
-        skill_definition_id=skill_version.skill_definition_id if skill_version is not None else None,
+        skill_definition_id=definition_id,
+        skill_definition_source_type=definition.source_type if definition is not None else None,
+        skill_definition_source_identifier=definition.source_identifier if definition is not None else None,
         skill_version_id=skill_version.id if skill_version is not None else None,
         skill_install_id=skill_install.id if skill_install is not None else None,
         current_platform_version=current_platform_version,
@@ -287,7 +293,16 @@ async def _skill_to_response_with_metadata(db: AsyncSession, skill: Skill, *, cu
             else None
         )
         return _skill_to_response(skill, release=release, skill_version=skill_version, skill_install=install, latest_skill_version=skill_version)
-    install = await SkillInstallRepository.get_by_user_and_name(db, user_id=skill.user_id, name=skill.name) if skill.user_id is not None else None
+    install = None
+    if skill.user_id is not None:
+        if skill.skill_definition_id is not None:
+            install = await SkillInstallRepository.get_by_user_and_definition(
+                db,
+                user_id=skill.user_id,
+                skill_definition_id=skill.skill_definition_id,
+            )
+        else:
+            install = await SkillInstallRepository.get_by_user_and_name(db, user_id=skill.user_id, name=skill.name)
     if install is not None:
         latest_release = await SkillReleaseRepository.get_latest_published_release_for_definition(
             db,
@@ -494,6 +509,45 @@ def _format_publisher(release: SkillRelease | None) -> str | None:
     return display_name or publisher.username
 
 
+async def _get_user_skill_by_definition_or_legacy(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    skill_name: str,
+    skill_definition_id: int,
+) -> Skill | None:
+    """Resolve a user skill by concrete definition, falling back only to legacy name-only rows."""
+    skill = await SkillRepository.get_user_skill_by_definition(
+        db,
+        user_id=user_id,
+        skill_definition_id=skill_definition_id,
+    )
+    if skill is not None:
+        return skill
+
+    for candidate in await SkillRepository.list_user_skills_by_name(db, user_id=user_id, name=skill_name):
+        if candidate.skill_definition_id is None:
+            return candidate
+    return None
+
+
+async def _get_single_install_by_name(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    skill_name: str,
+) -> SkillInstall:
+    installs = await SkillInstallRepository.list_by_user_and_name(db, user_id=user_id, name=skill_name)
+    if not installs:
+        raise HTTPException(status_code=404, detail=f"Skill install '{skill_name}' not found")
+    if len(installs) > 1:
+        raise HTTPException(status_code=400, detail=f"Skill install '{skill_name}' is ambiguous; submit a skill_install_id-aware request")
+    install = installs[0]
+    if install.current_version is None:
+        raise HTTPException(status_code=409, detail=f"Skill install '{skill_name}' has no current version")
+    return install
+
+
 def _affected_agent_to_response(agent: Agent) -> SkillUpdateAffectedAgent:
     return SkillUpdateAffectedAgent(id=agent.id, name=agent.name)
 
@@ -507,11 +561,7 @@ async def _build_skill_update_preview(
     target_release: SkillRelease | None = None,
 ) -> SkillInstallUpdatePreviewResponse:
     """Build a read-only update preview for the current user's install."""
-    install = await SkillInstallRepository.get_by_user_and_name(db, user_id=current_user.id, name=skill_name)
-    if install is None:
-        raise HTTPException(status_code=404, detail=f"Skill install '{skill_name}' not found")
-    if install.current_version is None:
-        raise HTTPException(status_code=409, detail=f"Skill install '{skill_name}' has no current version")
+    install = await _get_single_install_by_name(db, user_id=current_user.id, skill_name=skill_name)
 
     release = target_release
     if target_version is None:
@@ -766,12 +816,12 @@ async def _get_download_source_skill(
     skill_name: str,
     owner_user_id: int | None,
 ) -> Skill | None:
-    """Resolve the public catalog row selected by the compatibility install route.
-
-    ``owner_user_id`` is accepted for request compatibility but ignored.
-    """
-    del owner_user_id
-    return await SkillRepository.get_public_skill_by_name(db, name=skill_name)
+    """Resolve the selected public catalog row by source owner when supplied."""
+    return await SkillRepository.get_public_skill_by_name_and_owner(
+        db,
+        name=skill_name,
+        owner_user_id=owner_user_id,
+    )
 
 
 @router.post(
@@ -789,7 +839,7 @@ async def check_skill_upload(
     try:
         filename, skill_name, package_version, skill_dir, temp_dir = await _parse_uploaded_skill_archive(file)
         content_hash, _ = _hash_skill_directory(skill_dir)
-        definition = await SkillDefinitionRepository.get_by_name(db, name=skill_name)
+        definition = await SkillDefinitionRepository.get_by_name_and_owner(db, name=skill_name, owner_user_id=current_user.id)
         existing_version = None
         latest_version = None
         if definition is not None:
@@ -802,7 +852,15 @@ async def check_skill_upload(
                 db,
                 skill_definition_id=definition.id,
             )
-        install = await SkillInstallRepository.get_by_user_and_name(db, user_id=current_user.id, name=skill_name)
+        install = (
+            await SkillInstallRepository.get_by_user_and_definition(
+                db,
+                user_id=current_user.id,
+                skill_definition_id=definition.id,
+            )
+            if definition is not None
+            else None
+        )
         existing_package_version = install.current_version.source_package_version if install is not None and install.current_version is not None else None
         same_version = existing_version is not None
         exists = same_version and install is not None and install.current_version_id == existing_version.id
@@ -859,10 +917,8 @@ async def upload_skills(
                 description = ""
             description = description.strip()
 
-            existing_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
             target_path = build_private_skill_file_path(current_user.id, skill_name)
             target_dir = _resolve_skill_dir(target_path)
-            existing_install = await SkillInstallRepository.get_by_user_and_name(db, user_id=current_user.id, name=skill_name)
             version, created_version, definition = await _ensure_skill_version_from_dir(
                 db,
                 user_id=current_user.id,
@@ -870,6 +926,17 @@ async def upload_skills(
                 description=description,
                 source_package_version=package_version,
                 skill_dir=skill_dir,
+            )
+            existing_install = await SkillInstallRepository.get_by_user_and_definition(
+                db,
+                user_id=current_user.id,
+                skill_definition_id=definition.id,
+            )
+            existing_skill = await _get_user_skill_by_definition_or_legacy(
+                db,
+                user_id=current_user.id,
+                skill_name=skill_name,
+                skill_definition_id=definition.id,
             )
             await SkillInstallRepository.upsert_install(
                 db,
@@ -918,6 +985,7 @@ async def upload_skills(
                 existing_skill.display_name = skill_name
                 existing_skill.description = description
                 existing_skill.file_path = target_path
+                existing_skill.skill_definition_id = definition.id
                 await db.flush()
                 action = "updated"
             else:
@@ -925,6 +993,7 @@ async def upload_skills(
                     db,
                     user_id=current_user.id,
                     owner_user_id=None,
+                    skill_definition_id=definition.id,
                     name=skill_name,
                     display_name=skill_name,
                     description=description,
@@ -999,9 +1068,27 @@ async def check_skill_download(
         if source_skill is None:
             raise HTTPException(status_code=404, detail=f"SkillHub skill '{skill_name}' not found")
 
-        existing_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
-        target_dir = _resolve_skill_dir(build_private_skill_file_path(current_user.id, skill_name))
-        exists = existing_skill is not None or target_dir.exists()
+        source_release = await SkillReleaseRepository.get_latest_release_for_public_skill(db, published_skill_id=source_skill.id) if source_skill.id is not None else None
+        version = source_release.skill_version if source_release is not None else None
+        existing_install = (
+            await SkillInstallRepository.get_by_user_and_definition(
+                db,
+                user_id=current_user.id,
+                skill_definition_id=version.skill_definition_id,
+            )
+            if version is not None
+            else None
+        )
+        existing_skill = (
+            await SkillRepository.get_user_skill_by_definition(
+                db,
+                user_id=current_user.id,
+                skill_definition_id=version.skill_definition_id,
+            )
+            if version is not None
+            else await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
+        )
+        exists = existing_install is not None or existing_skill is not None
         return SkillDownloadCheckResponse(
             skill_name=skill_name,
             exists=exists,
@@ -1035,20 +1122,27 @@ async def download_skill(
         if source_skill is None:
             raise HTTPException(status_code=404, detail=f"SkillHub skill '{skill_name}' not found")
 
-        version = await SkillReleaseRepository.get_latest_published_version_by_name(db, skill_name=skill_name)
+        source_release = None
+        if source_skill.id is not None:
+            source_release = await SkillReleaseRepository.get_latest_release_for_public_skill(db, published_skill_id=source_skill.id)
+        version = source_release.skill_version if source_release is not None else None
         if version is None or version.definition is None:
             raise HTTPException(status_code=404, detail=f"Published version for skill '{skill_name}' not found")
 
-        existing_install = await SkillInstallRepository.get_by_user_and_name(db, user_id=current_user.id, name=skill_name)
-        existing_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
+        existing_install = await SkillInstallRepository.get_by_user_and_definition(
+            db,
+            user_id=current_user.id,
+            skill_definition_id=version.skill_definition_id,
+        )
+        existing_skill = await SkillRepository.get_user_skill_by_definition(
+            db,
+            user_id=current_user.id,
+            skill_definition_id=version.skill_definition_id,
+        )
         target_path = version.artifact_uri
         already_exists = existing_install is not None or existing_skill is not None
         if already_exists and not request.overwrite:
             raise HTTPException(status_code=409, detail=f"Skill '{skill_name}' already exists")
-
-        source_release = None
-        if source_skill.id is not None:
-            source_release = await SkillReleaseRepository.get_latest_release_for_public_skill(db, published_skill_id=source_skill.id)
 
         if existing_skill is not None:
             await SkillRepository.soft_delete_skill(db, skill=existing_skill, commit=False)
@@ -1063,6 +1157,7 @@ async def download_skill(
             db,
             user_id=current_user.id,
             owner_user_id=None,
+            skill_definition_id=version.skill_definition_id,
             name=skill_name,
             display_name=skill_name,
             description=version.description or source_skill.description,
@@ -1102,9 +1197,7 @@ async def update_skill_install(
     db: AsyncSession = Depends(get_db),
 ) -> SkillInstallUpdatePreviewResponse:
     try:
-        install = await SkillInstallRepository.get_by_user_and_name(db, user_id=current_user.id, name=skill_name)
-        if install is None:
-            raise HTTPException(status_code=404, detail=f"Skill install '{skill_name}' not found")
+        install = await _get_single_install_by_name(db, user_id=current_user.id, skill_name=skill_name)
 
         release: SkillRelease | None = None
         if request is not None and request.skill_version_id is not None:
@@ -1191,10 +1284,24 @@ async def publish_skill(
     artifact_committed = False
     try:
         _log_publish_phase(phase=phase, skill_name=skill_name, publisher_user_id=current_user.id)
-        custom_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
+        definition = await SkillDefinitionRepository.get_by_name_and_owner(db, name=skill_name, owner_user_id=current_user.id)
+        custom_skill = (
+            await _get_user_skill_by_definition_or_legacy(
+                db,
+                user_id=current_user.id,
+                skill_name=skill_name,
+                skill_definition_id=definition.id,
+            )
+            if definition is not None
+            else None
+        )
         if custom_skill is None:
             raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
-        install = await SkillInstallRepository.get_by_user_and_name(db, user_id=current_user.id, name=skill_name)
+        install = await SkillInstallRepository.get_by_user_and_definition(
+            db,
+            user_id=current_user.id,
+            skill_definition_id=definition.id,
+        )
         if install is None or install.current_version is None:
             raise HTTPException(status_code=409, detail=f"Skill '{skill_name}' has no installed platform version")
         current_version = install.current_version
@@ -1202,8 +1309,8 @@ async def publish_skill(
         source_dir = _resolve_skill_dir(current_version.artifact_uri)
         publish_metadata = _extract_publish_metadata(source_dir, expected_name=skill_name)
         release_notes = _normalize_release_notes(request.release_notes if request is not None else None)
-        existing_public_skills = await SkillRepository.list_public_skills_by_name(db, name=skill_name)
-        target_path = build_public_skill_file_path(skill_name)
+        existing_public_skills = await SkillRepository.list_public_skills_by_name_and_owner(db, name=skill_name, owner_user_id=current_user.id)
+        target_path = build_public_skill_file_path(skill_name, owner_user_id=current_user.id)
         target_dir = _resolve_skill_dir(target_path)
 
         phase = "copy_public_artifact"
@@ -1220,6 +1327,7 @@ async def publish_skill(
             db,
             user_id=None,
             owner_user_id=current_user.id,
+            skill_definition_id=current_version.skill_definition_id,
             name=skill_name,
             display_name=skill_name,
             description=publish_metadata["description"],
@@ -1408,20 +1516,52 @@ async def install_skill(
         result = install_skill_from_archive(skill_file_path, skills_root=skills_root, user_id=current_user.id)
         skill_name = result["skill_name"]
         installed_dir = _resolve_skill_dir(build_private_skill_file_path(current_user.id, skill_name))
-
-        existing_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
-        if existing_skill is not None:
-            await asyncio.to_thread(_delete_skill_directory, installed_dir)
-            raise SkillAlreadyExistsError(f"Skill '{skill_name}' already exists")
+        existing_definition = await SkillDefinitionRepository.get_by_name_and_owner(db, name=skill_name, owner_user_id=current_user.id)
+        if existing_definition is not None:
+            existing_install = await SkillInstallRepository.get_by_user_and_definition(
+                db,
+                user_id=current_user.id,
+                skill_definition_id=existing_definition.id,
+            )
+            existing_skill = await _get_user_skill_by_definition_or_legacy(
+                db,
+                user_id=current_user.id,
+                skill_name=skill_name,
+                skill_definition_id=existing_definition.id,
+            )
+            if existing_install is not None or existing_skill is not None:
+                await asyncio.to_thread(_delete_skill_directory, installed_dir)
+                raise SkillAlreadyExistsError(f"Skill '{skill_name}' already exists")
+        else:
+            for candidate in await SkillRepository.list_user_skills_by_name(db, user_id=current_user.id, name=skill_name):
+                if candidate.skill_definition_id is None:
+                    await asyncio.to_thread(_delete_skill_directory, installed_dir)
+                    raise SkillAlreadyExistsError(f"Skill '{skill_name}' already exists")
 
         description = _extract_frontmatter(installed_dir / "SKILL.md").get("description", "")
         if not isinstance(description, str):
             description = ""
+        source_package_version = _extract_package_version_from_dir(installed_dir)
+        version, _, definition = await _ensure_skill_version_from_dir(
+            db,
+            user_id=current_user.id,
+            skill_name=skill_name,
+            description=description.strip(),
+            source_package_version=source_package_version,
+            skill_dir=installed_dir,
+        )
+        await SkillInstallRepository.upsert_install(
+            db,
+            user_id=current_user.id,
+            definition=definition,
+            version=version,
+        )
 
         await SkillRepository.create_skill(
             db,
             user_id=current_user.id,
             owner_user_id=None,
+            skill_definition_id=definition.id,
             name=skill_name,
             display_name=skill_name,
             description=description.strip(),

@@ -172,12 +172,12 @@ def test_agent_response_keeps_legacy_skill_binding_visible_but_unavailable() -> 
 
 
 def test_agent_skill_name_resolution_rejects_missing_or_uninstalled_names(monkeypatch) -> None:
-    async def get_by_user_and_name(_db, *, user_id, name):
+    async def list_by_user_and_name(_db, *, user_id, name):
         assert user_id == 22
         assert name == "missing-skill"
-        return None
+        return []
 
-    monkeypatch.setattr(agents_router.SkillInstallRepository, "get_by_user_and_name", get_by_user_and_name)
+    monkeypatch.setattr(agents_router.SkillInstallRepository, "list_by_user_and_name", list_by_user_and_name)
 
     with pytest.raises(HTTPException) as exc_info:
         asyncio.run(
@@ -192,6 +192,32 @@ def test_agent_skill_name_resolution_rejects_missing_or_uninstalled_names(monkey
     assert "Skill install 'missing-skill' not found" == exc_info.value.detail
 
 
+def test_agent_skill_install_id_resolution_selects_collision_install(monkeypatch) -> None:
+    install = SkillInstall(id=202, user_id=22, skill_definition_id=11, installed_version_id=101, current_version_id=101)
+
+    async def get_by_id_for_user(_db, *, user_id, skill_install_id):
+        assert user_id == 22
+        assert skill_install_id == 202
+        return install
+
+    async def list_by_user_and_name(*_args, **_kwargs):
+        raise AssertionError("install-id-only requests must not fall back to name lookup")
+
+    monkeypatch.setattr(agents_router.SkillInstallRepository, "get_by_id_for_user", get_by_id_for_user)
+    monkeypatch.setattr(agents_router.SkillInstallRepository, "list_by_user_and_name", list_by_user_and_name)
+
+    result = asyncio.run(
+        agents_router._resolve_skill_install_ids_for_request(
+            object(),
+            user_id=22,
+            skill_install_ids=[202],
+            skill_names=None,
+        )
+    )
+
+    assert result == [202]
+
+
 def test_create_agent_rejects_uninstalled_skill_name_and_rolls_back(monkeypatch) -> None:
     async def get_agent_by_name(_db, *, user_id, name):
         assert user_id == 22
@@ -204,14 +230,14 @@ def test_create_agent_rejects_uninstalled_skill_name_and_rolls_back(monkeypatch)
         assert kwargs["commit"] is False
         return Agent(id=501, user_id=22, name="probe-agent", agent_skills=[])
 
-    async def get_by_user_and_name(_db, *, user_id, name):
+    async def list_by_user_and_name(_db, *, user_id, name):
         assert user_id == 22
         assert name == "missing-skill"
-        return None
+        return []
 
     monkeypatch.setattr(agents_router.AgentRepository, "get_agent_by_name", get_agent_by_name)
     monkeypatch.setattr(agents_router.AgentRepository, "create_agent", create_agent)
-    monkeypatch.setattr(agents_router.SkillInstallRepository, "get_by_user_and_name", get_by_user_and_name)
+    monkeypatch.setattr(agents_router.SkillInstallRepository, "list_by_user_and_name", list_by_user_and_name)
 
     db = _FakeDb()
     with pytest.raises(HTTPException) as exc_info:
@@ -241,14 +267,14 @@ def test_update_agent_rejects_uninstalled_skill_name_and_rolls_back(monkeypatch)
         assert kwargs["commit"] is False
         return agent
 
-    async def get_by_user_and_name(_db, *, user_id, name):
+    async def list_by_user_and_name(_db, *, user_id, name):
         assert user_id == 22
         assert name == "missing-skill"
-        return None
+        return []
 
     monkeypatch.setattr(agents_router.AgentRepository, "get_agent_by_name", get_agent_by_name)
     monkeypatch.setattr(agents_router.AgentRepository, "update_agent", update_agent)
-    monkeypatch.setattr(agents_router.SkillInstallRepository, "get_by_user_and_name", get_by_user_and_name)
+    monkeypatch.setattr(agents_router.SkillInstallRepository, "list_by_user_and_name", list_by_user_and_name)
 
     db = _FakeDb()
     with pytest.raises(HTTPException) as exc_info:

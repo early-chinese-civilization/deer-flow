@@ -192,6 +192,8 @@ def test_platform_skill_version_install_models_declares_manifest_foundation_colu
 
     assert SkillDefinition.__tablename__ == "skill_definitions"
     assert "name" in definition_columns
+    assert "source_type" in definition_columns
+    assert "source_identifier" in definition_columns
     assert "owner_user_id" in definition_columns
 
     assert SkillVersion.__tablename__ == "skill_versions"
@@ -232,3 +234,14 @@ def test_runtime_manifest_hash_migration_exists():
     migration = migration_path.read_text(encoding="utf-8")
     assert "runtime_manifests" in migration
     assert "manifest_hash" in migration
+
+
+def test_skill_definition_namespace_migration_exists():
+    migration_path = Path("alembic/versions/9f4d2c7b1a63_namespace_skill_definitions.py")
+
+    assert migration_path.exists()
+    migration = migration_path.read_text(encoding="utf-8")
+    assert "source_type" in migration
+    assert "source_identifier" in migration
+    assert "uq_skill_definitions_source_name_active" in migration
+    assert "skill_definition_id" in migration

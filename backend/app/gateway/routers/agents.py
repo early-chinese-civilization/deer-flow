@@ -59,6 +59,7 @@ class AgentCreateRequest(BaseModel):
     name: str = Field(..., description="Agent name (must match ^[A-Za-z0-9-]+$, stored as lowercase)")
     description: str = Field(default="", description="Agent description")
     skills: list[str] | None = Field(default=None, description="Optional skills whitelist")
+    skill_install_ids: list[int] | None = Field(default=None, description="Optional install-backed skill binding IDs")
     soul: str = Field(default="", description="SOUL.md content - agent personality and behavioral guardrails")
 
 
@@ -67,6 +68,7 @@ class AgentUpdateRequest(BaseModel):
 
     description: str | None = Field(default=None, description="Updated description")
     skills: list[str] | None = Field(default=None, description="Updated skills whitelist")
+    skill_install_ids: list[int] | None = Field(default=None, description="Updated install-backed skill binding IDs")
     soul: str | None = Field(default=None, description="Updated SOUL.md content")
 
 
@@ -217,11 +219,42 @@ async def _resolve_skill_install_ids(
         if skill_name in seen_skill_names:
             raise HTTPException(status_code=400, detail=f"Duplicate skill '{skill_name}'")
         seen_skill_names.add(skill_name)
-        install = await SkillInstallRepository.get_by_user_and_name(db, user_id=user_id, name=skill_name)
-        if install is None:
+        installs = await SkillInstallRepository.list_by_user_and_name(db, user_id=user_id, name=skill_name)
+        if not installs:
             raise HTTPException(status_code=400, detail=f"Skill install '{skill_name}' not found")
+        if len(installs) > 1:
+            raise HTTPException(status_code=400, detail=f"Skill install '{skill_name}' is ambiguous; submit skill_install_ids instead")
+        install = installs[0]
         skill_install_ids.append(install.id)
     return skill_install_ids
+
+
+async def _resolve_skill_install_ids_for_request(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    skill_install_ids: list[int] | None,
+    skill_names: list[str] | None,
+) -> list[int]:
+    """Resolve install IDs first, with name compatibility for older callers."""
+    if skill_install_ids is not None:
+        resolved: list[int] = []
+        seen_install_ids: set[int] = set()
+        for skill_install_id in skill_install_ids:
+            if skill_install_id in seen_install_ids:
+                raise HTTPException(status_code=400, detail=f"Duplicate skill install '{skill_install_id}'")
+            seen_install_ids.add(skill_install_id)
+            install = await SkillInstallRepository.get_by_id_for_user(db, user_id=user_id, skill_install_id=skill_install_id)
+            if install is None:
+                raise HTTPException(status_code=400, detail=f"Skill install '{skill_install_id}' not found")
+            resolved.append(install.id)
+        for install_id in await _resolve_skill_install_ids(db, user_id=user_id, skill_names=skill_names or []):
+            if install_id in seen_install_ids:
+                raise HTTPException(status_code=400, detail=f"Duplicate skill install '{install_id}'")
+            seen_install_ids.add(install_id)
+            resolved.append(install_id)
+        return resolved
+    return await _resolve_skill_install_ids(db, user_id=user_id, skill_names=skill_names or [])
 
 
 @router.get(
@@ -319,8 +352,13 @@ async def create_agent_endpoint(
             commit=False,
         )
 
-        if request.skills is not None:
-            skill_install_ids = await _resolve_skill_install_ids(db, user_id=current_user.id, skill_names=request.skills)
+        if request.skills is not None or request.skill_install_ids is not None:
+            skill_install_ids = await _resolve_skill_install_ids_for_request(
+                db,
+                user_id=current_user.id,
+                skill_install_ids=request.skill_install_ids,
+                skill_names=request.skills,
+            )
             agent = await AgentRepository.replace_agent_skills(db, agent=agent, skill_ids=[], skill_install_ids=skill_install_ids, commit=True)
         else:
             await db.commit()
@@ -370,9 +408,14 @@ async def update_agent(
             commit=False,
         )
 
-        if "skills" in request.model_fields_set:
+        if "skills" in request.model_fields_set or "skill_install_ids" in request.model_fields_set:
             requested_skills = request.skills or []
-            skill_install_ids = await _resolve_skill_install_ids(db, user_id=current_user.id, skill_names=requested_skills)
+            skill_install_ids = await _resolve_skill_install_ids_for_request(
+                db,
+                user_id=current_user.id,
+                skill_install_ids=request.skill_install_ids,
+                skill_names=requested_skills,
+            )
             agent = await AgentRepository.replace_agent_skills(db, agent=agent, skill_ids=[], skill_install_ids=skill_install_ids, commit=True)
         else:
             await db.commit()

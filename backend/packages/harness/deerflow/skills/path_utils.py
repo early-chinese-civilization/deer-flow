@@ -11,8 +11,10 @@ def build_private_skill_file_path(user_id: int | str, skill_name: str) -> str:
     return f"{user_id}/{skill_name}"
 
 
-def build_public_skill_file_path(skill_name: str) -> str:
+def build_public_skill_file_path(skill_name: str, owner_user_id: int | str | None = None) -> str:
     """Return the canonical shared-filesystem path for a public skill."""
+    if owner_user_id is not None:
+        return f"{PUBLIC_SKILLS_DIR}/{owner_user_id}/{skill_name}"
     return f"{PUBLIC_SKILLS_DIR}/{skill_name}"
 
 
@@ -53,6 +55,9 @@ def normalize_skill_file_path(
     if user_id is None:
         if normalized == canonical or normalized.startswith(f"{canonical}/"):
             return canonical
+        normalized_parts = PurePosixPath(normalized).parts
+        if len(normalized_parts) == 3 and normalized_parts[0] == PUBLIC_SKILLS_DIR and normalized_parts[2] == skill_name:
+            return normalized
         if normalized.startswith(f"{PUBLIC_SKILLS_DIR}/{skill_name}/"):
             return canonical
         return canonical

@@ -57,11 +57,13 @@ export interface CreateAgentRequest {
   name: string;
   description?: string;
   skills?: string[] | null;
+  skill_install_ids?: number[] | null;
   soul?: string;
 }
 
 export interface UpdateAgentRequest {
   description?: string | null;
   skills?: string[] | null;
+  skill_install_ids?: number[] | null;
   soul?: string | null;
 }

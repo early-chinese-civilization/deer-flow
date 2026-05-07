@@ -103,8 +103,20 @@ class _ApiFlowStore:
         ]
         return max(releases, key=lambda release: release.skill_version.version_number, default=None)
 
-    async def get_or_create_definition(self, db, *, name, display_name, description, owner_user_id):
-        definition = next((item for item in self.definitions if item.name == name and item.deleted_at is None), None)
+    async def get_or_create_definition(self, db, *, name, display_name, description, owner_user_id, source_type=None, source_identifier=None):
+        source_type = source_type or ("user" if owner_user_id is not None else "legacy")
+        source_identifier = source_identifier or (str(owner_user_id) if owner_user_id is not None else "legacy")
+        definition = next(
+            (
+                item
+                for item in self.definitions
+                if item.name == name
+                and item.source_type == source_type
+                and item.source_identifier == source_identifier
+                and item.deleted_at is None
+            ),
+            None,
+        )
         if definition is not None:
             definition.display_name = display_name or definition.display_name
             definition.description = description or definition.description
@@ -114,6 +126,8 @@ class _ApiFlowStore:
             name=name,
             display_name=display_name,
             description=description,
+            source_type=source_type,
+            source_identifier=source_identifier,
             owner_user_id=owner_user_id,
         )
         self.next_definition_id += 1
@@ -122,6 +136,21 @@ class _ApiFlowStore:
 
     async def get_definition_by_name(self, db, *, name):
         return next((item for item in self.definitions if item.name == name and item.deleted_at is None), None)
+
+    async def get_definition_by_name_and_owner(self, db, *, name, owner_user_id):
+        source_type = "user" if owner_user_id is not None else "legacy"
+        source_identifier = str(owner_user_id) if owner_user_id is not None else "legacy"
+        return next(
+            (
+                item
+                for item in self.definitions
+                if item.name == name
+                and item.source_type == source_type
+                and item.source_identifier == source_identifier
+                and item.deleted_at is None
+            ),
+            None,
+        )
 
     async def get_version_by_hash(self, db, *, skill_definition_id, content_hash):
         return next(
@@ -182,14 +211,21 @@ class _ApiFlowStore:
         )
 
     async def get_install_by_user_and_name(self, db, *, user_id, name):
-        definition = await self.get_definition_by_name(db, name=name)
-        if definition is None:
-            return None
-        return await self.get_install_by_user_and_definition(
-            db,
-            user_id=user_id,
-            skill_definition_id=definition.id,
-        )
+        installs = await self.list_install_by_user_and_name(db, user_id=user_id, name=name)
+        return installs[0] if installs else None
+
+    async def list_install_by_user_and_name(self, db, *, user_id, name):
+        definition_ids = [definition.id for definition in self.definitions if definition.name == name and definition.deleted_at is None]
+        return [
+            install
+            for install in self.installs
+            if install.user_id == user_id
+            and install.skill_definition_id in definition_ids
+            and install.deleted_at is None
+        ]
+
+    async def get_install_by_id_for_user(self, db, *, user_id, skill_install_id):
+        return next((install for install in self.installs if install.id == skill_install_id and install.user_id == user_id and install.deleted_at is None), None)
 
     async def upsert_install(self, db, *, user_id, definition, version):
         install = await self.get_install_by_user_and_definition(
@@ -223,14 +259,34 @@ class _ApiFlowStore:
     async def get_user_skill_by_name(self, db, *, user_id, name):
         return next((skill for skill in self.skills if skill.user_id == user_id and skill.name == name and skill.deleted_at is None), None)
 
+    async def list_user_skills_by_name(self, db, *, user_id, name):
+        return [skill for skill in self.skills if skill.user_id == user_id and skill.name == name and skill.deleted_at is None]
+
+    async def get_user_skill_by_definition(self, db, *, user_id, skill_definition_id):
+        return next((skill for skill in self.skills if skill.user_id == user_id and skill.skill_definition_id == skill_definition_id and skill.deleted_at is None), None)
+
     async def get_public_skill_by_name(self, db, *, name):
         public_skills = [skill for skill in self.skills if skill.user_id is None and skill.name == name and skill.deleted_at is None]
+        return max(public_skills, key=lambda skill: skill.id, default=None)
+
+    async def get_public_skill_by_name_and_owner(self, db, *, name, owner_user_id):
+        public_skills = [
+            skill
+            for skill in self.skills
+            if skill.user_id is None
+            and skill.name == name
+            and (owner_user_id is None or skill.owner_user_id == owner_user_id)
+            and skill.deleted_at is None
+        ]
         return max(public_skills, key=lambda skill: skill.id, default=None)
 
     async def list_public_skills_by_name(self, db, *, name):
         return [skill for skill in self.skills if skill.user_id is None and skill.name == name and skill.deleted_at is None]
 
-    async def create_skill(self, db, *, user_id, owner_user_id, name, display_name, description, file_path, commit=True):
+    async def list_public_skills_by_name_and_owner(self, db, *, name, owner_user_id):
+        return [skill for skill in self.skills if skill.user_id is None and skill.name == name and skill.owner_user_id == owner_user_id and skill.deleted_at is None]
+
+    async def create_skill(self, db, *, user_id, owner_user_id, name, display_name, description, file_path, skill_definition_id=None, commit=True):
         skill = Skill(
             id=self.next_skill_id,
             user_id=user_id,
@@ -239,6 +295,7 @@ class _ApiFlowStore:
             display_name=display_name,
             description=description,
             file_path=file_path,
+            skill_definition_id=skill_definition_id,
         )
         self.next_skill_id += 1
         self.skills.append(skill)
@@ -397,17 +454,25 @@ def _install_api_flow_repositories(monkeypatch, store: _ApiFlowStore) -> None:
 
     monkeypatch.setattr(skills_router.SkillDefinitionRepository, "get_or_create", store.get_or_create_definition)
     monkeypatch.setattr(skills_router.SkillDefinitionRepository, "get_by_name", store.get_definition_by_name)
+    monkeypatch.setattr(skills_router.SkillDefinitionRepository, "get_by_name_and_owner", store.get_definition_by_name_and_owner)
     monkeypatch.setattr(skills_router.SkillVersionRepository, "get_by_definition_and_hash", store.get_version_by_hash)
     monkeypatch.setattr(skills_router.SkillVersionRepository, "get_latest_for_definition", store.get_latest_version)
     monkeypatch.setattr(skills_router.SkillVersionRepository, "create_version", store.create_version)
     monkeypatch.setattr(skills_router.SkillVersionRepository, "get_by_id", store.get_version_by_id)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_definition", store.get_install_by_user_and_definition)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_name", store.get_install_by_user_and_name)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "list_by_user_and_name", store.list_install_by_user_and_name)
+    monkeypatch.setattr(agents_router.SkillInstallRepository, "list_by_user_and_name", store.list_install_by_user_and_name)
+    monkeypatch.setattr(agents_router.SkillInstallRepository, "get_by_id_for_user", store.get_install_by_id_for_user)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "upsert_install", store.upsert_install)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "update_current_version", store.update_current_version)
     monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_name", store.get_user_skill_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_user_skills_by_name", store.list_user_skills_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_definition", store.get_user_skill_by_definition)
     monkeypatch.setattr(skills_router.SkillRepository, "get_public_skill_by_name", store.get_public_skill_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "get_public_skill_by_name_and_owner", store.get_public_skill_by_name_and_owner)
     monkeypatch.setattr(skills_router.SkillRepository, "list_public_skills_by_name", store.list_public_skills_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_public_skills_by_name_and_owner", store.list_public_skills_by_name_and_owner)
     monkeypatch.setattr(skills_router.SkillRepository, "create_skill", store.create_skill)
     monkeypatch.setattr(skills_router.SkillRepository, "get_skill_by_id", store.get_skill_by_id)
     monkeypatch.setattr(skills_router.SkillRepository, "soft_delete_skill", store.soft_delete_skill)
@@ -557,7 +622,7 @@ def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_
         assert release_v2.skill_version_id == v2.id
         assert release_v2.artifact_path == v2.artifact_uri
         assert public_v1.deleted_at is not None
-        assert public_v2.file_path == "public/probe-skill"
+        assert public_v2.file_path == "public/7/probe-skill"
         assert installer_install.installed_version_id == v1.id
         assert installer_install.current_version_id == v1.id
         assert install_v1.json()["skill_install_id"] == installer_install.id
