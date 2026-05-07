@@ -94,6 +94,9 @@ def e2e_env(tmp_path, monkeypatch):
     monkeypatch.setenv("DEER_FLOW_HOME", str(tmp_path))
     monkeypatch.setattr("deerflow.config.paths._paths", None)
     monkeypatch.setattr("deerflow.sandbox.sandbox_provider._default_sandbox_provider", None)
+    skill_dir = tmp_path / "skills" / "public" / "deep-research"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: deep-research\ndescription: E2E seeded skill\n---\n\nSeeded for isolated client E2E tests.\n")
 
     # 2. Inject a clean AppConfig via the global singleton.
     config = _make_e2e_config()
@@ -108,9 +111,12 @@ def e2e_env(tmp_path, monkeypatch):
     # 4. Disable memory queueing (avoids background threads & file writes)
     from deerflow.config.memory_config import MemoryConfig
 
+    memory_config = MemoryConfig(enabled=False, storage_class="deerflow.agents.memory.storage.FileMemoryStorage")
+    monkeypatch.setattr("deerflow.config.memory_config._memory_config", memory_config)
+    monkeypatch.setattr("deerflow.agents.memory.storage._storage_instance", None)
     monkeypatch.setattr(
         "deerflow.agents.middlewares.memory_middleware.get_memory_config",
-        lambda: MemoryConfig(enabled=False),
+        lambda: memory_config,
     )
 
     # 5. Ensure summarization is off (default, but be explicit)

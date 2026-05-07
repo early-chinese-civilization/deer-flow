@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+import deerflow.agents.middlewares.uploads_middleware as uploads_middleware_module
 from deerflow.agents.middlewares.file_reference_middleware import FileReferenceMiddleware
 from deerflow.agents.middlewares.uploads_middleware import UploadsMiddleware
 
@@ -51,10 +52,7 @@ def test_uploads_middleware_persists_canonical_oss_file_identity(tmp_path):
 def test_uploads_middleware_accepts_path_only_virtual_payload(tmp_path, monkeypatch):
     middleware = UploadsMiddleware(base_dir=str(tmp_path))
 
-    monkeypatch.setattr(
-        "deerflow.agents.middlewares.uploads_middleware.get_app_config",
-        lambda: SimpleNamespace(uploads=SimpleNamespace(oss=SimpleNamespace(bucket="demo-bucket"))),
-    )
+    monkeypatch.setattr(uploads_middleware_module, "get_app_config", lambda: SimpleNamespace(uploads=SimpleNamespace(oss=SimpleNamespace(bucket="demo-bucket"))))
 
     payload = {
         "filename": "notes.txt",

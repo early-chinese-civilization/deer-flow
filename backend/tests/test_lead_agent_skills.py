@@ -1,53 +1,43 @@
-from pathlib import Path
-
 from deerflow.agents.lead_agent.prompt import get_skills_prompt_section
-from deerflow.config.agents_config import AgentConfig
-from deerflow.skills.types import Skill
 
 
-def _make_skill(name: str) -> Skill:
-    return Skill(
-        name=name,
-        description=f"Description for {name}",
-        license="MIT",
-        skill_dir=Path(f"/tmp/{name}"),
-        skill_file=Path(f"/tmp/{name}/SKILL.md"),
-        relative_path=Path(name),
-        category="public",
-        enabled=True,
-    )
+def _make_runtime_skill(name: str) -> dict:
+    return {
+        "name": name,
+        "description": f"Description for {name}",
+        "virtual_path": f"/mnt/skills/{name}/SKILL.md",
+        "skill_version_id": f"{name}-version",
+        "version_number": 1,
+        "file_manifest_hash": f"{name}-hash",
+    }
 
 
-def test_get_skills_prompt_section_returns_empty_when_no_skills_match(monkeypatch):
-    skills = [_make_skill("skill1"), _make_skill("skill2")]
-    monkeypatch.setattr("deerflow.agents.lead_agent.prompt.load_skills", lambda enabled_only: skills)
+def _runtime_context(*skills: dict) -> dict:
+    return {"skills": list(skills)}
 
-    result = get_skills_prompt_section(available_skills={"non_existent_skill"})
+
+def test_get_skills_prompt_section_returns_empty_when_no_skills_match():
+    runtime_context = _runtime_context(_make_runtime_skill("skill1"), _make_runtime_skill("skill2"))
+    result = get_skills_prompt_section(available_skills={"non_existent_skill"}, runtime_agent_context=runtime_context)
     assert result == ""
 
 
-def test_get_skills_prompt_section_returns_empty_when_available_skills_empty(monkeypatch):
-    skills = [_make_skill("skill1"), _make_skill("skill2")]
-    monkeypatch.setattr("deerflow.agents.lead_agent.prompt.load_skills", lambda enabled_only: skills)
-
-    result = get_skills_prompt_section(available_skills=set())
+def test_get_skills_prompt_section_returns_empty_when_available_skills_empty():
+    runtime_context = _runtime_context(_make_runtime_skill("skill1"), _make_runtime_skill("skill2"))
+    result = get_skills_prompt_section(available_skills=set(), runtime_agent_context=runtime_context)
     assert result == ""
 
 
-def test_get_skills_prompt_section_returns_skills(monkeypatch):
-    skills = [_make_skill("skill1"), _make_skill("skill2")]
-    monkeypatch.setattr("deerflow.agents.lead_agent.prompt.load_skills", lambda enabled_only: skills)
-
-    result = get_skills_prompt_section(available_skills={"skill1"})
+def test_get_skills_prompt_section_returns_skills():
+    runtime_context = _runtime_context(_make_runtime_skill("skill1"), _make_runtime_skill("skill2"))
+    result = get_skills_prompt_section(available_skills={"skill1"}, runtime_agent_context=runtime_context)
     assert "skill1" in result
     assert "skill2" not in result
 
 
-def test_get_skills_prompt_section_returns_all_when_available_skills_is_none(monkeypatch):
-    skills = [_make_skill("skill1"), _make_skill("skill2")]
-    monkeypatch.setattr("deerflow.agents.lead_agent.prompt.load_skills", lambda enabled_only: skills)
-
-    result = get_skills_prompt_section(available_skills=None)
+def test_get_skills_prompt_section_returns_all_when_available_skills_is_none():
+    runtime_context = _runtime_context(_make_runtime_skill("skill1"), _make_runtime_skill("skill2"))
+    result = get_skills_prompt_section(available_skills=None, runtime_agent_context=runtime_context)
     assert "skill1" in result
     assert "skill2" in result
 
@@ -80,17 +70,5 @@ def test_make_lead_agent_empty_skills_passed_correctly(monkeypatch):
 
     monkeypatch.setattr(lead_agent_module, "apply_prompt_template", mock_apply_prompt_template)
 
-    # Case 1: Empty skills list
-    monkeypatch.setattr(lead_agent_module, "load_agent_config", lambda x: AgentConfig(name="test", skills=[]))
-    lead_agent_module.make_lead_agent({"configurable": {"agent_name": "test"}})
-    assert captured_skills[-1] == set()
-
-    # Case 2: None skills list
-    monkeypatch.setattr(lead_agent_module, "load_agent_config", lambda x: AgentConfig(name="test", skills=None))
-    lead_agent_module.make_lead_agent({"configurable": {"agent_name": "test"}})
+    lead_agent_module.make_lead_agent({"configurable": {"agent_name": "test"}, "context": {"runtime_agent": {"skills": []}}})
     assert captured_skills[-1] is None
-
-    # Case 3: Some skills list
-    monkeypatch.setattr(lead_agent_module, "load_agent_config", lambda x: AgentConfig(name="test", skills=["skill1"]))
-    lead_agent_module.make_lead_agent({"configurable": {"agent_name": "test"}})
-    assert captured_skills[-1] == {"skill1"}

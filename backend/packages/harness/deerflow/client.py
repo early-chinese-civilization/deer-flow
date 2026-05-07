@@ -826,13 +826,16 @@ class DeerFlowClient:
             for src_path, dest_name in resolved_files:
                 dest = uploads_dir / dest_name
                 shutil.copy2(src_path, dest)
+                relative_path = f"uploads/{dest_name}"
 
                 info: dict[str, Any] = {
                     "filename": dest_name,
-                    "size": str(dest.stat().st_size),
+                    "size": dest.stat().st_size,
                     "path": str(dest),
+                    "relative_path": relative_path,
                     "virtual_path": upload_virtual_path(dest_name),
                     "artifact_url": upload_artifact_url(thread_id, dest_name),
+                    "object_key": relative_path,
                 }
                 if dest_name != src_path.name:
                     info["original_filename"] = src_path.name

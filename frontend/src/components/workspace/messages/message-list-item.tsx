@@ -36,8 +36,8 @@ import { cn } from "@/lib/utils";
 
 import { CopyButton } from "../copy-button";
 
-import { MarkdownContent } from "./markdown-content";
 import { useThread } from "./context";
+import { MarkdownContent } from "./markdown-content";
 
 export function MessageListItem({
   className,
@@ -89,8 +89,6 @@ function MessageImage({
 }: React.ImgHTMLAttributes<HTMLImageElement> & {
   maxWidth?: string;
 }) {
-  if (!src) return null;
-
   const { workspaceId } = useThread();
   const ossSource =
     typeof src === "string" && src.startsWith("oss://")
@@ -98,6 +96,8 @@ function MessageImage({
       : null;
   const { data: ossUrl } = useResolvedOssUrl(workspaceId, ossSource);
   const imgClassName = cn("overflow-hidden rounded-lg", `max-w-[${maxWidth}]`);
+
+  if (!src) return null;
 
   if (typeof src !== "string") {
     return <img className={imgClassName} src={src} alt={alt} {...props} />;
@@ -309,6 +309,9 @@ function RichFileCard({
   const { workspaceId } = useThread();
   const isUploading = file.status === "uploading";
   const isImage = isImageFile(file.filename);
+  const source = isUploading ? null : getBrowserOssSource(file);
+  const urlResult = useResolvedOssUrl(workspaceId, source);
+  const fileUrl = urlResult.data;
 
   if (isUploading) {
     return (
@@ -336,10 +339,6 @@ function RichFileCard({
       </div>
     );
   }
-
-  const source = getBrowserOssSource(file);
-  const urlResult = useResolvedOssUrl(workspaceId, source);
-  const fileUrl = urlResult.data;
 
   if (isImage) {
     if (fileUrl) {

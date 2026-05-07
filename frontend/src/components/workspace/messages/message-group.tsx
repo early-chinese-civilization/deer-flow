@@ -36,8 +36,8 @@ import { cn } from "@/lib/utils";
 import { useArtifacts } from "../artifacts";
 import { FlipDisplay } from "../flip-display";
 import { Tooltip } from "../tooltip";
-import { useThread } from "./context";
 
+import { useThread } from "./context";
 import { MarkdownContent } from "./markdown-content";
 
 export function MessageGroup({

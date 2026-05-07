@@ -4,7 +4,7 @@ The deerflow-harness package (packages/harness/deerflow/) is a standalone,
 publishable agent framework. It must never depend on the app layer (app/).
 
 This test scans all Python files in the harness package and fails if any
-``from app.`` or ``import app.`` statement is found.
+``from app.`` / ``import app.`` statement or dynamic ``importlib`` app import is found.
 """
 
 import ast
@@ -16,7 +16,7 @@ BANNED_PREFIXES = ("app.",)
 
 
 def _collect_imports(filepath: Path) -> list[tuple[int, str]]:
-    """Return (line_number, module_path) for every import in *filepath*."""
+    """Return (line_number, module_path) for every app-layer import in *filepath*."""
     source = filepath.read_text(encoding="utf-8")
     try:
         tree = ast.parse(source, filename=str(filepath))
@@ -31,6 +31,16 @@ def _collect_imports(filepath: Path) -> list[tuple[int, str]]:
         elif isinstance(node, ast.ImportFrom):
             if node.module:
                 results.append((node.lineno, node.module))
+        elif isinstance(node, ast.Call):
+            func = node.func
+            is_importlib_call = (
+                isinstance(func, ast.Attribute)
+                and func.attr == "import_module"
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "importlib"
+            )
+            if is_importlib_call and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                results.append((node.lineno, node.args[0].value))
     return results
 
 

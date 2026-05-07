@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import threading
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,30 @@ from deerflow.config.memory_config import get_memory_config
 from deerflow.config.paths import get_paths
 
 logger = logging.getLogger(__name__)
+
+DatabaseMemoryLoadHandler = Callable[[int], Awaitable[dict[str, Any]]]
+DatabaseMemorySaveHandler = Callable[[int, dict[str, Any]], Awaitable[None]]
+
+_database_memory_load_handler: DatabaseMemoryLoadHandler | None = None
+_database_memory_save_handler: DatabaseMemorySaveHandler | None = None
+
+
+def register_database_memory_handlers(
+    *,
+    load_handler: DatabaseMemoryLoadHandler,
+    save_handler: DatabaseMemorySaveHandler,
+) -> None:
+    """Register app-owned database handlers for DatabaseMemoryStorage."""
+    global _database_memory_load_handler, _database_memory_save_handler
+    _database_memory_load_handler = load_handler
+    _database_memory_save_handler = save_handler
+
+
+def clear_database_memory_handlers() -> None:
+    """Clear registered database handlers, primarily for isolated tests."""
+    global _database_memory_load_handler, _database_memory_save_handler
+    _database_memory_load_handler = None
+    _database_memory_save_handler = None
 
 
 def _run_async(coro):
@@ -200,26 +225,23 @@ class DatabaseMemoryStorage(MemoryStorage):
 
     @staticmethod
     async def _load_from_db(user_id: int) -> dict[str, Any]:
-        from app.gateway.db.engine import get_db_session
-        from app.gateway.db.repository import MemoryRepository
-
-        async with get_db_session() as db:
-            memory_row = await MemoryRepository.get_memory_by_user_id(db, user_id)
-        logger.info("Loaded memory from database for user %s: exists=%s", user_id, memory_row is not None)
-        return dict(memory_row.memory_json or {}) if memory_row is not None else create_empty_memory()
+        if _database_memory_load_handler is None:
+            raise RuntimeError("Database memory storage is not registered")
+        memory_data = await _database_memory_load_handler(user_id)
+        logger.info("Loaded memory from database for user %s: facts=%d", user_id, len(memory_data.get("facts", [])))
+        return dict(memory_data)
 
     @staticmethod
     async def _save_to_db(user_id: int, memory_data: dict[str, Any]) -> None:
-        from app.gateway.db.engine import get_db_session
-        from app.gateway.db.repository import MemoryRepository
+        if _database_memory_save_handler is None:
+            raise RuntimeError("Database memory storage is not registered")
 
         logger.info(
             "Persisting memory to database for user %s: facts=%d",
             user_id,
             len(memory_data.get("facts", [])),
         )
-        async with get_db_session() as db:
-            await MemoryRepository.upsert_memory(db, user_id, memory_data, commit=True)
+        await _database_memory_save_handler(user_id, memory_data)
         logger.info("Persisted memory to database for user %s", user_id)
 
     def load(self, user_id: int | None = None, agent_name: str | None = None) -> dict[str, Any]:

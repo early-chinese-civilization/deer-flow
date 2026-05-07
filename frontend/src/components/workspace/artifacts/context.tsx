@@ -9,8 +9,8 @@ import {
 } from "react";
 
 import { useSidebar } from "@/components/ui/sidebar";
-import { env } from "@/env";
 import type { BrowserOssSource } from "@/core/oss";
+import { env } from "@/env";
 
 export interface ArtifactSource {
   filepath: string;

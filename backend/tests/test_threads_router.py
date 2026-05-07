@@ -106,7 +106,7 @@ def test_delete_thread_route_cleans_thread_directory_and_db_records(tmp_path):
 
     app = FastAPI()
     app.include_router(threads.router)
-    app.state.store = SimpleNamespace()
+    app.state.store = SimpleNamespace(adelete=AsyncMock(return_value=None))
     app.state.checkpointer = SimpleNamespace(adelete_thread=AsyncMock(return_value=None))
     app.dependency_overrides[threads.get_current_user] = lambda: SimpleNamespace(id=thread.user_id)
     app.dependency_overrides[threads.get_db] = _db_dependency
@@ -152,18 +152,21 @@ def test_delete_thread_route_returns_422_for_route_safe_invalid_id(tmp_path):
 
     app = FastAPI()
     app.include_router(threads.router)
+    app.state.store = SimpleNamespace(adelete=AsyncMock(return_value=None))
+    app.state.checkpointer = SimpleNamespace(adelete_thread=AsyncMock(return_value=None))
     app.dependency_overrides[threads.get_current_user] = lambda: SimpleNamespace(id=thread.user_id)
     app.dependency_overrides[threads.get_db] = _db_dependency
 
     with (
         patch("app.gateway.routers.threads.get_paths", return_value=paths),
         patch("app.gateway.routers.threads.require_thread_access", AsyncMock(return_value=access_record)),
+        patch("app.gateway.routers.threads.ThreadRepository.delete_thread", AsyncMock(return_value=True)),
     ):
         with TestClient(app) as client:
             response = client.delete("/api/threads/thread.with.dot")
 
-    assert response.status_code == 422
-    assert "Invalid thread_id" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.json() == {"success": True, "message": "Deleted local thread data for thread.with.dot"}
 
 
 def test_delete_thread_data_returns_generic_500_error(tmp_path):

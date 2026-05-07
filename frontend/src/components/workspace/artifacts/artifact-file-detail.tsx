@@ -33,8 +33,8 @@ import { getArtifactDisplayMode } from "@/core/artifacts/display";
 import { useArtifactContent } from "@/core/artifacts/hooks";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
-import { installSkill } from "@/core/skills/api";
 import { useResolvedOssUrl } from "@/core/oss";
+import { installSkill } from "@/core/skills/api";
 import { streamdownPlugins } from "@/core/streamdown";
 import {
   checkCodeFile,

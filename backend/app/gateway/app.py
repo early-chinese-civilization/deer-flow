@@ -10,6 +10,7 @@ from app.gateway.config import get_gateway_config
 from app.gateway.db.engine import get_engine
 from app.gateway.db.schema_preflight import assert_gateway_schema_ready
 from app.gateway.deps import langgraph_runtime
+from app.gateway.memory_storage import register_gateway_memory_storage
 from app.gateway.routers import (
     agents,
     artifacts,
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Load config and check necessary environment variables at startup
     try:
         get_app_config()
+        register_gateway_memory_storage()
         logger.info("Configuration loaded successfully")
     except Exception as e:
         error_msg = f"Failed to load configuration during gateway startup: {e}"
@@ -97,6 +99,7 @@ def create_app() -> FastAPI:
     """
     # Load .env-backed config before building routers that depend on KEYCLOAK_*.
     get_app_config()
+    register_gateway_memory_storage()
 
     app = FastAPI(
         title="DeerFlow API Gateway",

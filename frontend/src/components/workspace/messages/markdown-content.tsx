@@ -42,7 +42,7 @@ export function MarkdownContent({
 }: MarkdownContentProps) {
   const effectiveRemarkPlugins = (
     remarkPlugins ?? streamdownPlugins.remarkPlugins ?? []
-  ) as NonNullable<MessageResponseProps["remarkPlugins"]>;
+  );
   const resolvedOssUrlMap = useResolvedOssUrlMap(workspaceId, isLoading ? "" : content);
   const renderedContent = useMemo(
     () => rewriteMarkdownImageUrls(content, resolvedOssUrlMap),
@@ -61,8 +61,9 @@ export function MarkdownContent({
         }
         const { className, target, rel, ...rest } = props;
         const resolvedHref =
-          (typeof props.href === "string" && resolvedOssUrlMap[props.href]) ||
-          props.href;
+          typeof props.href === "string"
+            ? (resolvedOssUrlMap[props.href] ?? props.href)
+            : props.href;
         const external = isExternalUrl(resolvedHref);
         return (
           <a
