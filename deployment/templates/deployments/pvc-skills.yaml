@@ -4,7 +4,7 @@ kind: PersistentVolumeClaim
 metadata:
   name: {{ .Release.Name }}-skills
   labels:
-    app.kubernetes.io/name: {{ include "deer-flow.name" . }}
+    app.kubernetes.io/name: {{ include "ecc-yanhuang.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   accessModes:

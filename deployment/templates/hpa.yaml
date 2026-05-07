@@ -5,7 +5,7 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: {{ .Release.Name }}-gateway-hpa
   labels:
-    {{- include "deer-flow.labels" . | nindent 4 }}
+    {{- include "ecc-yanhuang.labels" . | nindent 4 }}
     app.kubernetes.io/component: gateway
 spec:
   scaleTargetRef:
@@ -54,7 +54,7 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: {{ .Release.Name }}-frontend-hpa
   labels:
-    {{- include "deer-flow.labels" . | nindent 4 }}
+    {{- include "ecc-yanhuang.labels" . | nindent 4 }}
     app.kubernetes.io/component: frontend
 spec:
   scaleTargetRef:

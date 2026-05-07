@@ -4,7 +4,7 @@ kind: Deployment
 metadata:
   name: {{ .Release.Name }}-nginx
   labels:
-    {{- include "deer-flow.labels" . | nindent 4 }}
+    {{- include "ecc-yanhuang.labels" . | nindent 4 }}
     app.kubernetes.io/component: nginx
   annotations:
     deployment.kubernetes.io/revision: "1"
@@ -12,7 +12,7 @@ spec:
   replicas: {{ .Values.nginx.replicas }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ include "deer-flow.name" . }}
+      app.kubernetes.io/name: {{ include "ecc-yanhuang.name" . }}
       app.kubernetes.io/instance: {{ .Release.Name }}
       app.kubernetes.io/component: nginx
   strategy:
@@ -23,13 +23,13 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: {{ include "deer-flow.name" . }}
+        app.kubernetes.io/name: {{ include "ecc-yanhuang.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: nginx
       annotations:
         checksum/nginx-config: {{ include (print $.Template.BasePath "/deployments/configmap-nginx.yaml") . | sha256sum }}
     spec:
-      {{- include "deer-flow.imagePullSecrets" . | nindent 6 }}
+      {{- include "ecc-yanhuang.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: nginx
           image: "{{ .Values.nginxImage.repository }}:{{ .Values.nginxImage.tag }}"

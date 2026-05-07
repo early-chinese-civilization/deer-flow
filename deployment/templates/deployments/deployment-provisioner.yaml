@@ -4,7 +4,7 @@ kind: Deployment
 metadata:
   name: {{ .Release.Name }}-provisioner
   labels:
-    {{- include "deer-flow.labels" . | nindent 4 }}
+    {{- include "ecc-yanhuang.labels" . | nindent 4 }}
     app.kubernetes.io/component: provisioner
   annotations:
     deployment.kubernetes.io/revision: "1"
@@ -12,7 +12,7 @@ spec:
   replicas: {{ .Values.provisioner.replicas }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ include "deer-flow.name" . }}
+      app.kubernetes.io/name: {{ include "ecc-yanhuang.name" . }}
       app.kubernetes.io/instance: {{ .Release.Name }}
       app.kubernetes.io/component: provisioner
   strategy:
@@ -23,11 +23,11 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: {{ include "deer-flow.name" . }}
+        app.kubernetes.io/name: {{ include "ecc-yanhuang.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: provisioner
     spec:
-      {{- include "deer-flow.imagePullSecrets" . | nindent 6 }}
+      {{- include "ecc-yanhuang.imagePullSecrets" . | nindent 6 }}
       serviceAccountName: {{ .Release.Name }}-provisioner
       containers:
         - name: provisioner
@@ -47,8 +47,6 @@ spec:
               value: {{ .Values.provisioner.sandboxImage | quote }}
             - name: SANDBOX_PORT
               value: {{ .Values.provisioner.sandboxPort | quote }}
-            - name: DEER_FLOW_SANDBOX_PROVISIONER_URL
-              value: "http://{{ .Release.Name }}-provisioner:8002"
           resources:
             {{- toYaml .Values.provisioner.resources | nindent 12 }}
           livenessProbe:

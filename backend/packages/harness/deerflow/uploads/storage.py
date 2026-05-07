@@ -65,6 +65,8 @@ def oss_object_uri(bucket: str, object_key: str) -> str:
 def _derive_region(endpoint: str) -> str | None:
     """Extract the region name from a standard OSS endpoint hostname."""
     normalized = endpoint.removeprefix("https://").removeprefix("http://")
+    # Strip '-internal' suffix before deriving the signing region.
+    normalized = normalized.replace("-internal.", ".")
     match = re.match(r"^oss-([^.]+)\.", normalized)
     if match:
         return match.group(1)

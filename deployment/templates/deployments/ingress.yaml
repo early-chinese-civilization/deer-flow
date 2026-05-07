@@ -4,7 +4,7 @@ kind: Ingress
 metadata:
   name: {{ .Release.Name }}
   labels:
-    {{- include "deer-flow.labels" . | nindent 4 }}
+    {{- include "ecc-yanhuang.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
   annotations:
 {{ toYaml . | indent 4 }}

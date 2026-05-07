@@ -4,7 +4,7 @@ kind: Service
 metadata:
   name: {{ .Release.Name }}-nginx
   labels:
-    {{- include "deer-flow.labels" . | nindent 4 }}
+    {{- include "ecc-yanhuang.labels" . | nindent 4 }}
     app.kubernetes.io/component: nginx
 spec:
   type: ClusterIP
@@ -14,7 +14,7 @@ spec:
       protocol: TCP
       name: http
   selector:
-    app.kubernetes.io/name: {{ include "deer-flow.name" . }}
+    app.kubernetes.io/name: {{ include "ecc-yanhuang.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: nginx
 {{- end }}

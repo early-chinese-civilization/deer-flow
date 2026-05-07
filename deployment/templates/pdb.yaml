@@ -4,7 +4,7 @@ kind: PodDisruptionBudget
 metadata:
   name: {{ .Release.Name }}-pdb
   labels:
-    {{- include "deer-flow.labels" . | nindent 4 }}
+    {{- include "ecc-yanhuang.labels" . | nindent 4 }}
 spec:
   {{- if .Values.podDisruptionBudget.minAvailable }}
   minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
@@ -14,6 +14,6 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ include "deer-flow.name" . }}
+      app.kubernetes.io/name: {{ include "ecc-yanhuang.name" . }}
       app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}

@@ -3,7 +3,7 @@ kind: Service
 metadata:
   name: {{ .Release.Name }}-frontend
   labels:
-    app.kubernetes.io/name: {{ include "deer-flow.name" . }}
+    app.kubernetes.io/name: {{ include "ecc-yanhuang.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: frontend
 spec:
@@ -14,6 +14,6 @@ spec:
       protocol: TCP
       name: http
   selector:
-    app.kubernetes.io/name: {{ include "deer-flow.name" . }}
+    app.kubernetes.io/name: {{ include "ecc-yanhuang.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: frontend

@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: {{ .Release.Name }}-frontend
   labels:
-    {{- include "deer-flow.labels" . | nindent 4 }}
+    {{- include "ecc-yanhuang.labels" . | nindent 4 }}
     app.kubernetes.io/component: frontend
   annotations:
     deployment.kubernetes.io/revision: "1"
@@ -11,7 +11,7 @@ spec:
   replicas: {{ .Values.frontend.replicas }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ include "deer-flow.name" . }}
+      app.kubernetes.io/name: {{ include "ecc-yanhuang.name" . }}
       app.kubernetes.io/instance: {{ .Release.Name }}
       app.kubernetes.io/component: frontend
   strategy:
@@ -22,13 +22,13 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: {{ include "deer-flow.name" . }}
+        app.kubernetes.io/name: {{ include "ecc-yanhuang.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: frontend
       annotations:
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
     spec:
-      {{- include "deer-flow.imagePullSecrets" . | nindent 6 }}
+      {{- include "ecc-yanhuang.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: frontend
           image: "{{ .Values.frontendImage.repository }}:{{ .Values.frontendImage.tag }}"
