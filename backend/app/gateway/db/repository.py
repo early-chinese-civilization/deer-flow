@@ -401,8 +401,8 @@ class AgentRepository:
     def _with_agent_skills(stmt):
         return stmt.options(
             selectinload(Agent.agent_skills).selectinload(AgentSkill.skill),
-            selectinload(Agent.agent_skills).selectinload(AgentSkill.skill_install).selectinload(SkillInstall.definition),
-            selectinload(Agent.agent_skills).selectinload(AgentSkill.skill_install).selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition),
+            selectinload(Agent.agent_skills).selectinload(AgentSkill.skill_install).selectinload(SkillInstall.definition).selectinload(SkillDefinition.owner_user),
+            selectinload(Agent.agent_skills).selectinload(AgentSkill.skill_install).selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
         )
 
     @staticmethod

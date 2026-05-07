@@ -11,12 +11,23 @@ from app.gateway.routers import agents as agents_router
 
 
 def _definition(*, owner_user_id: int | None = 7) -> SkillDefinition:
+    owner_user = (
+        User(
+            id=owner_user_id,
+            external_auth_id=f"owner-{owner_user_id}",
+            username=f"owner-{owner_user_id}",
+            display_name="Demo Publisher",
+        )
+        if owner_user_id is not None
+        else None
+    )
     return SkillDefinition(
         id=10,
         name="probe-skill",
         display_name="Probe Skill",
         description="Probe description",
         owner_user_id=owner_user_id,
+        owner_user=owner_user,
     )
 
 
@@ -91,7 +102,7 @@ def test_agent_response_skill_metadata_uses_bound_install_current_version() -> N
     assert metadata.skill_version_id == 101
     assert metadata.current_platform_version == 1
     assert metadata.source == "skillhub"
-    assert metadata.source_label == "SkillHub"
+    assert metadata.source_label == "Demo Publisher"
     assert metadata.update_available is True
     assert metadata.available is True
     assert metadata.status == "available"
@@ -169,6 +180,38 @@ def test_agent_response_keeps_legacy_skill_binding_visible_but_unavailable() -> 
     assert metadata.source == "unknown"
     assert metadata.available is False
     assert metadata.status == "unavailable"
+
+
+def test_agent_response_labels_official_skill_source_without_namespace() -> None:
+    definition = _definition(owner_user_id=None)
+    current_version = _version(definition, version_id=101, version_number=1)
+    agent = _agent_with_install(current_version=current_version, definition=definition)
+
+    response = agents_router._agent_to_response(agent)
+
+    assert response.skill_metadata is not None
+    metadata = response.skill_metadata[0]
+    assert metadata.source == "skillhub"
+    assert metadata.source_label == "Official"
+    assert metadata.current_platform_version == 1
+
+
+def test_agent_metadata_publish_v2_keeps_bound_runtime_on_installed_v1_until_manual_update() -> None:
+    definition = _definition(owner_user_id=7)
+    installed_v1 = _version(definition, version_id=101, version_number=1)
+    published_v2 = _version(definition, version_id=102, version_number=2)
+    agent = _agent_with_install(current_version=installed_v1, definition=definition)
+
+    response = agents_router._agent_to_response(
+        agent,
+        latest_versions_by_definition_id={definition.id: published_v2.id},
+    )
+
+    assert response.skill_metadata is not None
+    metadata = response.skill_metadata[0]
+    assert metadata.skill_version_id == installed_v1.id
+    assert metadata.current_platform_version == 1
+    assert metadata.update_available is True
 
 
 def test_agent_skill_name_resolution_rejects_missing_or_uninstalled_names(monkeypatch) -> None:

@@ -15,43 +15,17 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  getMetadataDisplaySummary,
+  getMetadataSelectionKey,
+  type AgentSkillSourceLabels,
+} from "@/core/agents/skill-selection";
 import type { Agent, AgentSkillMetadata } from "@/core/agents/types";
 import { useI18n } from "@/core/i18n/hooks";
-import {
-  formatPlatformVersion,
-  getAgentSkillBindingPlatformVersion,
-  isAgentSkillBindingUnavailable,
-} from "@/core/skills/display";
+import { isAgentSkillBindingUnavailable } from "@/core/skills/display";
 import { cn } from "@/lib/utils";
 
 type AgentOption = Pick<Agent, "name" | "description" | "skill_metadata">;
-
-function getAgentSkillVersionLabel(
-  skill: AgentSkillMetadata,
-  unavailableLabel: string,
-): string {
-  return (
-    formatPlatformVersion(getAgentSkillBindingPlatformVersion(skill)) ??
-    unavailableLabel
-  );
-}
-
-function getAgentSkillSourceLabel(
-  skill: AgentSkillMetadata,
-  labels: {
-    skillhub: string;
-    mySkills: string;
-    unknown: string;
-  },
-): string {
-  if (skill.source === "skillhub") {
-    return labels.skillhub;
-  }
-  if (skill.source === "my_skills") {
-    return labels.mySkills;
-  }
-  return skill.source_label || labels.unknown;
-}
 
 function AgentSkillSummary({
   skills,
@@ -60,6 +34,13 @@ function AgentSkillSummary({
 }) {
   const { t } = useI18n();
   const visibleSkills = skills ?? [];
+  const labels: AgentSkillSourceLabels & { unavailableVersion: string } = {
+    skillhub: t.agents.skillSourceSkillHub,
+    mySkills: t.agents.skillSourceMySkills,
+    official: t.agents.skillSourceOfficial,
+    unknown: t.agents.skillSourceUnknown,
+    unavailableVersion: t.agents.skillVersionUnavailable,
+  };
 
   if (visibleSkills.length === 0) {
     return (
@@ -72,41 +53,32 @@ function AgentSkillSummary({
   return (
     <div className="space-y-1 px-2 py-2">
       {visibleSkills.map((skill) => {
-        const unavailable = isAgentSkillBindingUnavailable(skill);
+        const summary = getMetadataDisplaySummary(skill, labels);
         return (
-          <div key={`${skill.skill_install_id ?? "legacy"}:${skill.name}`}>
+          <div key={getMetadataSelectionKey(skill)}>
             <div className="flex min-w-0 items-center gap-2 text-xs">
               <SparklesIcon className="text-muted-foreground size-3.5 shrink-0" />
-              <span className="truncate font-medium">{skill.name}</span>
-              {unavailable && (
+              <span className="truncate font-medium">{summary.name}</span>
+              {summary.unavailable && (
                 <AlertTriangleIcon className="text-destructive size-3.5 shrink-0" />
               )}
             </div>
             <div
               className={cn(
                 "text-muted-foreground mt-0.5 flex flex-wrap gap-2 pl-5 text-xs",
-                unavailable && "text-destructive",
+                summary.unavailable && "text-destructive",
               )}
             >
-              <span>
-                {getAgentSkillVersionLabel(
-                  skill,
-                  t.agents.skillVersionUnavailable,
-                )}
-              </span>
-              <span>
-                {getAgentSkillSourceLabel(skill, {
-                  skillhub: t.agents.skillSourceSkillHub,
-                  mySkills: t.agents.skillSourceMySkills,
-                  unknown: t.agents.skillSourceUnknown,
-                })}
-              </span>
-              {skill.update_available && (
+              <span>{summary.versionLabel}</span>
+              <span>{summary.sourceLabel}</span>
+              {summary.updateAvailable && (
                 <span className="text-primary">
                   {t.agents.skillUpdateAvailable}
                 </span>
               )}
-              {unavailable && <span>{t.agents.skillMetadataUnavailable}</span>}
+              {summary.unavailable && (
+                <span>{t.agents.skillMetadataUnavailable}</span>
+              )}
             </div>
           </div>
         );
@@ -138,7 +110,7 @@ export function DraftAgentControl({
           size="sm"
           variant="outline"
           disabled={disabled}
-          className="text-muted-foreground min-w-28 w-fit justify-between gap-2 rounded-full px-4 text-xs font-normal transition-colors hover:bg-accent hover:text-accent-foreground"
+          className="text-muted-foreground hover:bg-accent hover:text-accent-foreground w-fit min-w-28 justify-between gap-2 rounded-full px-4 text-xs font-normal transition-colors"
         >
           <BotIcon className="size-4" />
           <span className="truncate">{agentName ?? t.agents.noAgent}</span>
@@ -203,7 +175,9 @@ export function ThreadAgentBadge({
   const { t } = useI18n();
   const label = isLoading ? t.agents.loadingAgent : agentName;
   const skills = agent?.skill_metadata ?? [];
-  const unavailable = skills.some((skill) => isAgentSkillBindingUnavailable(skill));
+  const unavailable = skills.some((skill) =>
+    isAgentSkillBindingUnavailable(skill),
+  );
 
   if (!label) {
     return null;

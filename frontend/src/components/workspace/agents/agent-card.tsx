@@ -4,6 +4,7 @@ import {
   BotIcon,
   MessageSquareIcon,
   PencilIcon,
+  SparklesIcon,
   Trash2Icon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -23,9 +24,15 @@ import {
 } from "@/components/ui/dialog";
 import { useDeleteAgent } from "@/core/agents";
 import type { Agent } from "@/core/agents";
+import {
+  getMetadataDisplaySummary,
+  type AgentSkillDisplaySummary,
+  type AgentSkillSourceLabels,
+} from "@/core/agents/skill-selection";
 import { useI18n } from "@/core/i18n/hooks";
 import { pathOfNewThread } from "@/core/threads/utils";
 import { uuid } from "@/core/utils/uuid";
+import { cn } from "@/lib/utils";
 
 interface AgentCardProps {
   agent: Agent;
@@ -36,9 +43,28 @@ export function AgentCard({ agent }: AgentCardProps) {
   const router = useRouter();
   const deleteAgent = useDeleteAgent();
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const skills = agent.skills ?? [];
-  const visibleSkills = skills.slice(0, 3);
-  const hiddenSkillCount = skills.length - visibleSkills.length;
+  const labels: AgentSkillSourceLabels & { unavailableVersion: string } = {
+    skillhub: t.agents.skillSourceSkillHub,
+    mySkills: t.agents.skillSourceMySkills,
+    official: t.agents.skillSourceOfficial,
+    unknown: t.agents.skillSourceUnknown,
+    unavailableVersion: t.agents.skillVersionUnavailable,
+  };
+  const skillSummaries: AgentSkillDisplaySummary[] =
+    agent.skill_metadata?.map((skill) =>
+      getMetadataDisplaySummary(skill, labels),
+    ) ??
+    (agent.skills ?? []).map((skillName) => ({
+      key: `name:${skillName}`,
+      name: skillName,
+      description: "",
+      versionLabel: t.agents.skillVersionUnavailable,
+      sourceLabel: t.agents.skillSourceUnknown,
+      updateAvailable: false,
+      unavailable: true,
+    }));
+  const visibleSkills = skillSummaries.slice(0, 3);
+  const hiddenSkillCount = skillSummaries.length - visibleSkills.length;
 
   function handleChat() {
     router.push(
@@ -108,16 +134,35 @@ export function AgentCard({ agent }: AgentCardProps) {
             </div>
           </div>
 
-          {skills.length > 0 && (
+          {skillSummaries.length > 0 && (
             <div className="px-5 pt-2">
               <div className="flex flex-wrap gap-2">
                 {visibleSkills.map((skill) => (
                   <Badge
-                    key={skill}
+                    key={skill.key}
                     variant="outline"
-                    className="border-border/60 bg-muted/30 text-foreground rounded-md px-2 py-1 text-[11px] font-medium"
+                    className={cn(
+                      "border-border/60 bg-muted/30 text-foreground max-w-full flex-wrap gap-1 rounded-md px-2 py-1 text-[11px] font-medium",
+                      skill.unavailable &&
+                        "border-destructive/40 text-destructive",
+                    )}
                   >
-                    <span className="max-w-[180px] truncate">{skill}</span>
+                    <SparklesIcon className="mr-1 h-3 w-3" />
+                    <span className="max-w-[180px] truncate">{skill.name}</span>
+                    <span className="text-muted-foreground">
+                      {skill.versionLabel}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {skill.sourceLabel}
+                    </span>
+                    {skill.updateAvailable && (
+                      <span className="text-primary">
+                        {t.agents.skillUpdateAvailable}
+                      </span>
+                    )}
+                    {skill.unavailable && (
+                      <span>{t.agents.skillMetadataUnavailable}</span>
+                    )}
                   </Badge>
                 ))}
                 {hiddenSkillCount > 0 && (
