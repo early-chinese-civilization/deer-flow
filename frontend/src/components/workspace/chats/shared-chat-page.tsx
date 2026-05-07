@@ -33,6 +33,7 @@ import { useThreadSettings } from "@/core/settings";
 import { getThread } from "@/core/threads/api";
 import { useThreadStream } from "@/core/threads/hooks";
 import { textOfMessage } from "@/core/threads/utils";
+import { withBasePath } from "@/core/auth/base-path";
 import {
   currentRouteOf,
   getThreadAgentName,
@@ -140,11 +141,13 @@ export function SharedChatPage({
       history.replaceState(
         null,
         "",
-        pathOfThread(resolvedThreadId, {
-          currentPath: pathname,
-          currentSearch: searchParamsString,
-          agentName: effectiveAgentName ?? null,
-        }),
+        withBasePath(
+          pathOfThread(resolvedThreadId, {
+            currentPath: pathname,
+            currentSearch: searchParamsString,
+            agentName: effectiveAgentName ?? null,
+          }),
+        ),
       );
     },
     onFinish: (state) => {
@@ -177,7 +180,7 @@ export function SharedChatPage({
     const currentRoute = currentRouteOf(pathname, searchParamsString);
 
     if (canonicalRoute !== currentRoute) {
-      history.replaceState(null, "", canonicalRoute);
+      history.replaceState(null, "", withBasePath(canonicalRoute));
     }
   }, [isNewThread, pathname, searchParamsString, threadDetailQuery.data]);
 

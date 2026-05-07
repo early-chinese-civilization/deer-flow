@@ -43,6 +43,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { getAPIClient } from "@/core/api";
+import { withBasePath } from "@/core/auth/base-path";
 import { useI18n } from "@/core/i18n/hooks";
 import {
   exportThreadAsJSON,
@@ -129,10 +130,12 @@ export function RecentChatList() {
   const handleShare = useCallback(
     async (thread: AgentThread) => {
       const shareUrl = new URL(
-        pathOfThread(thread, {
-          currentPath: pathname,
-          currentSearch,
-        }),
+        withBasePath(
+          pathOfThread(thread, {
+            currentPath: pathname,
+            currentSearch,
+          }),
+        ),
         window.location.origin,
       ).toString();
       try {

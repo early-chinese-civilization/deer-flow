@@ -147,6 +147,11 @@ cmd_up() {
 cmd_down() {
     log_info "Stopping DeerFlow server deployment..."
     cd "$PROJECT_DIR"
+    if [ -f "$PROJECT_DIR/.env" ]; then
+        set -a
+        . "$PROJECT_DIR/.env"
+        set +a
+    fi
     docker compose -f "$COMPOSE_FILE" down
     log_info "All services stopped."
 }
