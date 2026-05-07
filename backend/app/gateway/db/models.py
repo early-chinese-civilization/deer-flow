@@ -46,12 +46,15 @@ class User(Base):
         onupdate=lambda: datetime.now(UTC),
         comment="Updated at",
     )
+    deleted_at = Column(DateTime(timezone=True), nullable=True, comment="Soft delete timestamp")
 
     workspaces = relationship("Workspace", back_populates="user", cascade="all, delete-orphan")
     threads = relationship("Thread", back_populates="user", cascade="all, delete-orphan")
     agents = relationship("Agent", back_populates="user", cascade="all, delete-orphan")
     skills = relationship("Skill", back_populates="user", cascade="all, delete-orphan", foreign_keys="Skill.user_id")
     memories = relationship("Memory", back_populates="user", cascade="all, delete-orphan")
+
+    __table_args__ = (Index("ix_users_deleted_at", "deleted_at"),)
 
 
 class Workspace(Base):
@@ -87,9 +90,12 @@ class Workspace(Base):
         onupdate=lambda: datetime.now(UTC),
         comment="Updated at",
     )
+    deleted_at = Column(DateTime(timezone=True), nullable=True, comment="Soft delete timestamp")
 
     user = relationship("User", back_populates="workspaces")
     threads = relationship("Thread", back_populates="workspace")
+
+    __table_args__ = (Index("ix_workspaces_deleted_at", "deleted_at"),)
 
 
 class Thread(Base):
@@ -99,6 +105,7 @@ class Thread(Base):
     __table_args__ = (
         Index("ix_threads_user_updated", "user_id", "updated_at"),
         Index("ix_threads_status", "status"),
+        Index("ix_threads_deleted_at", "deleted_at"),
     )
 
     thread_id = Column(String(255), primary_key=True, comment="Thread ID")
@@ -147,6 +154,7 @@ class Thread(Base):
         onupdate=lambda: datetime.now(UTC),
         comment="Updated at",
     )
+    deleted_at = Column(DateTime(timezone=True), nullable=True, comment="Soft delete timestamp")
 
     user = relationship("User", back_populates="threads")
     agent = relationship("Agent", back_populates="threads")

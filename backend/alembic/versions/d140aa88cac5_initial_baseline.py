@@ -37,9 +37,11 @@ def upgrade() -> None:
         sa.Column("email_verified", sa.Boolean(), nullable=False, comment="Email verified"),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, comment="Created at"),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, comment="Updated at"),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True, comment="Soft delete timestamp"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_users_external_auth_id", "users", ["external_auth_id"], unique=True)
+    op.create_index("ix_users_deleted_at", "users", ["deleted_at"], unique=False)
 
     op.create_table(
         "workspaces",
@@ -49,10 +51,12 @@ def upgrade() -> None:
         sa.Column("file_path", sa.Text(), nullable=True, comment="Workspace OSS root prefix"),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, comment="Created at"),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, comment="Updated at"),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True, comment="Soft delete timestamp"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_workspaces_user_id", "workspaces", ["user_id"], unique=False)
+    op.create_index("ix_workspaces_deleted_at", "workspaces", ["deleted_at"], unique=False)
 
     op.create_table(
         "agents",
@@ -135,6 +139,7 @@ def upgrade() -> None:
         ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, comment="Created at"),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, comment="Updated at"),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True, comment="Soft delete timestamp"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["agent_id"], ["agents.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["workspace_id"], ["workspaces.id"], ondelete="SET NULL"),
@@ -142,6 +147,7 @@ def upgrade() -> None:
     )
     op.create_index("ix_threads_user_updated", "threads", ["user_id", "updated_at"], unique=False)
     op.create_index("ix_threads_status", "threads", ["status"], unique=False)
+    op.create_index("ix_threads_deleted_at", "threads", ["deleted_at"], unique=False)
 
     op.create_table(
         "agents_skills",
@@ -207,6 +213,7 @@ def downgrade() -> None:
 
     op.drop_index("ix_threads_status", table_name="threads")
     op.drop_index("ix_threads_user_updated", table_name="threads")
+    op.drop_index("ix_threads_deleted_at", table_name="threads")
     op.drop_table("threads")
 
     op.drop_index("ix_skills_deleted_at", table_name="skills")
@@ -223,7 +230,9 @@ def downgrade() -> None:
     op.drop_table("agents")
 
     op.drop_index("ix_workspaces_user_id", table_name="workspaces")
+    op.drop_index("ix_workspaces_deleted_at", table_name="workspaces")
     op.drop_table("workspaces")
 
     op.drop_index("ix_users_external_auth_id", table_name="users")
+    op.drop_index("ix_users_deleted_at", table_name="users")
     op.drop_table("users")
