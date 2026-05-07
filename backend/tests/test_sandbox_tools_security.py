@@ -27,6 +27,7 @@ from deerflow.sandbox.tools import (
     validate_local_tool_path,
     write_file_tool,
 )
+from deerflow.skills.hashing import hash_skill_file_manifest
 
 _THREAD_DATA = {
     "workspace_path": "/tmp/deer-flow/threads/t1/user-data/workspace",
@@ -609,6 +610,7 @@ def test_derive_skill_scope_materializes_bundle_for_manifest_artifacts(tmp_path)
     artifact_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "probe-skill"
     artifact_dir.mkdir(parents=True)
     (artifact_dir / "SKILL.md").write_text("authorized", encoding="utf-8")
+    file_manifest_hash = hash_skill_file_manifest(artifact_dir)
     (skills_root / "public" / "probe-skill").mkdir(parents=True)
     (skills_root / "public" / "probe-skill" / "SKILL.md").write_text("public latest", encoding="utf-8")
 
@@ -625,6 +627,7 @@ def test_derive_skill_scope_materializes_bundle_for_manifest_artifacts(tmp_path)
                         "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
                         "skill_version_id": 101,
                         "content_hash": "hash-v1",
+                        "file_manifest_hash": file_manifest_hash,
                     }
                 ],
             }
@@ -643,6 +646,41 @@ def test_derive_skill_scope_materializes_bundle_for_manifest_artifacts(tmp_path)
     bundle_dir = skills_root / scope
     assert (bundle_dir / "probe-skill" / "SKILL.md").read_text(encoding="utf-8") == "authorized"
     assert not (bundle_dir / "public" / "probe-skill" / "SKILL.md").exists()
+
+
+def test_derive_skill_scope_rejects_artifact_file_manifest_hash_mismatch(tmp_path) -> None:
+    skills_root = tmp_path / "skills"
+    artifact_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "probe-skill"
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "SKILL.md").write_text("authorized", encoding="utf-8")
+
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "user_id": 7,
+                "skills": [
+                    {
+                        "name": "probe-skill",
+                        "artifact_uri": "artifacts/skills/1/v1/probe-skill",
+                        "file_path": "artifacts/skills/1/v1/probe-skill",
+                        "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
+                        "skill_version_id": 101,
+                        "content_hash": "hash-v1",
+                        "file_manifest_hash": "wrong-file-manifest-hash",
+                    }
+                ],
+            }
+        },
+        config={},
+    )
+
+    with patch(
+        "deerflow.sandbox.skill_scope._get_skills_root_path",
+        return_value=skills_root,
+    ):
+        with pytest.raises(SandboxRuntimeError, match="file manifest hash mismatch"):
+            derive_skill_scope_from_runtime(runtime)
 
 
 def test_derive_skill_scope_rejects_public_latest_artifact_uri() -> None:

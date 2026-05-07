@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from deerflow.sandbox.exceptions import SandboxRuntimeError
+from deerflow.skills.hashing import hash_skill_file_manifest
 from deerflow.skills.path_utils import resolve_skill_storage_dir
 
 _ARTIFACTS_SCOPE_ROOT = "artifacts"
@@ -88,6 +89,9 @@ def _runtime_bundle_entry(index: int, skill: Mapping[str, Any], *, container_bas
     virtual_path = skill.get("virtual_path")
     if not isinstance(virtual_path, str) or not virtual_path.strip():
         raise SandboxRuntimeError(f"Runtime skill at index {index} is missing virtual_path")
+    file_manifest_hash = skill.get("file_manifest_hash")
+    if not isinstance(file_manifest_hash, str) or not file_manifest_hash.strip():
+        raise SandboxRuntimeError(f"Runtime skill at index {index} is missing file_manifest_hash")
 
     container_root = PurePosixPath(container_base_path.rstrip("/"))
     virtual_root = PurePosixPath(virtual_path.strip()).parent
@@ -103,6 +107,7 @@ def _runtime_bundle_entry(index: int, skill: Mapping[str, Any], *, container_bas
     return {
         "artifact_uri": normalized_artifact,
         "content_hash": skill.get("content_hash"),
+        "file_manifest_hash": file_manifest_hash,
         "relative_virtual_root": str(PurePosixPath(*relative_parts)),
         "skill_version_id": skill.get("skill_version_id"),
         "virtual_root": str(virtual_root),
@@ -130,6 +135,20 @@ def _copy_authorized_artifact_tree(source: Path, target: Path) -> None:
             shutil.copy2(source_file, destination / file_name)
 
 
+def _verify_authorized_artifact_tree(skills_root: Path, entry: Mapping[str, Any]) -> Path:
+    """Verify one manifest artifact still matches its recorded raw hash."""
+    artifact_dir = resolve_skill_storage_dir(skills_root, entry["artifact_uri"])
+    if not artifact_dir.exists() or not artifact_dir.is_dir():
+        raise SandboxRuntimeError(f"Runtime skill artifact is missing: {entry['artifact_uri']}")
+    if not (artifact_dir / "SKILL.md").exists():
+        raise SandboxRuntimeError(f"Runtime skill artifact is missing SKILL.md: {entry['artifact_uri']}")
+
+    actual_file_manifest_hash = hash_skill_file_manifest(artifact_dir)
+    if actual_file_manifest_hash != entry["file_manifest_hash"]:
+        raise SandboxRuntimeError(f"Runtime skill artifact file manifest hash mismatch: {entry['artifact_uri']}")
+    return artifact_dir
+
+
 def _materialize_runtime_skill_bundle(entries: list[dict[str, Any]]) -> str:
     """Create a deterministic readonly-bundle source for Manifest-authorized skills.
 
@@ -146,6 +165,15 @@ def _materialize_runtime_skill_bundle(entries: list[dict[str, Any]]) -> str:
     bundle_dir = resolve_skill_storage_dir(skills_root, bundle_scope)
     ready_file = bundle_dir / _BUNDLE_READY_FILE
 
+    seen_virtual_roots: set[str] = set()
+    verified_sources: list[tuple[dict[str, Any], Path]] = []
+    for entry in entries:
+        relative_virtual_root = entry["relative_virtual_root"]
+        if relative_virtual_root in seen_virtual_roots:
+            raise SandboxRuntimeError(f"Duplicate runtime skill virtual root: {entry['virtual_root']}")
+        seen_virtual_roots.add(relative_virtual_root)
+        verified_sources.append((entry, _verify_authorized_artifact_tree(skills_root, entry)))
+
     if ready_file.exists():
         return bundle_scope
     if bundle_dir.exists():
@@ -156,20 +184,9 @@ def _materialize_runtime_skill_bundle(entries: list[dict[str, Any]]) -> str:
         shutil.rmtree(tmp_dir)
     tmp_dir.mkdir(parents=True)
 
-    seen_virtual_roots: set[str] = set()
     try:
-        for entry in entries:
+        for entry, artifact_dir in verified_sources:
             relative_virtual_root = entry["relative_virtual_root"]
-            if relative_virtual_root in seen_virtual_roots:
-                raise SandboxRuntimeError(f"Duplicate runtime skill virtual root: {entry['virtual_root']}")
-            seen_virtual_roots.add(relative_virtual_root)
-
-            artifact_dir = resolve_skill_storage_dir(skills_root, entry["artifact_uri"])
-            if not artifact_dir.exists() or not artifact_dir.is_dir():
-                raise SandboxRuntimeError(f"Runtime skill artifact is missing: {entry['artifact_uri']}")
-            if not (artifact_dir / "SKILL.md").exists():
-                raise SandboxRuntimeError(f"Runtime skill artifact is missing SKILL.md: {entry['artifact_uri']}")
-
             _copy_authorized_artifact_tree(artifact_dir, tmp_dir / relative_virtual_root)
 
         ready_file_payload = {"bundle_id": bundle_id, "skills": entries}

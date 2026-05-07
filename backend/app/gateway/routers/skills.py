@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import logging
 import shutil
 import tempfile
@@ -22,6 +21,7 @@ from app.gateway.db.repository import (
 from app.gateway.deps import get_current_user, get_db
 from app.gateway.path_utils import resolve_thread_virtual_path
 from deerflow.config import get_app_config
+from deerflow.skills.hashing import hash_skill_directory
 from deerflow.skills.installer import SkillAlreadyExistsError, install_skill_from_archive
 from deerflow.skills.path_utils import (
     build_private_skill_file_path,
@@ -605,55 +605,9 @@ def _replace_skill_directory(source_dir: Path, target_dir: Path) -> None:
     shutil.copytree(source_dir, target_dir)
 
 
-def _split_skill_md_frontmatter(content: str) -> tuple[dict, str]:
-    """Return SKILL.md frontmatter and body text."""
-    if not content.startswith("---"):
-        raise ValueError("No YAML frontmatter found")
-    lines = content.splitlines(keepends=True)
-    end_index = None
-    for index, line in enumerate(lines[1:], start=1):
-        if line.strip() == "---":
-            end_index = index
-            break
-    if end_index is None:
-        raise ValueError("Invalid frontmatter format")
-    frontmatter_text = "".join(lines[1:end_index])
-    frontmatter = yaml.safe_load(frontmatter_text)
-    if not isinstance(frontmatter, dict):
-        raise ValueError("Frontmatter must be a YAML dictionary")
-    body = "".join(lines[end_index + 1 :])
-    return frontmatter, body
-
-
-def _canonical_skill_md_bytes(skill_md_path: Path) -> bytes:
-    """Canonicalize SKILL.md for platform content hashing.
-
-    The source package ``version`` key is intentionally excluded so changing
-    only package metadata does not mint a new platform SkillVersion.
-    """
-    frontmatter, body = _split_skill_md_frontmatter(skill_md_path.read_text(encoding="utf-8"))
-    frontmatter.pop("version", None)
-    canonical_frontmatter = yaml.safe_dump(frontmatter, sort_keys=True, allow_unicode=False).strip()
-    return f"---\n{canonical_frontmatter}\n---\n{body}".encode()
-
-
 def _hash_skill_directory(skill_dir: Path) -> tuple[str, str]:
     """Compute canonical content and raw file-manifest hashes for a skill dir."""
-    canonical_hash = hashlib.sha256()
-    manifest_hash = hashlib.sha256()
-    for path in sorted(item for item in skill_dir.rglob("*") if item.is_file()):
-        relative = path.relative_to(skill_dir).as_posix()
-        raw_bytes = path.read_bytes()
-        canonical_bytes = _canonical_skill_md_bytes(path) if relative == "SKILL.md" else raw_bytes
-        canonical_hash.update(relative.encode("utf-8"))
-        canonical_hash.update(b"\0")
-        canonical_hash.update(canonical_bytes)
-        canonical_hash.update(b"\0")
-        manifest_hash.update(relative.encode("utf-8"))
-        manifest_hash.update(b"\0")
-        manifest_hash.update(hashlib.sha256(raw_bytes).hexdigest().encode("ascii"))
-        manifest_hash.update(b"\0")
-    return canonical_hash.hexdigest(), manifest_hash.hexdigest()
+    return hash_skill_directory(skill_dir)
 
 
 def _build_version_artifact_uri(*, definition_id: int, version_number: int, content_hash: str, skill_name: str) -> str:

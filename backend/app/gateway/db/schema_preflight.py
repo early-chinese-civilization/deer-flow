@@ -163,6 +163,7 @@ REQUIRED_GATEWAY_COLUMNS = {
             "agent_id",
             "agent_name",
             "manifest_json",
+            "manifest_hash",
             "created_at",
         }
     ),

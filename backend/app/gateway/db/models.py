@@ -560,6 +560,7 @@ class RuntimeManifest(Base):
     agent_id = Column(BigInteger, ForeignKey("agents.id", ondelete="SET NULL"), nullable=True, comment="Resolved agent ID")
     agent_name = Column(String(255), nullable=True, comment="Resolved agent name")
     manifest_json = Column(JSONB(astext_type=Text()), nullable=False, default=dict, comment="Manifest payload")
+    manifest_hash = Column(String(128), nullable=False, comment="Deterministic audit hash of manifest_json")
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,

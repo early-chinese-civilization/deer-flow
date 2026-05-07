@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -26,6 +28,7 @@ from app.gateway.db.models import (
     User,
     Workspace,
 )
+from deerflow.skills.hashing import hash_skill_file_manifest
 from deerflow.skills.path_utils import build_skill_virtual_path, resolve_skill_storage_dir
 
 
@@ -42,6 +45,7 @@ class RuntimeSkillDescriptor:
     skill_install_id: int
     version_number: int
     content_hash: str
+    file_manifest_hash: str
     artifact_uri: str
     source_package_version: str | None
 
@@ -56,6 +60,7 @@ class RuntimeAgentBundle:
     soul: str | None
     skills: list[RuntimeSkillDescriptor]
     manifest_id: str | None = None
+    manifest_hash: str | None = None
 
 
 class RuntimeManifestResolutionError(RuntimeError):
@@ -79,12 +84,20 @@ def _get_skills_container_path() -> str:
         return "/mnt/skills"
 
 
-def _ensure_artifact_dir_exists(artifact_uri: str, *, skill_name: str) -> None:
-    """Fail manifest resolution if an immutable artifact is missing."""
+def build_runtime_manifest_hash(manifest_json: dict[str, Any]) -> str:
+    """Return the deterministic audit hash for a Runtime Manifest payload."""
+    canonical_payload = json.dumps(manifest_json, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+    return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+
+
+def _ensure_artifact_integrity(artifact_uri: str, *, skill_name: str, expected_file_manifest_hash: str) -> None:
+    """Fail manifest resolution if an immutable artifact is missing or drifted."""
     normalized_artifact = artifact_uri.replace("\\", "/").strip("/")
     parts = [part for part in normalized_artifact.split("/") if part]
     if len(parts) < 2 or parts[0] != "artifacts" or any(part in {".", ".."} for part in parts):
         raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact must use immutable artifacts scope: {artifact_uri}")
+    if not expected_file_manifest_hash:
+        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact is missing file manifest hash")
     try:
         from deerflow.config import get_app_config
 
@@ -96,6 +109,9 @@ def _ensure_artifact_dir_exists(artifact_uri: str, *, skill_name: str) -> None:
         raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact is missing: {artifact_uri}")
     if not (artifact_dir / "SKILL.md").exists():
         raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact is missing SKILL.md: {artifact_uri}")
+    actual_file_manifest_hash = hash_skill_file_manifest(artifact_dir)
+    if actual_file_manifest_hash != expected_file_manifest_hash:
+        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact file manifest hash mismatch")
 
 
 class UserRepository:
@@ -442,7 +458,7 @@ class AgentRepository:
         if version.skill_definition_id != install.skill_definition_id:
             raise RuntimeManifestResolutionError(f"Skill install {install.id} points to a version from another definition")
         file_path = version.artifact_uri
-        _ensure_artifact_dir_exists(file_path, skill_name=definition.name)
+        _ensure_artifact_integrity(file_path, skill_name=definition.name, expected_file_manifest_hash=version.file_manifest_hash)
         return RuntimeSkillDescriptor(
             name=definition.name,
             description=version.description or definition.description or "",
@@ -453,6 +469,7 @@ class AgentRepository:
             skill_install_id=install.id,
             version_number=version.version_number,
             content_hash=version.content_hash,
+            file_manifest_hash=version.file_manifest_hash,
             artifact_uri=version.artifact_uri,
             source_package_version=version.source_package_version,
         )
@@ -489,16 +506,19 @@ class AgentRepository:
                 "skill_install_id": skill.skill_install_id,
                 "version_number": skill.version_number,
                 "content_hash": skill.content_hash,
+                "file_manifest_hash": skill.file_manifest_hash,
                 "artifact_uri": skill.artifact_uri,
                 "source_package_version": skill.source_package_version,
             }
             for skill in skills
         ]
+        manifest_json = {"version": 1, "skills": entries}
         manifest = RuntimeManifest(
             user_id=user_id,
             agent_id=agent.id,
             agent_name=agent.name,
-            manifest_json={"version": 1, "skills": entries},
+            manifest_json=manifest_json,
+            manifest_hash=build_runtime_manifest_hash(manifest_json),
         )
         db.add(manifest)
         await db.flush()
@@ -540,6 +560,7 @@ class AgentRepository:
             soul=agent.soul,
             skills=skills,
             manifest_id=str(manifest.id),
+            manifest_hash=manifest.manifest_hash,
         )
 
     @staticmethod
