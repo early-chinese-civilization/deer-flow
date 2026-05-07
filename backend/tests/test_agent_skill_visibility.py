@@ -1,0 +1,266 @@
+from __future__ import annotations
+
+import asyncio
+from datetime import UTC, datetime
+
+import pytest
+from fastapi import HTTPException
+
+from app.gateway.db.models import Agent, AgentSkill, Skill, SkillDefinition, SkillInstall, SkillVersion, User
+from app.gateway.routers import agents as agents_router
+
+
+def _definition(*, owner_user_id: int | None = 7) -> SkillDefinition:
+    return SkillDefinition(
+        id=10,
+        name="probe-skill",
+        display_name="Probe Skill",
+        description="Probe description",
+        owner_user_id=owner_user_id,
+    )
+
+
+def _version(definition: SkillDefinition, *, version_id: int, version_number: int) -> SkillVersion:
+    return SkillVersion(
+        id=version_id,
+        skill_definition_id=definition.id,
+        version_number=version_number,
+        source_package_version="pkg-ignored",
+        description=f"Platform v{version_number}",
+        content_hash=f"hash-{version_number}",
+        file_manifest_hash=f"manifest-{version_number}",
+        artifact_uri=f"artifacts/skills/{definition.id}/v{version_number}/probe-skill",
+        definition=definition,
+    )
+
+
+class _FakeDb:
+    def __init__(self) -> None:
+        self.rolled_back = False
+
+    async def rollback(self) -> None:
+        self.rolled_back = True
+
+
+def _agent_with_install(*, current_version: SkillVersion | None, definition: SkillDefinition, install_deleted: bool = False) -> Agent:
+    install = SkillInstall(
+        id=201,
+        user_id=22,
+        skill_definition_id=definition.id,
+        installed_version_id=101,
+        current_version_id=101,
+        definition=definition,
+        current_version=current_version,
+        deleted_at=datetime.now(UTC) if install_deleted else None,
+    )
+    return Agent(
+        id=501,
+        user_id=22,
+        name="probe-agent",
+        description="Probe agent",
+        soul="Probe soul",
+        agent_skills=[
+            AgentSkill(
+                id=601,
+                agent_id=501,
+                skill_install_id=install.id,
+                skill_install=install,
+                display_order=0,
+                enabled=True,
+            )
+        ],
+    )
+
+
+def test_agent_response_skill_metadata_uses_bound_install_current_version() -> None:
+    definition = _definition(owner_user_id=7)
+    current_version = _version(definition, version_id=101, version_number=1)
+    agent = _agent_with_install(current_version=current_version, definition=definition)
+
+    response = agents_router._agent_to_response(
+        agent,
+        latest_versions_by_definition_id={definition.id: 102},
+    )
+
+    assert response.skills == ["probe-skill"]
+    assert response.skill_metadata is not None
+    metadata = response.skill_metadata[0]
+    assert metadata.name == "probe-skill"
+    assert metadata.skill_install_id == 201
+    assert metadata.skill_definition_id == definition.id
+    assert metadata.skill_version_id == 101
+    assert metadata.current_platform_version == 1
+    assert metadata.source == "skillhub"
+    assert metadata.source_label == "SkillHub"
+    assert metadata.update_available is True
+    assert metadata.available is True
+    assert metadata.status == "available"
+    assert "artifact_uri" not in metadata.model_dump()
+    assert "source_package_version" not in metadata.model_dump()
+
+
+def test_agent_response_marks_incomplete_install_metadata_unavailable() -> None:
+    definition = _definition(owner_user_id=22)
+    agent = _agent_with_install(current_version=None, definition=definition)
+
+    response = agents_router._agent_to_response(agent)
+
+    assert response.skills == ["probe-skill"]
+    assert response.skill_metadata is not None
+    metadata = response.skill_metadata[0]
+    assert metadata.name == "probe-skill"
+    assert metadata.skill_install_id == 201
+    assert metadata.skill_definition_id == definition.id
+    assert metadata.skill_version_id is None
+    assert metadata.current_platform_version is None
+    assert metadata.source == "my_skills"
+    assert metadata.update_available is None
+    assert metadata.available is False
+    assert metadata.status == "unavailable"
+
+
+def test_agent_response_marks_deleted_install_metadata_unavailable() -> None:
+    definition = _definition(owner_user_id=22)
+    current_version = _version(definition, version_id=101, version_number=1)
+    agent = _agent_with_install(current_version=current_version, definition=definition, install_deleted=True)
+
+    response = agents_router._agent_to_response(
+        agent,
+        latest_versions_by_definition_id={definition.id: 102},
+    )
+
+    assert response.skills == ["probe-skill"]
+    assert response.skill_metadata is not None
+    metadata = response.skill_metadata[0]
+    assert metadata.name == "probe-skill"
+    assert metadata.skill_install_id == 201
+    assert metadata.skill_version_id == 101
+    assert metadata.current_platform_version == 1
+    assert metadata.update_available is None
+    assert metadata.available is False
+    assert metadata.status == "unavailable"
+    assert agents_router._collect_bound_definition_ids([agent]) == set()
+
+
+def test_agent_response_keeps_legacy_skill_binding_visible_but_unavailable() -> None:
+    agent = Agent(
+        id=501,
+        user_id=22,
+        name="legacy-agent",
+        agent_skills=[
+            AgentSkill(
+                id=601,
+                agent_id=501,
+                skill_id=301,
+                skill=Skill(id=301, user_id=22, name="legacy-skill", description="Legacy", file_path="custom/legacy-skill"),
+                display_order=0,
+                enabled=True,
+            )
+        ],
+    )
+
+    response = agents_router._agent_to_response(agent)
+
+    assert response.skills == ["legacy-skill"]
+    assert response.skill_metadata is not None
+    metadata = response.skill_metadata[0]
+    assert metadata.name == "legacy-skill"
+    assert metadata.skill_install_id is None
+    assert metadata.source == "unknown"
+    assert metadata.available is False
+    assert metadata.status == "unavailable"
+
+
+def test_agent_skill_name_resolution_rejects_missing_or_uninstalled_names(monkeypatch) -> None:
+    async def get_by_user_and_name(_db, *, user_id, name):
+        assert user_id == 22
+        assert name == "missing-skill"
+        return None
+
+    monkeypatch.setattr(agents_router.SkillInstallRepository, "get_by_user_and_name", get_by_user_and_name)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            agents_router._resolve_skill_install_ids(
+                object(),
+                user_id=22,
+                skill_names=["missing-skill"],
+            )
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "Skill install 'missing-skill' not found" == exc_info.value.detail
+
+
+def test_create_agent_rejects_uninstalled_skill_name_and_rolls_back(monkeypatch) -> None:
+    async def get_agent_by_name(_db, *, user_id, name):
+        assert user_id == 22
+        assert name == "probe-agent"
+        return None
+
+    async def create_agent(_db, **kwargs):
+        assert kwargs["user_id"] == 22
+        assert kwargs["name"] == "probe-agent"
+        assert kwargs["commit"] is False
+        return Agent(id=501, user_id=22, name="probe-agent", agent_skills=[])
+
+    async def get_by_user_and_name(_db, *, user_id, name):
+        assert user_id == 22
+        assert name == "missing-skill"
+        return None
+
+    monkeypatch.setattr(agents_router.AgentRepository, "get_agent_by_name", get_agent_by_name)
+    monkeypatch.setattr(agents_router.AgentRepository, "create_agent", create_agent)
+    monkeypatch.setattr(agents_router.SkillInstallRepository, "get_by_user_and_name", get_by_user_and_name)
+
+    db = _FakeDb()
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            agents_router.create_agent_endpoint(
+                agents_router.AgentCreateRequest(name="Probe-Agent", skills=["missing-skill"], soul="Probe soul"),
+                current_user=User(id=22),
+                db=db,
+            )
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Skill install 'missing-skill' not found"
+    assert db.rolled_back is True
+
+
+def test_update_agent_rejects_uninstalled_skill_name_and_rolls_back(monkeypatch) -> None:
+    agent = Agent(id=501, user_id=22, name="probe-agent", agent_skills=[])
+
+    async def get_agent_by_name(_db, *, user_id, name):
+        assert user_id == 22
+        assert name == "probe-agent"
+        return agent
+
+    async def update_agent(_db, **kwargs):
+        assert kwargs["agent"] is agent
+        assert kwargs["commit"] is False
+        return agent
+
+    async def get_by_user_and_name(_db, *, user_id, name):
+        assert user_id == 22
+        assert name == "missing-skill"
+        return None
+
+    monkeypatch.setattr(agents_router.AgentRepository, "get_agent_by_name", get_agent_by_name)
+    monkeypatch.setattr(agents_router.AgentRepository, "update_agent", update_agent)
+    monkeypatch.setattr(agents_router.SkillInstallRepository, "get_by_user_and_name", get_by_user_and_name)
+
+    db = _FakeDb()
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            agents_router.update_agent(
+                "Probe-Agent",
+                agents_router.AgentUpdateRequest(skills=["missing-skill"]),
+                current_user=User(id=22),
+                db=db,
+            )
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Skill install 'missing-skill' not found"
+    assert db.rolled_back is True

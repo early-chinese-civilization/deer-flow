@@ -2,6 +2,7 @@
 
 import {
   AlignLeftIcon,
+  AlertTriangleIcon,
   ArrowLeftIcon,
   BotIcon,
   CheckCircle2Icon,
@@ -51,9 +52,16 @@ import {
   writeStoredAgentDraft,
 } from "@/core/agents/agent-draft-storage";
 import { AgentNameCheckError, checkAgentName } from "@/core/agents/api";
-import type { AgentDraftMode } from "@/core/agents/types";
+import type { AgentDraftMode, AgentSkillMetadata } from "@/core/agents/types";
 import { useI18n } from "@/core/i18n/hooks";
+import {
+  formatPlatformVersion,
+  getAgentSkillBindingPlatformVersion,
+  getSkillInstallState,
+  getSkillPlatformVersion,
+} from "@/core/skills/display";
 import { useSkills } from "@/core/skills/hooks";
+import type { Skill } from "@/core/skills/type";
 import { cn } from "@/lib/utils";
 
 const NAME_RE = /^[A-Za-z0-9-]+$/;
@@ -69,6 +77,15 @@ interface CreateStep {
   icon: typeof BotIcon;
   preview: string;
   completed: boolean;
+}
+
+interface SkillDisplaySummary {
+  name: string;
+  description: string;
+  versionLabel: string;
+  sourceLabel: string;
+  updateAvailable: boolean;
+  unavailable: boolean;
 }
 
 export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
@@ -110,6 +127,87 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
         }),
     [skills],
   );
+  const visibleSkillByName = useMemo(
+    () => new Map(visibleSkills.map((skill) => [skill.name, skill])),
+    [visibleSkills],
+  );
+  const agentSkillMetadataByName = useMemo(
+    () =>
+      new Map(
+        (agent?.skill_metadata ?? []).map((skill) => [skill.name, skill]),
+      ),
+    [agent?.skill_metadata],
+  );
+
+  function getSkillSourceLabel(skill: Skill): string {
+    if (skill.category === "public") {
+      return t.agents.skillSourceSkillHub;
+    }
+    return t.agents.skillSourceMySkills;
+  }
+
+  function getAgentSkillMetadataSourceLabel(skill: AgentSkillMetadata): string {
+    if (skill.source === "skillhub") {
+      return t.agents.skillSourceSkillHub;
+    }
+    if (skill.source === "my_skills") {
+      return t.agents.skillSourceMySkills;
+    }
+    return skill.source_label || t.agents.skillSourceUnknown;
+  }
+
+  function getSkillSummary(skill: Skill): SkillDisplaySummary {
+    const platformVersion = getSkillPlatformVersion(skill);
+    const unavailable =
+      skill.skill_install_id == null ||
+      skill.skill_definition_id == null ||
+      skill.skill_version_id == null ||
+      platformVersion == null;
+    return {
+      name: skill.name,
+      description: skill.description,
+      versionLabel:
+        formatPlatformVersion(platformVersion) ??
+        t.agents.skillVersionUnavailable,
+      sourceLabel: getSkillSourceLabel(skill),
+      updateAvailable: getSkillInstallState(skill) === "update-available",
+      unavailable,
+    };
+  }
+
+  function getMetadataSummary(
+    skill: AgentSkillMetadata,
+  ): SkillDisplaySummary {
+    return {
+      name: skill.name,
+      description: "",
+      versionLabel:
+        formatPlatformVersion(getAgentSkillBindingPlatformVersion(skill)) ??
+        t.agents.skillVersionUnavailable,
+      sourceLabel: getAgentSkillMetadataSourceLabel(skill),
+      updateAvailable: skill.update_available === true,
+      unavailable: skill.available === false || skill.status === "unavailable",
+    };
+  }
+
+  const selectedSkillSummaries = form.skills.map((skillName) => {
+    const visibleSkill = visibleSkillByName.get(skillName);
+    if (visibleSkill) {
+      return getSkillSummary(visibleSkill);
+    }
+    const metadata = agentSkillMetadataByName.get(skillName);
+    if (metadata) {
+      return getMetadataSummary(metadata);
+    }
+    return {
+      name: skillName,
+      description: "",
+      versionLabel: t.agents.skillVersionUnavailable,
+      sourceLabel: t.agents.skillSourceUnknown,
+      updateAvailable: false,
+      unavailable: true,
+    };
+  });
 
   const createSteps = useMemo<CreateStep[]>(
     () => [
@@ -207,7 +305,10 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
         name: agent?.name ?? "",
         description: agent?.description ?? "",
         soul: agent?.soul ?? "",
-        skills: agent?.skills ?? [],
+        skills:
+          agent?.skills ??
+          agent?.skill_metadata?.map((skill) => skill.name) ??
+          [],
       });
 
     setForm(initialForm);
@@ -247,7 +348,7 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
     }
   }
 
-  function toggleSkill(skillName: string) {
+  function toggleSkill(skillName: string, options?: { canAdd?: boolean }) {
     setSubmitError("");
     setForm((current) => {
       if (current.skills.includes(skillName)) {
@@ -255,6 +356,9 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
           ...current,
           skills: current.skills.filter((name) => name !== skillName),
         };
+      }
+      if (options?.canAdd === false) {
+        return current;
       }
       return {
         ...current,
@@ -463,22 +567,48 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
           ) : (
             visibleSkills.map((skill) => {
               const checked = form.skills.includes(skill.name);
+              const summary = getSkillSummary(skill);
+              const cannotAdd = summary.unavailable && !checked;
               return (
                 <button
                   key={skill.name}
                   type="button"
-                  onClick={() => toggleSkill(skill.name)}
+                  aria-pressed={checked}
+                  disabled={cannotAdd}
+                  onClick={() =>
+                    toggleSkill(skill.name, { canAdd: !summary.unavailable })
+                  }
                   className="block w-full text-left"
                 >
                   <Item
                     variant="outline"
-                    className={cn(checked && "border-primary bg-primary/5")}
+                    className={cn(
+                      checked && "border-primary bg-primary/5",
+                      cannotAdd && "opacity-60",
+                    )}
                   >
                     <ItemContent>
-                      <ItemTitle>{skill.name}</ItemTitle>
+                      <ItemTitle className="flex flex-wrap items-center gap-2">
+                        <span>{skill.name}</span>
+                        {summary.unavailable && (
+                          <span className="text-destructive inline-flex items-center gap-1 text-xs font-normal">
+                            <AlertTriangleIcon className="h-3.5 w-3.5" />
+                            {t.agents.skillMetadataUnavailable}
+                          </span>
+                        )}
+                      </ItemTitle>
                       <ItemDescription>
                         {skill.description || t.agents.createSkillsHint}
                       </ItemDescription>
+                      <div className="text-muted-foreground mt-2 flex flex-wrap gap-2 text-xs">
+                        <span>{summary.versionLabel}</span>
+                        <span>{summary.sourceLabel}</span>
+                        {summary.updateAvailable && (
+                          <span className="text-primary">
+                            {t.agents.skillUpdateAvailable}
+                          </span>
+                        )}
+                      </div>
                     </ItemContent>
                     <ItemActions>
                       {checked && (
@@ -540,12 +670,21 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
                   {t.agents.confirmEmptyValue}
                 </span>
               ) : (
-                form.skills.map((skillName) => (
+                selectedSkillSummaries.map((skill) => (
                   <span
-                    key={skillName}
-                    className="text-muted-foreground rounded-full border px-2.5 py-1 text-xs"
+                    key={skill.name}
+                    className={cn(
+                      "text-muted-foreground rounded-md border px-2.5 py-1 text-xs",
+                      skill.unavailable && "border-destructive/40 text-destructive",
+                    )}
                   >
-                    {skillName}
+                    {skill.name} · {skill.versionLabel} · {skill.sourceLabel}
+                    {skill.updateAvailable
+                      ? ` · ${t.agents.skillUpdateAvailable}`
+                      : ""}
+                    {skill.unavailable
+                      ? ` · ${t.agents.skillMetadataUnavailable}`
+                      : ""}
                   </span>
                 ))
               )}

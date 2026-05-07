@@ -249,9 +249,14 @@ export function SharedChatPage({
       return null;
     }
 
-    return <ThreadAgentBadge agentName={agent?.name ?? effectiveAgentName} />;
+    return (
+      <ThreadAgentBadge
+        agent={agent}
+        agentName={agent?.name ?? effectiveAgentName}
+      />
+    );
   }, [
-    agent?.name,
+    agent,
     agents,
     agentsLoading,
     draftAgentName,
