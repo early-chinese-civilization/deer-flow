@@ -275,6 +275,188 @@ def test_publish_missing_install_hard_fails_without_public_latest_fallback(monke
     assert db.rollbacks == 1
 
 
+@pytest.mark.parametrize(
+    ("source_type", "source_identifier", "owner_user_id", "expected_detail"),
+    [
+        ("user", "8", 8, "downloaded from Community Space"),
+        ("legacy", "legacy", None, "downloaded from Community Space"),
+    ],
+)
+def test_publish_rejects_downloaded_source_identity_before_release(source_type, source_identifier, owner_user_id, expected_detail, monkeypatch):
+    db = FakeDb()
+    source_owner = User(id=8, external_auth_id="sub-8", username="bob", display_name="Bob")
+    definition = SkillDefinition(
+        id=100,
+        name="demo-skill",
+        source_type=source_type,
+        source_identifier=source_identifier,
+        owner_user_id=owner_user_id,
+        owner_user=source_owner if owner_user_id is not None else None,
+    )
+    version = SkillVersion(
+        id=201,
+        skill_definition_id=definition.id,
+        version_number=1,
+        source_package_version=None,
+        description="Downloaded source",
+        content_hash="source-content",
+        file_manifest_hash="source-manifest",
+        artifact_uri="artifacts/skills/100/v1/demo-skill",
+        definition=definition,
+    )
+    install = SkillInstall(
+        id=300,
+        user_id=7,
+        skill_definition_id=definition.id,
+        installed_version_id=version.id,
+        current_version_id=version.id,
+        definition=definition,
+        current_version=version,
+    )
+
+    async def get_definition_by_name_and_owner(db_arg, *, name, owner_user_id):
+        assert owner_user_id == 7
+        return None
+
+    async def list_installs_by_name(db_arg, *, user_id, name):
+        assert user_id == 7
+        return [install]
+
+    async def list_public_skills_by_name_and_owner(db_arg, *, name, owner_user_id):
+        raise AssertionError("downloaded publish authorization must fail before public listing lookup")
+
+    async def create_release(db_arg, **kwargs):
+        raise AssertionError("downloaded publish authorization must fail before release creation")
+
+    monkeypatch.setattr(skills_router.SkillDefinitionRepository, "get_by_name_and_owner", get_definition_by_name_and_owner)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "list_by_user_and_name", list_installs_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_public_skills_by_name_and_owner", list_public_skills_by_name_and_owner)
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "create_release", create_release)
+
+    async def run():
+        with pytest.raises(HTTPException) as exc_info:
+            await skills_router.publish_skill("demo-skill", current_user=_user(), db=db)
+        return exc_info.value
+
+    exc = asyncio.run(run())
+
+    assert exc.status_code == 403
+    assert expected_detail in exc.detail
+    assert db.rollbacks == 1
+    assert db.commits == 0
+
+
+@pytest.mark.parametrize(
+    ("source_identifier", "expected_version_id"),
+    [
+        ("source_definition:90;source_version:201", 201),
+        ("source_definition=90|source_version_id=202", 202),
+        ('{"source_definition_id": 90, "source_version_id": 203}', 203),
+        ("source:90;version:204", None),
+        ("source:90", None),
+        ('{"source_definition_id": 90, "source_version_id": 0}', None),
+    ],
+)
+def test_fork_source_version_parser_requires_explicit_source_version_identity(source_identifier, expected_version_id):
+    assert skills_router._parse_recorded_source_version_id(source_identifier) == expected_version_id
+
+
+def test_publish_rejects_unchanged_fork_before_public_listing_or_release(tmp_path, monkeypatch):
+    source_definition = SkillDefinition(id=90, name="demo-skill", source_type="user", source_identifier="8", owner_user_id=8)
+    source_version = SkillVersion(
+        id=201,
+        skill_definition_id=source_definition.id,
+        version_number=3,
+        source_package_version=None,
+        description="Source version",
+        content_hash="same-content",
+        file_manifest_hash="same-manifest",
+        artifact_uri="artifacts/skills/90/v3/demo-skill",
+        definition=source_definition,
+    )
+    fork_definition = SkillDefinition(
+        id=100,
+        name="demo-skill",
+        source_type="fork",
+        source_identifier='{"source_definition_id":90,"source_version_id":201}',
+        owner_user_id=7,
+    )
+    current_version = SkillVersion(
+        id=301,
+        skill_definition_id=fork_definition.id,
+        version_number=1,
+        source_package_version=None,
+        description="Fork copy",
+        content_hash=source_version.content_hash,
+        file_manifest_hash=source_version.file_manifest_hash,
+        artifact_uri="artifacts/skills/100/v1/demo-skill",
+        definition=fork_definition,
+    )
+    install = SkillInstall(
+        id=300,
+        user_id=7,
+        skill_definition_id=fork_definition.id,
+        installed_version_id=current_version.id,
+        current_version_id=current_version.id,
+        definition=fork_definition,
+        current_version=current_version,
+    )
+    custom_skill = Skill(id=11, user_id=7, skill_definition_id=fork_definition.id, name="demo-skill", display_name="demo-skill", description="Fork copy", file_path="7/demo-skill")
+    db = FakeDb()
+    target_dir = tmp_path / "public" / "demo-skill"
+
+    async def get_definition_by_name_and_owner(db_arg, *, name, owner_user_id):
+        return None
+
+    async def list_installs_by_name(db_arg, *, user_id, name):
+        return [install]
+
+    async def get_user_skill_by_definition(db_arg, *, user_id, skill_definition_id):
+        return custom_skill
+
+    async def list_user_skills_by_name(db_arg, *, user_id, name):
+        return [custom_skill]
+
+    async def get_install_by_user_and_definition(db_arg, *, user_id, skill_definition_id):
+        return install
+
+    async def get_version_by_id(db_arg, *, skill_version_id):
+        assert skill_version_id == source_version.id
+        return source_version
+
+    async def list_public_skills_by_name_and_owner(db_arg, *, name, owner_user_id):
+        raise AssertionError("unchanged fork must fail before public listing lookup")
+
+    async def create_skill(db_arg, **kwargs):
+        raise AssertionError("unchanged fork must fail before public catalog row creation")
+
+    async def create_release(db_arg, **kwargs):
+        raise AssertionError("unchanged fork must fail before release creation")
+
+    monkeypatch.setattr(skills_router.SkillDefinitionRepository, "get_by_name_and_owner", get_definition_by_name_and_owner)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "list_by_user_and_name", list_installs_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_definition", get_user_skill_by_definition)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_user_skills_by_name", list_user_skills_by_name)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_definition", get_install_by_user_and_definition)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "get_by_id", get_version_by_id)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_public_skills_by_name_and_owner", list_public_skills_by_name_and_owner)
+    monkeypatch.setattr(skills_router.SkillRepository, "create_skill", create_skill)
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "create_release", create_release)
+
+    async def run():
+        with pytest.raises(HTTPException) as exc_info:
+            await skills_router.publish_skill("demo-skill", current_user=_user(), db=db)
+        return exc_info.value
+
+    exc = asyncio.run(run())
+
+    assert exc.status_code == 409
+    assert "unchanged from its source version" in exc.detail
+    assert not target_dir.exists()
+    assert db.rollbacks == 1
+    assert db.commits == 0
+
+
 def test_publish_rejects_invalid_source_metadata_before_db_side_effects(tmp_path, monkeypatch):
     definition, version, install, artifact_dir = _version(tmp_path, version_number=1)
     (artifact_dir / "SKILL.md").write_text(
