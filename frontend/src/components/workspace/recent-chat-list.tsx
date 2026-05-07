@@ -6,11 +6,15 @@ import {
   FileText,
   MoreHorizontal,
   Pencil,
-  Share2,
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  useParams,
+  usePathname,
+  useRouter,
+  useSearchParams,
+} from "next/navigation";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
@@ -63,6 +67,9 @@ import {
 import { env } from "@/env";
 import { isIMEComposing } from "@/lib/ime";
 
+import { isRecentChatMenuActionVisible } from "./recent-chat-actions";
+import { getRouteAfterThreadDelete } from "./recent-chat-navigation";
+
 export function RecentChatList() {
   const { t } = useI18n();
   const router = useRouter();
@@ -82,30 +89,37 @@ export function RecentChatList() {
 
   const handleDelete = useCallback(
     (threadId: string) => {
-      deleteThread({ threadId });
-      if (threadId === threadIdFromPath) {
-        const threadIndex = threads.findIndex((t) => t.thread_id === threadId);
-        let nextThreadPath = pathOfNewThread({
+      const nextThreadPath = getRouteAfterThreadDelete({
+        threads,
+        deletedThreadId: threadId,
+        currentRoute,
+        currentThreadId: threadIdFromPath,
+        newThreadRoute: pathOfNewThread({
           currentSearch,
           agentName: null,
-        });
-        if (threadIndex > -1) {
-          if (threads[threadIndex + 1]) {
-            nextThreadPath = pathOfThread(threads[threadIndex + 1]!, {
-              currentPath: pathname,
-              currentSearch,
-            });
-          } else if (threads[threadIndex - 1]) {
-            nextThreadPath = pathOfThread(threads[threadIndex - 1]!, {
-              currentPath: pathname,
-              currentSearch,
-            });
-          }
-        }
+        }),
+        getThreadRoute: (thread) =>
+          pathOfThread(thread, {
+            currentPath: pathname,
+            currentSearch,
+          }),
+      });
+
+      deleteThread({ threadId });
+
+      if (nextThreadPath) {
         void router.push(nextThreadPath);
       }
     },
-    [currentSearch, deleteThread, pathname, router, threadIdFromPath, threads],
+    [
+      currentRoute,
+      currentSearch,
+      deleteThread,
+      pathname,
+      router,
+      threadIdFromPath,
+      threads,
+    ],
   );
 
   const handleRenameClick = useCallback(
@@ -125,25 +139,6 @@ export function RecentChatList() {
       setRenameValue("");
     }
   }, [renameThread, renameThreadId, renameValue]);
-
-  const handleShare = useCallback(
-    async (thread: AgentThread) => {
-      const shareUrl = new URL(
-        pathOfThread(thread, {
-          currentPath: pathname,
-          currentSearch,
-        }),
-        window.location.origin,
-      ).toString();
-      try {
-        await navigator.clipboard.writeText(shareUrl);
-        toast.success(t.clipboard.linkCopied);
-      } catch {
-        toast.error(t.clipboard.failedToCopyToClipboard);
-      }
-    },
-    [currentSearch, pathname, t],
-  );
 
   const handleExport = useCallback(
     async (thread: AgentThread, format: "markdown" | "json") => {
@@ -219,54 +214,56 @@ export function RecentChatList() {
                               side={"right"}
                               align={"start"}
                             >
-                              <DropdownMenuItem
-                                onSelect={() =>
-                                  handleRenameClick(
-                                    thread.thread_id,
-                                    titleOfThread(thread),
-                                  )
-                                }
-                              >
-                                <Pencil className="text-muted-foreground" />
-                                <span>{t.common.rename}</span>
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onSelect={() => handleShare(thread)}
-                              >
-                                <Share2 className="text-muted-foreground" />
-                                <span>{t.common.share}</span>
-                              </DropdownMenuItem>
-                              <DropdownMenuSub>
-                                <DropdownMenuSubTrigger>
-                                  <Download className="text-muted-foreground" />
-                                  <span>{t.common.export}</span>
-                                </DropdownMenuSubTrigger>
-                                <DropdownMenuSubContent>
-                                  <DropdownMenuItem
-                                    onSelect={() =>
-                                      handleExport(thread, "markdown")
-                                    }
-                                  >
-                                    <FileText className="text-muted-foreground" />
-                                    <span>{t.common.exportAsMarkdown}</span>
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onSelect={() =>
-                                      handleExport(thread, "json")
-                                    }
-                                  >
-                                    <FileJson className="text-muted-foreground" />
-                                    <span>{t.common.exportAsJSON}</span>
-                                  </DropdownMenuItem>
-                                </DropdownMenuSubContent>
-                              </DropdownMenuSub>
+                              {isRecentChatMenuActionVisible("rename") && (
+                                <DropdownMenuItem
+                                  onSelect={() =>
+                                    handleRenameClick(
+                                      thread.thread_id,
+                                      titleOfThread(thread),
+                                    )
+                                  }
+                                >
+                                  <Pencil className="text-muted-foreground" />
+                                  <span>{t.common.rename}</span>
+                                </DropdownMenuItem>
+                              )}
+                              {isRecentChatMenuActionVisible("export") && (
+                                <DropdownMenuSub>
+                                  <DropdownMenuSubTrigger>
+                                    <Download className="text-muted-foreground" />
+                                    <span>{t.common.export}</span>
+                                  </DropdownMenuSubTrigger>
+                                  <DropdownMenuSubContent>
+                                    <DropdownMenuItem
+                                      onSelect={() =>
+                                        handleExport(thread, "markdown")
+                                      }
+                                    >
+                                      <FileText className="text-muted-foreground" />
+                                      <span>{t.common.exportAsMarkdown}</span>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onSelect={() =>
+                                        handleExport(thread, "json")
+                                      }
+                                    >
+                                      <FileJson className="text-muted-foreground" />
+                                      <span>{t.common.exportAsJSON}</span>
+                                    </DropdownMenuItem>
+                                  </DropdownMenuSubContent>
+                                </DropdownMenuSub>
+                              )}
                               <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                onSelect={() => handleDelete(thread.thread_id)}
-                              >
-                                <Trash2 className="text-muted-foreground" />
-                                <span>{t.common.delete}</span>
-                              </DropdownMenuItem>
+                              {isRecentChatMenuActionVisible("delete") && (
+                                <DropdownMenuItem
+                                  onSelect={() =>
+                                    handleDelete(thread.thread_id)
+                                  }
+                                >
+                                  <Trash2 className="text-muted-foreground" />
+                                  <span>{t.common.delete}</span>
+                                </DropdownMenuItem>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         )}
