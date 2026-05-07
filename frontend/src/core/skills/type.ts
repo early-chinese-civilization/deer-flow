@@ -7,6 +7,8 @@ export interface Skill {
   version?: string | null;
   platform_version?: number | null;
   skill_definition_id?: number | null;
+  skill_definition_source_type?: string | null;
+  skill_definition_source_identifier?: string | null;
   skill_version_id?: number | null;
   skill_install_id?: number | null;
   current_platform_version?: number | null;

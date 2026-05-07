@@ -40,7 +40,15 @@ def _user(user_id: int = 7) -> User:
 def _version(tmp_path: Path, *, version_number: int = 1, source_package_version: str | None = "v1.2.3") -> tuple[SkillDefinition, SkillVersion, SkillInstall, Path]:
     artifact_dir = tmp_path / "artifacts" / "skills" / "100" / f"v{version_number}" / "demo-skill"
     _write_skill_dir(artifact_dir, version=source_package_version)
-    definition = SkillDefinition(id=100, name="demo-skill", display_name="demo-skill", description="Published description")
+    definition = SkillDefinition(
+        id=100,
+        name="demo-skill",
+        display_name="demo-skill",
+        description="Published description",
+        source_type="user",
+        source_identifier="7",
+        owner_user_id=7,
+    )
     version = SkillVersion(
         id=200 + version_number,
         skill_definition_id=100,
@@ -65,12 +73,12 @@ def _version(tmp_path: Path, *, version_number: int = 1, source_package_version:
 
 
 def test_publish_custom_skill_creates_release_for_current_skill_version(tmp_path, monkeypatch):
-    _, version, install, artifact_dir = _version(tmp_path, version_number=1)
+    definition, version, install, artifact_dir = _version(tmp_path, version_number=1)
     target_dir = tmp_path / "public" / "demo-skill"
     current_user = _user()
-    custom_skill = Skill(id=11, user_id=7, name="demo-skill", display_name="demo-skill", description="Old description", file_path="7/demo-skill")
-    old_public_skill = Skill(id=10, user_id=None, owner_user_id=2, name="demo-skill", display_name="demo-skill", description="Old public", file_path="public/demo-skill")
-    published_skill = Skill(id=12, user_id=None, owner_user_id=7, name="demo-skill", display_name="demo-skill", description="Published description", file_path="public/demo-skill")
+    custom_skill = Skill(id=11, user_id=7, skill_definition_id=definition.id, name="demo-skill", display_name="demo-skill", description="Old description", file_path="7/demo-skill")
+    old_public_skill = Skill(id=10, user_id=None, owner_user_id=7, skill_definition_id=definition.id, name="demo-skill", display_name="demo-skill", description="Old public", file_path="public/7/demo-skill")
+    published_skill = Skill(id=12, user_id=None, owner_user_id=7, skill_definition_id=definition.id, name="demo-skill", display_name="demo-skill", description="Published description", file_path="public/demo-skill")
     release = SkillRelease(
         id=30,
         skill_name="demo-skill",
@@ -91,10 +99,23 @@ def test_publish_custom_skill_creates_release_for_current_skill_version(tmp_path
     async def get_user_skill_by_name(db_arg, *, user_id, name):
         return custom_skill
 
-    async def get_install_by_user_and_name(db_arg, *, user_id, name):
+    async def list_user_skills_by_name(db_arg, *, user_id, name):
+        return [custom_skill]
+
+    async def get_user_skill_by_definition(db_arg, *, user_id, skill_definition_id):
+        assert skill_definition_id == definition.id
+        return custom_skill
+
+    async def get_definition_by_name_and_owner(db_arg, *, name, owner_user_id):
+        assert owner_user_id == 7
+        return definition
+
+    async def get_install_by_user_and_definition(db_arg, *, user_id, skill_definition_id):
+        assert skill_definition_id == definition.id
         return install
 
-    async def list_public_skills_by_name(db_arg, *, name):
+    async def list_public_skills_by_name_and_owner(db_arg, *, name, owner_user_id):
+        assert owner_user_id == 7
         return [old_public_skill]
 
     async def soft_delete_skill(db_arg, *, skill, commit=True):
@@ -111,9 +132,12 @@ def test_publish_custom_skill_creates_release_for_current_skill_version(tmp_path
         calls["releases"].append(kwargs)
         return release
 
+    monkeypatch.setattr(skills_router.SkillDefinitionRepository, "get_by_name_and_owner", get_definition_by_name_and_owner)
     monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_name", get_user_skill_by_name)
-    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_name", get_install_by_user_and_name)
-    monkeypatch.setattr(skills_router.SkillRepository, "list_public_skills_by_name", list_public_skills_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_user_skills_by_name", list_user_skills_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_definition", get_user_skill_by_definition)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_definition", get_install_by_user_and_definition)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_public_skills_by_name_and_owner", list_public_skills_by_name_and_owner)
     monkeypatch.setattr(skills_router.SkillRepository, "soft_delete_skill", soft_delete_skill)
     monkeypatch.setattr(skills_router.SkillRepository, "create_skill", create_skill)
     monkeypatch.setattr(skills_router.SkillRepository, "get_skill_by_id", get_skill_by_id)
@@ -138,19 +162,28 @@ def test_publish_custom_skill_creates_release_for_current_skill_version(tmp_path
 
 
 def test_publish_normalizes_release_notes_and_keeps_platform_version(tmp_path, monkeypatch):
-    _, version, install, artifact_dir = _version(tmp_path, version_number=2, source_package_version=None)
+    definition, version, install, artifact_dir = _version(tmp_path, version_number=2, source_package_version=None)
     target_dir = tmp_path / "public" / "demo-skill"
-    custom_skill = Skill(id=11, user_id=7, name="demo-skill", display_name="demo-skill", description="Old", file_path="7/demo-skill")
-    published_skill = Skill(id=12, user_id=None, owner_user_id=7, name="demo-skill", display_name="demo-skill", description="Published description", file_path="public/demo-skill")
+    custom_skill = Skill(id=11, user_id=7, skill_definition_id=definition.id, name="demo-skill", display_name="demo-skill", description="Old", file_path="7/demo-skill")
+    published_skill = Skill(id=12, user_id=None, owner_user_id=7, skill_definition_id=definition.id, name="demo-skill", display_name="demo-skill", description="Published description", file_path="public/demo-skill")
     release_kwargs = {}
 
     async def get_user_skill_by_name(db_arg, *, user_id, name):
         return custom_skill
 
-    async def get_install_by_user_and_name(db_arg, *, user_id, name):
+    async def list_user_skills_by_name(db_arg, *, user_id, name):
+        return [custom_skill]
+
+    async def get_user_skill_by_definition(db_arg, *, user_id, skill_definition_id):
+        return custom_skill
+
+    async def get_definition_by_name_and_owner(db_arg, *, name, owner_user_id):
+        return definition
+
+    async def get_install_by_user_and_definition(db_arg, *, user_id, skill_definition_id):
         return install
 
-    async def list_public_skills_by_name(db_arg, *, name):
+    async def list_public_skills_by_name_and_owner(db_arg, *, name, owner_user_id):
         return []
 
     async def create_skill(db_arg, **kwargs):
@@ -176,9 +209,12 @@ def test_publish_normalizes_release_notes_and_keeps_platform_version(tmp_path, m
             skill_version_id=version.id,
         )
 
+    monkeypatch.setattr(skills_router.SkillDefinitionRepository, "get_by_name_and_owner", get_definition_by_name_and_owner)
     monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_name", get_user_skill_by_name)
-    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_name", get_install_by_user_and_name)
-    monkeypatch.setattr(skills_router.SkillRepository, "list_public_skills_by_name", list_public_skills_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_user_skills_by_name", list_user_skills_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_definition", get_user_skill_by_definition)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_definition", get_install_by_user_and_definition)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_public_skills_by_name_and_owner", list_public_skills_by_name_and_owner)
     monkeypatch.setattr(skills_router.SkillRepository, "create_skill", create_skill)
     monkeypatch.setattr(skills_router.SkillRepository, "get_skill_by_id", get_skill_by_id)
     monkeypatch.setattr(skills_router.SkillReleaseRepository, "create_release", create_release)
@@ -203,16 +239,29 @@ def test_publish_normalizes_release_notes_and_keeps_platform_version(tmp_path, m
 
 def test_publish_missing_install_hard_fails_without_public_latest_fallback(monkeypatch):
     db = FakeDb()
-    custom_skill = Skill(id=11, user_id=7, name="demo-skill", display_name="demo-skill", description="Old", file_path="7/demo-skill")
+    definition = SkillDefinition(id=100, name="demo-skill", source_type="user", source_identifier="7", owner_user_id=7)
+    custom_skill = Skill(id=11, user_id=7, skill_definition_id=definition.id, name="demo-skill", display_name="demo-skill", description="Old", file_path="7/demo-skill")
 
     async def get_user_skill_by_name(db_arg, *, user_id, name):
         return custom_skill
 
-    async def get_install_by_user_and_name(db_arg, *, user_id, name):
+    async def list_user_skills_by_name(db_arg, *, user_id, name):
+        return [custom_skill]
+
+    async def get_user_skill_by_definition(db_arg, *, user_id, skill_definition_id):
+        return custom_skill
+
+    async def get_definition_by_name_and_owner(db_arg, *, name, owner_user_id):
+        return definition
+
+    async def get_install_by_user_and_definition(db_arg, *, user_id, skill_definition_id):
         return None
 
+    monkeypatch.setattr(skills_router.SkillDefinitionRepository, "get_by_name_and_owner", get_definition_by_name_and_owner)
     monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_name", get_user_skill_by_name)
-    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_name", get_install_by_user_and_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_user_skills_by_name", list_user_skills_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_definition", get_user_skill_by_definition)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_definition", get_install_by_user_and_definition)
 
     async def run():
         with pytest.raises(HTTPException) as exc_info:
@@ -227,26 +276,38 @@ def test_publish_missing_install_hard_fails_without_public_latest_fallback(monke
 
 
 def test_publish_rejects_invalid_source_metadata_before_db_side_effects(tmp_path, monkeypatch):
-    _, version, install, artifact_dir = _version(tmp_path, version_number=1)
+    definition, version, install, artifact_dir = _version(tmp_path, version_number=1)
     (artifact_dir / "SKILL.md").write_text(
         "---\nname: demo-skill\ndescription: Published description\nversion: 1.2\n---\n\n# Demo Skill\n",
         encoding="utf-8",
     )
     db = FakeDb()
-    custom_skill = Skill(id=11, user_id=7, name="demo-skill", display_name="demo-skill", description="Old", file_path="7/demo-skill")
+    custom_skill = Skill(id=11, user_id=7, skill_definition_id=definition.id, name="demo-skill", display_name="demo-skill", description="Old", file_path="7/demo-skill")
 
     async def get_user_skill_by_name(db_arg, *, user_id, name):
         return custom_skill
 
-    async def get_install_by_user_and_name(db_arg, *, user_id, name):
+    async def list_user_skills_by_name(db_arg, *, user_id, name):
+        return [custom_skill]
+
+    async def get_user_skill_by_definition(db_arg, *, user_id, skill_definition_id):
+        return custom_skill
+
+    async def get_definition_by_name_and_owner(db_arg, *, name, owner_user_id):
+        return definition
+
+    async def get_install_by_user_and_definition(db_arg, *, user_id, skill_definition_id):
         return install
 
-    async def list_public_skills_by_name(db_arg, *, name):
+    async def list_public_skills_by_name_and_owner(db_arg, *, name, owner_user_id):
         raise AssertionError("invalid metadata should not query public rows")
 
+    monkeypatch.setattr(skills_router.SkillDefinitionRepository, "get_by_name_and_owner", get_definition_by_name_and_owner)
     monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_name", get_user_skill_by_name)
-    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_name", get_install_by_user_and_name)
-    monkeypatch.setattr(skills_router.SkillRepository, "list_public_skills_by_name", list_public_skills_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_user_skills_by_name", list_user_skills_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_definition", get_user_skill_by_definition)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_definition", get_install_by_user_and_definition)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_public_skills_by_name_and_owner", list_public_skills_by_name_and_owner)
     monkeypatch.setattr(skills_router, "_resolve_skill_dir", lambda raw_path: artifact_dir)
 
     async def run():

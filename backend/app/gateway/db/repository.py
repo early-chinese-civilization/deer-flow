@@ -67,6 +67,13 @@ class RuntimeManifestResolutionError(RuntimeError):
     """Raised when an agent runtime manifest cannot be resolved exactly."""
 
 
+def build_skill_definition_source(owner_user_id: int | None) -> tuple[str, str]:
+    """Return the default source namespace for a definition owner."""
+    if owner_user_id is None:
+        return "legacy", "legacy"
+    return "user", str(owner_user_id)
+
+
 def _as_optional_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
     """Normalize optional UUID values."""
     if value is None or isinstance(value, uuid.UUID):
@@ -665,12 +672,48 @@ class SkillDefinitionRepository:
     """Persistence helpers for stable skill definitions."""
 
     @staticmethod
-    async def get_by_name(db: AsyncSession, *, name: str) -> SkillDefinition | None:
+    async def get_by_identity(
+        db: AsyncSession,
+        *,
+        name: str,
+        source_type: str,
+        source_identifier: str,
+    ) -> SkillDefinition | None:
         result = await db.execute(
             select(SkillDefinition).where(
                 SkillDefinition.name == name,
+                SkillDefinition.source_type == source_type,
+                SkillDefinition.source_identifier == source_identifier,
                 SkillDefinition.deleted_at.is_(None),
             )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_by_name_and_owner(db: AsyncSession, *, name: str, owner_user_id: int | None) -> SkillDefinition | None:
+        source_type, source_identifier = build_skill_definition_source(owner_user_id)
+        return await SkillDefinitionRepository.get_by_identity(
+            db,
+            name=name,
+            source_type=source_type,
+            source_identifier=source_identifier,
+        )
+
+    @staticmethod
+    async def get_by_name(db: AsyncSession, *, name: str) -> SkillDefinition | None:
+        """Compatibility lookup for legacy name-only callers.
+
+        New write paths must use the source identity helpers so same-name
+        definitions from different sources do not collapse into one row.
+        """
+        result = await db.execute(
+            select(SkillDefinition)
+            .where(
+                SkillDefinition.name == name,
+                SkillDefinition.deleted_at.is_(None),
+            )
+            .order_by(SkillDefinition.updated_at.desc(), SkillDefinition.created_at.desc())
+            .limit(1)
         )
         return result.scalar_one_or_none()
 
@@ -682,8 +725,18 @@ class SkillDefinitionRepository:
         display_name: str | None,
         description: str | None,
         owner_user_id: int | None,
+        source_type: str | None = None,
+        source_identifier: str | None = None,
     ) -> SkillDefinition:
-        definition = await SkillDefinitionRepository.get_by_name(db, name=name)
+        default_source_type, default_source_identifier = build_skill_definition_source(owner_user_id)
+        source_type = source_type or default_source_type
+        source_identifier = source_identifier or default_source_identifier
+        definition = await SkillDefinitionRepository.get_by_identity(
+            db,
+            name=name,
+            source_type=source_type,
+            source_identifier=source_identifier,
+        )
         if definition is not None:
             definition.display_name = display_name or definition.display_name
             definition.description = description or definition.description
@@ -696,6 +749,8 @@ class SkillDefinitionRepository:
             name=name,
             display_name=display_name,
             description=description,
+            source_type=source_type,
+            source_identifier=source_identifier,
             owner_user_id=owner_user_id,
         )
         db.add(definition)
@@ -812,6 +867,55 @@ class SkillInstallRepository:
                 SkillInstall.user_id == user_id,
                 SkillDefinition.name == name,
                 SkillDefinition.deleted_at.is_(None),
+                SkillInstall.deleted_at.is_(None),
+            )
+            .order_by(SkillInstall.updated_at.desc(), SkillInstall.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def list_by_user_and_name(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        name: str,
+    ) -> list[SkillInstall]:
+        result = await db.execute(
+            select(SkillInstall)
+            .join(SkillDefinition, SkillDefinition.id == SkillInstall.skill_definition_id)
+            .options(
+                selectinload(SkillInstall.definition),
+                selectinload(SkillInstall.installed_version),
+                selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition),
+            )
+            .where(
+                SkillInstall.user_id == user_id,
+                SkillDefinition.name == name,
+                SkillDefinition.deleted_at.is_(None),
+                SkillInstall.deleted_at.is_(None),
+            )
+            .order_by(SkillInstall.updated_at.desc(), SkillInstall.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_by_id_for_user(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        skill_install_id: int,
+    ) -> SkillInstall | None:
+        result = await db.execute(
+            select(SkillInstall)
+            .options(
+                selectinload(SkillInstall.definition),
+                selectinload(SkillInstall.installed_version),
+                selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition),
+            )
+            .where(
+                SkillInstall.id == skill_install_id,
+                SkillInstall.user_id == user_id,
                 SkillInstall.deleted_at.is_(None),
             )
         )
@@ -1028,20 +1132,21 @@ class SkillRepository:
 
     @staticmethod
     def _with_owner_user(stmt):
-        return stmt.options(selectinload(Skill.owner_user))
+        return stmt.options(selectinload(Skill.owner_user), selectinload(Skill.definition))
 
     @staticmethod
     def _dedupe_public_skills(skills: list[Skill]) -> list[Skill]:
-        """Collapse legacy duplicate public rows down to the preferred row per name."""
+        """Collapse only exact legacy duplicate public rows, preserving source collisions."""
         deduped: list[Skill] = []
-        seen_public_names: set[str] = set()
+        seen_public_keys: set[tuple[str, int | None, int | None]] = set()
         for skill in skills:
             if skill.user_id is not None:
                 deduped.append(skill)
                 continue
-            if skill.name in seen_public_names:
+            key = (skill.name, skill.owner_user_id, skill.skill_definition_id)
+            if key in seen_public_keys:
                 continue
-            seen_public_names.add(skill.name)
+            seen_public_keys.add(key)
             deduped.append(skill)
         return deduped
 
@@ -1050,11 +1155,12 @@ class SkillRepository:
         db: AsyncSession,
         *,
         user_id: int | None,
-        owner_user_id: int | None = None,
         name: str,
         display_name: str | None,
         description: str | None,
         file_path: str,
+        owner_user_id: int | None = None,
+        skill_definition_id: int | None = None,
         commit: bool = True,
     ) -> Skill:
         """Create a skill record."""
@@ -1065,6 +1171,7 @@ class SkillRepository:
             display_name=display_name,
             description=description,
             file_path=file_path,
+            skill_definition_id=skill_definition_id,
         )
         db.add(skill)
         await db.flush()
@@ -1125,7 +1232,37 @@ class SkillRepository:
     @staticmethod
     async def get_user_skill_by_name(db: AsyncSession, *, user_id: int, name: str) -> Skill | None:
         """Load the current user's active skill by name."""
-        stmt = SkillRepository._with_owner_user(SkillRepository._active_skill_stmt().where(Skill.user_id == user_id, Skill.name == name))
+        stmt = SkillRepository._with_owner_user(SkillRepository._active_skill_stmt().where(Skill.user_id == user_id, Skill.name == name).order_by(Skill.updated_at.desc(), Skill.created_at.desc()).limit(1))
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def list_user_skills_by_name(db: AsyncSession, *, user_id: int, name: str) -> list[Skill]:
+        """List the current user's active skill rows for a compatibility name."""
+        stmt = SkillRepository._with_owner_user(
+            SkillRepository._active_skill_stmt()
+            .where(
+                Skill.user_id == user_id,
+                Skill.name == name,
+            )
+            .order_by(Skill.updated_at.desc(), Skill.created_at.desc())
+        )
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_user_skill_by_definition(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        skill_definition_id: int,
+    ) -> Skill | None:
+        stmt = SkillRepository._with_owner_user(
+            SkillRepository._active_skill_stmt().where(
+                Skill.user_id == user_id,
+                Skill.skill_definition_id == skill_definition_id,
+            )
+        )
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -1136,12 +1273,16 @@ class SkillRepository:
         name: str,
         owner_user_id: int | None,
     ) -> Skill | None:
-        """Load an active public skill by name.
-
-        ``owner_user_id`` is ignored for business logic compatibility.
-        """
-        del owner_user_id
-        return await SkillRepository.get_public_skill_by_name(db, name=name)
+        """Load an active public skill by name and publisher when provided."""
+        stmt = SkillRepository._active_skill_stmt().where(
+            Skill.user_id.is_(None),
+            Skill.name == name,
+        )
+        if owner_user_id is not None:
+            stmt = stmt.where(Skill.owner_user_id == owner_user_id)
+        stmt = SkillRepository._with_owner_user(stmt.order_by(Skill.updated_at.desc(), Skill.created_at.desc()).limit(1))
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def get_system_public_skill_by_name(db: AsyncSession, *, name: str) -> Skill | None:
@@ -1172,6 +1313,27 @@ class SkillRepository:
                 .where(
                     Skill.user_id.is_(None),
                     Skill.name == name,
+                )
+                .order_by(Skill.updated_at.desc(), Skill.created_at.desc())
+            )
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def list_public_skills_by_name_and_owner(
+        db: AsyncSession,
+        *,
+        name: str,
+        owner_user_id: int,
+    ) -> list[Skill]:
+        """List active public rows for a given skill name and publisher."""
+        result = await db.execute(
+            SkillRepository._with_owner_user(
+                SkillRepository._active_skill_stmt()
+                .where(
+                    Skill.user_id.is_(None),
+                    Skill.name == name,
+                    Skill.owner_user_id == owner_user_id,
                 )
                 .order_by(Skill.updated_at.desc(), Skill.created_at.desc())
             )
