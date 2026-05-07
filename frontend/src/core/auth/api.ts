@@ -28,20 +28,20 @@ type AuthErrorPayload = {
 };
 
 const EXPECTED_UNAUTHENTICATED_DETAILS = new Set([
-  'Not authenticated',
-  'Session expired',
-  'Logged out',
+  "Not authenticated",
+  "Session expired",
+  "Logged out",
 ]);
 
 async function readAuthErrorDetail(response: Response): Promise<string> {
   const body = await response.text();
   if (!body) {
-    return response.statusText || 'Unknown auth error';
+    return response.statusText || "Unknown auth error";
   }
 
   try {
     const payload = JSON.parse(body) as AuthErrorPayload;
-    if (typeof payload.detail === 'string') {
+    if (typeof payload.detail === "string") {
       return payload.detail;
     }
     if (payload.detail != null) {
@@ -61,7 +61,11 @@ function shouldLogAuthFailure(status: number, detail: string): boolean {
   return !EXPECTED_UNAUTHENTICATED_DETAILS.has(detail);
 }
 
-function formatAuthError(action: string, status: number, detail: string): string {
+function formatAuthError(
+  action: string,
+  status: number,
+  detail: string,
+): string {
   return `${action} failed (${status}): ${detail}`;
 }
 
@@ -80,7 +84,7 @@ export async function getCurrentUser(): Promise<User | null> {
       const detail = await readAuthErrorDetail(res);
       if (shouldLogAuthFailure(res.status, detail)) {
         console.error(
-          formatAuthError('Current user lookup', res.status, detail),
+          formatAuthError("Current user lookup", res.status, detail),
         );
       }
       return null;
@@ -108,7 +112,7 @@ export async function logout(): Promise<string> {
 
     if (!res.ok) {
       const detail = await readAuthErrorDetail(res);
-      throw new Error(formatAuthError('Logout', res.status, detail));
+      throw new Error(formatAuthError("Logout", res.status, detail));
     }
 
     const data: LogoutResponse = await res.json();
@@ -135,7 +139,7 @@ export async function refreshToken(): Promise<boolean> {
     if (!res.ok) {
       const detail = await readAuthErrorDetail(res);
       if (shouldLogAuthFailure(res.status, detail)) {
-        console.error(formatAuthError('Token refresh', res.status, detail));
+        console.error(formatAuthError("Token refresh", res.status, detail));
       }
       return false;
     }

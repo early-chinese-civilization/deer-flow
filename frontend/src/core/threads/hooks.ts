@@ -13,13 +13,13 @@ import type { FileInMessage } from "../messages/utils";
 import type { LocalSettings } from "../settings";
 import { useUpdateSubtask } from "../tasks/context";
 import type { UploadedFileInfo } from "../uploads";
+import { getCanonicalUploadedFilePath } from "../uploads/composer-core";
 
 import { ensureThread } from "./api";
 import {
   applyPendingUploadedFiles,
   type PendingUploadedFiles,
 } from "./message-attachments";
-import { getCanonicalUploadedFilePath } from "../uploads/composer-core";
 import { getRunReconnectStorage } from "./reconnect-storage";
 import { shouldSuppressPassiveStreamError } from "./stream-error";
 import {
@@ -379,15 +379,17 @@ export function useThreadStream({
           );
         }
 
-        const filesForSubmit: FileInMessage[] = uploadedFileInfo.map((info) => ({
-          filename: info.filename,
-          size: info.size,
-          path: getCanonicalUploadedFilePath(info),
-          virtual_path: info.virtual_path,
-          oss_uri: info.oss_uri,
-          object_key: info.object_key,
-          status: "uploaded" as const,
-        }));
+        const filesForSubmit: FileInMessage[] = uploadedFileInfo.map(
+          (info) => ({
+            filename: info.filename,
+            size: info.size,
+            path: getCanonicalUploadedFilePath(info),
+            virtual_path: info.virtual_path,
+            oss_uri: info.oss_uri,
+            object_key: info.object_key,
+            status: "uploaded" as const,
+          }),
+        );
 
         setPendingUploadedFiles(
           filesForSubmit.length > 0
