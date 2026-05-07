@@ -3,6 +3,23 @@ export type ThreadChatState = {
   isNewThread: boolean;
 };
 
+export type PromotedThreadChatState = {
+  routeKey: string;
+  state: ThreadChatState;
+};
+
+export function buildThreadChatRouteKey(options: {
+  threadIdFromPath: string;
+  draftAgentName?: string | null;
+  draftResetKey?: string | null;
+}): string {
+  return [
+    options.threadIdFromPath,
+    options.draftAgentName ?? "",
+    options.draftResetKey ?? "",
+  ].join("|");
+}
+
 export function resolveThreadChatState(
   threadIdFromPath: string,
   createDraftThreadId: () => string,
@@ -25,4 +42,19 @@ export function promoteThreadChatState(threadId: string): ThreadChatState {
     threadId,
     isNewThread: false,
   };
+}
+
+export function selectThreadChatState({
+  routeKey,
+  routeState,
+  promoted,
+}: {
+  routeKey: string;
+  routeState: ThreadChatState;
+  promoted: PromotedThreadChatState | null;
+}): ThreadChatState {
+  if (promoted?.routeKey === routeKey) {
+    return promoted.state;
+  }
+  return routeState;
 }

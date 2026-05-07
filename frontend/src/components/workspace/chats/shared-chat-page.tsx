@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { parseAsString, useQueryStates } from "nuqs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -65,6 +65,7 @@ export function SharedChatPage({
   initialDraftNonce?: string;
 }) {
   const { t } = useI18n();
+  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const searchParamsString = searchParams.toString();
@@ -81,10 +82,14 @@ export function SharedChatPage({
   }, []);
 
   const draftAgentName = normalizeQueryValue(
-    hasMounted ? draftAgentQuery : draftAgentQuery ?? initialAgentName ?? null,
+    hasMounted
+      ? draftAgentQuery
+      : (draftAgentQuery ?? initialAgentName ?? null),
   );
   const draftNonce = normalizeQueryValue(
-    hasMounted ? draftNonceQuery : draftNonceQuery ?? initialDraftNonce ?? null,
+    hasMounted
+      ? draftNonceQuery
+      : (draftNonceQuery ?? initialDraftNonce ?? null),
   );
 
   const { threadId, isNewThread, commitThreadId, isMock } = useThreadChat({
@@ -112,7 +117,7 @@ export function SharedChatPage({
   }, [isNewThread, threadDetailQuery.data]);
 
   const effectiveAgentName = isNewThread
-    ? draftAgentName ?? undefined
+    ? (draftAgentName ?? undefined)
     : persistedAgentName;
   const { agent } = useAgent(effectiveAgentName);
 
@@ -137,14 +142,13 @@ export function SharedChatPage({
     isMock,
     onStart: (resolvedThreadId) => {
       commitThreadId(resolvedThreadId);
-      history.replaceState(
-        null,
-        "",
+      router.replace(
         pathOfThread(resolvedThreadId, {
           currentPath: pathname,
           currentSearch: searchParamsString,
           agentName: effectiveAgentName ?? null,
         }),
+        { scroll: false },
       );
     },
     onFinish: (state) => {
@@ -177,9 +181,15 @@ export function SharedChatPage({
     const currentRoute = currentRouteOf(pathname, searchParamsString);
 
     if (canonicalRoute !== currentRoute) {
-      history.replaceState(null, "", canonicalRoute);
+      router.replace(canonicalRoute, { scroll: false });
     }
-  }, [isNewThread, pathname, searchParamsString, threadDetailQuery.data]);
+  }, [
+    isNewThread,
+    pathname,
+    router,
+    searchParamsString,
+    threadDetailQuery.data,
+  ]);
 
   const handleDraftAgentChange = useCallback(
     (nextAgentName: string | null) => {
