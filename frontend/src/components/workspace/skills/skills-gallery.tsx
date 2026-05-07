@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  GitForkIcon,
-  MoreVerticalIcon,
-  SearchIcon,
-  UploadIcon,
-} from "lucide-react";
+import { MoreVerticalIcon, SearchIcon, UploadIcon } from "lucide-react";
 import { type ChangeEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -45,7 +40,6 @@ import {
   getSkillInstallUpdateDialogState,
   useConfirmSkillInstallUpdate,
   useDeleteSkill,
-  useDownloadSkillForkPackage,
   useInstallSkillHubSkill,
   usePublishSkill,
   usePreviewSkillInstallUpdate,
@@ -54,7 +48,6 @@ import {
 } from "@/core/skills";
 import {
   findInstalledSkillForSkillHubItem,
-  getInstalledPlatformVersion,
   getSkillDisplayContract,
   getSkillHubLatestPlatformVersion,
   getSkillInstallState,
@@ -63,6 +56,7 @@ import {
   isAuthoredSkillRelation,
   isCommunitySkill,
   isPersonalSkill,
+  isSelfAuthoredCommunitySkill,
   skillMatchesCommunitySearch,
   skillMatchesWorkspaceSegment,
   type SkillInstallState,
@@ -74,8 +68,8 @@ import type { Skill } from "@/core/skills/type";
 type SkillsSurface = "community" | "personal";
 
 const SKILL_SURFACE_SEGMENTS: Record<SkillsSurface, SkillWorkspaceSegment[]> = {
-  community: ["all", "downloaded", "published", "updates"],
-  personal: ["all", "downloaded", "authored", "published", "updates", "forks"],
+  community: ["all", "system"],
+  personal: ["all", "authored", "downloaded", "updates"],
 };
 
 export function SkillsGallery() {
@@ -83,7 +77,6 @@ export function SkillsGallery() {
   const { skills, isLoading, error } = useSkills();
   const deleteSkill = useDeleteSkill();
   const installSkillHubSkill = useInstallSkillHubSkill();
-  const downloadForkPackage = useDownloadSkillForkPackage();
   const confirmSkillUpdate = useConfirmSkillInstallUpdate();
   const publishSkill = usePublishSkill();
   const uploadSkills = useUploadSkills();
@@ -93,7 +86,6 @@ export function SkillsGallery() {
   const [communitySearch, setCommunitySearch] = useState("");
   const [publishCandidate, setPublishCandidate] = useState<Skill | null>(null);
   const [updateCandidate, setUpdateCandidate] = useState<Skill | null>(null);
-  const [forkCandidate, setForkCandidate] = useState<Skill | null>(null);
   const [releaseNotes, setReleaseNotes] = useState("");
   const updatePreview = usePreviewSkillInstallUpdate(
     updateCandidate?.name ?? null,
@@ -130,19 +122,7 @@ export function SkillsGallery() {
   }
 
   function getSkillHubVersionDetail(skill: Skill) {
-    const installedSkill = findInstalledSkillForSkillHubItem(skill, skills);
-    const installedVersion = getInstalledPlatformVersion(skill, installedSkill);
     const latestVersion = getSkillHubLatestPlatformVersion(skill);
-
-    if (installedVersion != null && latestVersion != null) {
-      if (latestVersion > installedVersion) {
-        return t.settings.skills.currentAndUpdateVersions(
-          installedVersion,
-          latestVersion,
-        );
-      }
-      return t.settings.skills.currentVersion(installedVersion);
-    }
 
     if (latestVersion != null) {
       return t.settings.skills.skillHubVersion(latestVersion);
@@ -203,16 +183,14 @@ export function SkillsGallery() {
 
   function getSegmentText(value: SkillWorkspaceSegment) {
     switch (value) {
+      case "system":
+        return t.settings.skills.systemSegment;
       case "downloaded":
         return t.settings.skills.downloadedSegment;
       case "authored":
         return t.settings.skills.authoredSegment;
-      case "published":
-        return t.settings.skills.publishedSegment;
       case "updates":
         return t.settings.skills.updatesSegment;
-      case "forks":
-        return t.settings.skills.forksSegment;
       case "all":
         return t.settings.skills.allSegment;
     }
@@ -237,10 +215,10 @@ export function SkillsGallery() {
     ) {
       return t.settings.skills.published;
     }
-    if (display.viewerRelation === "forked") {
-      return t.settings.skills.forkedSkill;
-    }
     if (display.space === "personal" && display.viewerRelation === "authored") {
+      return t.settings.skills.mySkill;
+    }
+    if (display.viewerRelation === "forked") {
       return t.settings.skills.mySkill;
     }
     if (action === "view-update" || installState === "update-available") {
@@ -270,11 +248,6 @@ export function SkillsGallery() {
       case "none":
         return null;
     }
-  }
-
-  function moveToPersonalSpace(nextSegment: SkillWorkspaceSegment) {
-    setSurface("personal");
-    setSegment(nextSegment);
   }
 
   function getAffectedAgentsText(agentNames: string[]) {
@@ -330,27 +303,6 @@ export function SkillsGallery() {
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t.settings.skills.installError,
-      );
-    }
-  }
-
-  async function handleForkDownloadConfirmed() {
-    if (!forkCandidate) {
-      return;
-    }
-    try {
-      await downloadForkPackage.mutateAsync({
-        skillName: forkCandidate.name,
-        ownerUserId: forkCandidate.owner_user_id ?? null,
-        skillDefinitionId: forkCandidate.skill_definition_id ?? null,
-      });
-      toast.success(t.settings.skills.forkDownloadSuccess);
-      setForkCandidate(null);
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : t.settings.skills.forkDownloadError,
       );
     }
   }
@@ -561,6 +513,9 @@ export function SkillsGallery() {
                 installedSkill,
               );
               const canPublishSkill = isAuthoredSkillRelation(skill);
+              const communityActionInstalled =
+                isSelfAuthoredCommunitySkill(skill) ||
+                installState !== "not-installed";
               const platformVersion =
                 display.space === "community"
                   ? getSkillHubLatestPlatformVersion(skill)
@@ -585,19 +540,21 @@ export function SkillsGallery() {
                       >
                         {getVersionText(platformVersion)}
                       </Badge>
-                      <Badge
-                        variant={
-                          installState === "update-available"
-                            ? "default"
-                            : "outline"
-                        }
-                      >
-                        {getWorkspaceStatusText(
-                          skill,
-                          cardState.primaryAction,
-                          installState,
-                        )}
-                      </Badge>
+                      {display.space === "personal" ? (
+                        <Badge
+                          variant={
+                            installState === "update-available"
+                              ? "default"
+                              : "outline"
+                          }
+                        >
+                          {getWorkspaceStatusText(
+                            skill,
+                            cardState.primaryAction,
+                            installState,
+                          )}
+                        </Badge>
+                      ) : null}
                     </div>
                     <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                       <span>
@@ -613,51 +570,26 @@ export function SkillsGallery() {
                   </ItemContent>
                   <ItemActions>
                     {display.space === "community" ? (
-                      <div className="flex items-center gap-2">
-                        <Button
-                          size="sm"
-                          variant={
-                            cardState.primaryAction === "add-to-personal"
-                              ? "default"
-                              : "outline"
-                          }
-                          disabled={
-                            installSkillHubSkill.isPending &&
-                            cardState.primaryAction === "add-to-personal"
-                          }
-                          onClick={() => {
-                            if (
-                              cardState.primaryAction === "manage-published"
-                            ) {
-                              moveToPersonalSpace("published");
-                              return;
-                            }
-                            if (cardState.primaryAction === "view-personal") {
-                              moveToPersonalSpace("downloaded");
-                              return;
-                            }
-                            if (cardState.primaryAction === "view-update") {
-                              setUpdateCandidate(installedSkill ?? skill);
-                              return;
-                            }
+                      <Button
+                        size="sm"
+                        variant={communityActionInstalled ? "outline" : "default"}
+                        disabled={
+                          communityActionInstalled ||
+                          installSkillHubSkill.isPending
+                        }
+                        onClick={() => {
+                          if (!communityActionInstalled) {
                             void handleInstall(skill);
-                          }}
-                        >
-                          {installSkillHubSkill.isPending &&
-                          cardState.primaryAction === "add-to-personal"
-                            ? t.settings.skills.installPending
-                            : primaryActionText}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={downloadForkPackage.isPending}
-                          onClick={() => setForkCandidate(skill)}
-                        >
-                          <GitForkIcon className="mr-1.5 h-4 w-4" />
-                          {t.settings.skills.createMyVersion}
-                        </Button>
-                      </div>
+                          }
+                        }}
+                      >
+                        {installSkillHubSkill.isPending &&
+                        !communityActionInstalled
+                          ? t.settings.skills.installPending
+                          : communityActionInstalled
+                            ? t.settings.skills.installed
+                            : t.settings.skills.installSkill}
+                      </Button>
                     ) : (
                       <div className="flex items-center gap-1">
                         {primaryActionText ? (
@@ -739,56 +671,6 @@ export function SkillsGallery() {
           </div>
         )}
       </div>
-
-      <Dialog
-        open={forkCandidate !== null}
-        onOpenChange={(open) => {
-          if (!open && !downloadForkPackage.isPending) {
-            setForkCandidate(null);
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t.settings.skills.forkDialogTitle}</DialogTitle>
-            <DialogDescription>
-              {t.settings.skills.forkDialogDescription}
-            </DialogDescription>
-          </DialogHeader>
-          {forkCandidate ? (
-            <div className="space-y-4 text-sm">
-              <div className="bg-muted/30 rounded-md border p-3">
-                <div className="font-medium">{forkCandidate.name}</div>
-                <div className="text-muted-foreground mt-1">
-                  {getSkillHubVersionDetail(forkCandidate)}
-                </div>
-              </div>
-              <div className="bg-muted/30 text-muted-foreground rounded-md border p-3">
-                {t.settings.skills.forkUploadBackNotice}
-              </div>
-            </div>
-          ) : null}
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={downloadForkPackage.isPending}
-              onClick={() => setForkCandidate(null)}
-            >
-              {t.common.cancel}
-            </Button>
-            <Button
-              type="button"
-              disabled={downloadForkPackage.isPending}
-              onClick={() => void handleForkDownloadConfirmed()}
-            >
-              {downloadForkPackage.isPending
-                ? t.settings.skills.forkDownloadPending
-                : t.settings.skills.confirmForkDownload}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog
         open={publishCandidate !== null}

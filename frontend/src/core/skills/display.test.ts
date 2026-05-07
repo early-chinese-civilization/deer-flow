@@ -389,7 +389,7 @@ void test("classifies authored Personal Space upload with version and publish st
   assert.equal(skillMatchesWorkspaceSegment(authored, "downloaded"), false);
 });
 
-void test("uses manage state for publisher's own Community listing", () => {
+void test("treats publisher's own Community listing as discovery-only", () => {
   const ownPublishedListing = skill({
     space: "community",
     source_kind: "community",
@@ -400,16 +400,16 @@ void test("uses manage state for publisher's own Community listing", () => {
 
   assert.deepEqual(getSkillWorkspaceCardState(ownPublishedListing), {
     role: "self-published-community",
-    primaryAction: "manage-published",
-    segments: ["all", "authored", "published"],
+    primaryAction: "none",
+    segments: ["all"],
   });
   assert.equal(
     getSkillWorkspaceCardState(ownPublishedListing).primaryAction,
-    "manage-published",
+    "none",
   );
 });
 
-void test("uses add-to-Personal-Space action for downloader Community rows", () => {
+void test("uses install action and System segment for Community discovery rows", () => {
   const officialCommunity = skill({
     space: "community",
     source_kind: "official",
@@ -430,13 +430,15 @@ void test("uses add-to-Personal-Space action for downloader Community rows", () 
   assert.deepEqual(getSkillWorkspaceCardState(officialCommunity), {
     role: "official-community",
     primaryAction: "add-to-personal",
-    segments: ["all"],
+    segments: ["all", "system"],
   });
   assert.deepEqual(getSkillWorkspaceCardState(userCommunity), {
     role: "community",
     primaryAction: "add-to-personal",
     segments: ["all"],
   });
+  assert.equal(skillMatchesWorkspaceSegment(officialCommunity, "system"), true);
+  assert.equal(skillMatchesWorkspaceSegment(userCommunity, "system"), false);
   assert.equal(getSkillHubLatestPlatformVersion(userCommunity), 3);
 });
 
@@ -497,10 +499,9 @@ void test("separates forked Personal Space rows from downloaded rows", () => {
   assert.deepEqual(getSkillWorkspaceCardState(forked), {
     role: "forked",
     primaryAction: "publish",
-    segments: ["all", "authored", "forks"],
+    segments: ["all", "authored"],
   });
   assert.equal(skillMatchesWorkspaceSegment(forked, "authored"), true);
-  assert.equal(skillMatchesWorkspaceSegment(forked, "forks"), true);
   assert.equal(skillMatchesWorkspaceSegment(forked, "downloaded"), false);
 });
 
@@ -655,7 +656,7 @@ void test("filters Community Space by first-class Skill name and author fields",
         state: {
           role: "official-community",
           primaryAction: "add-to-personal",
-          segments: ["all"],
+          segments: ["all", "system"],
         },
       },
       {
@@ -670,16 +671,16 @@ void test("filters Community Space by first-class Skill name and author fields",
         key: "definition:1102",
         state: {
           role: "community",
-          primaryAction: "view-personal",
-          segments: ["all", "downloaded"],
+          primaryAction: "none",
+          segments: ["all"],
         },
       },
       {
         key: "definition:1103",
         state: {
           role: "community",
-          primaryAction: "view-update",
-          segments: ["all", "downloaded", "updates"],
+          primaryAction: "none",
+          segments: ["all"],
         },
       },
       {
