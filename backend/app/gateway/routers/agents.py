@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.db.models import Agent, User
+from app.gateway.db.models import Agent, SkillDefinition, User
 from app.gateway.db.repository import AgentRepository, SkillInstallRepository, SkillReleaseRepository
 from app.gateway.deps import get_current_user, get_db
 from deerflow.config.paths import get_paths
@@ -104,13 +104,16 @@ def _active_skill_names(agent: Agent) -> list[str] | None:
     return names
 
 
-def _skill_source_for_agent(agent: Agent, definition_owner_user_id: int | None) -> tuple[Literal["skillhub", "my_skills", "unknown"], str]:
+def _skill_source_for_agent(agent: Agent, definition: SkillDefinition | None) -> tuple[Literal["skillhub", "my_skills", "unknown"], str]:
     """Return a display source without consulting public/latest rows."""
-    if definition_owner_user_id is None:
-        return "skillhub", "SkillHub"
-    if agent.user_id is not None and definition_owner_user_id == agent.user_id:
+    if definition is None:
+        return "unknown", "Unknown source"
+    if definition.owner_user_id is None:
+        return "skillhub", "Official"
+    if agent.user_id is not None and definition.owner_user_id == agent.user_id:
         return "my_skills", "My Skills"
-    return "skillhub", "SkillHub"
+    owner_display_name = definition.owner_user.display_name if definition.owner_user is not None else None
+    return "skillhub", owner_display_name or "SkillHub"
 
 
 def _active_skill_metadata(agent: Agent, *, latest_versions_by_definition_id: Mapping[int, int] | None = None) -> list[AgentSkillMetadataResponse] | None:
@@ -146,7 +149,7 @@ def _active_skill_metadata(agent: Agent, *, latest_versions_by_definition_id: Ma
         update_available = None
         if available and install is not None and latest_version_id is not None:
             update_available = latest_version_id != install.current_version_id
-        source, source_label = _skill_source_for_agent(agent, definition.owner_user_id) if definition is not None else ("unknown", "Unknown source")
+        source, source_label = _skill_source_for_agent(agent, definition)
 
         metadata.append(
             AgentSkillMetadataResponse(

@@ -168,6 +168,7 @@ export interface Translations {
     createSkillsLoading: string;
     skillSourceMySkills: string;
     skillSourceSkillHub: string;
+    skillSourceOfficial: string;
     skillSourceUnknown: string;
     skillVersionUnavailable: string;
     skillUpdateAvailable: string;

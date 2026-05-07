@@ -96,6 +96,24 @@ function collectSkillsCopy(skillsCopy: typeof enUS.settings.skills): string[] {
   ];
 }
 
+function collectAgentSkillCopy(agentsCopy: typeof enUS.agents): string[] {
+  return [
+    agentsCopy.createSkillsTitle,
+    agentsCopy.createSkillsHint,
+    agentsCopy.createSkillsEmpty,
+    agentsCopy.createSkillsLoading,
+    agentsCopy.skillSourceMySkills,
+    agentsCopy.skillSourceSkillHub,
+    agentsCopy.skillSourceOfficial,
+    agentsCopy.skillSourceUnknown,
+    agentsCopy.skillVersionUnavailable,
+    agentsCopy.skillUpdateAvailable,
+    agentsCopy.skillMetadataUnavailable,
+    agentsCopy.enabledSkillsLabel,
+    agentsCopy.noBoundSkills,
+  ];
+}
+
 void test("Skills locale copy uses SkillHub and install terminology", () => {
   assert.equal(enUS.settings.skills.communitySpaceTab, "Community Space");
   assert.equal(enUS.settings.skills.personalSpaceTab, "Personal Space");
@@ -159,6 +177,20 @@ void test("Skills workspace copy avoids forbidden internal terms", () => {
   );
   assert.doesNotMatch(
     collectSkillsCopy(zhCN.settings.skills).join(" "),
+    forbiddenTerms,
+  );
+});
+
+void test("Agent and chat Skill metadata copy avoids forbidden internal terms", () => {
+  const forbiddenTerms =
+    /package version|artifact|Runtime Manifest|skill_definition_id|skill_install_id|source namespace/i;
+
+  assert.doesNotMatch(
+    collectAgentSkillCopy(enUS.agents).join(" "),
+    forbiddenTerms,
+  );
+  assert.doesNotMatch(
+    collectAgentSkillCopy(zhCN.agents).join(" "),
     forbiddenTerms,
   );
 });
