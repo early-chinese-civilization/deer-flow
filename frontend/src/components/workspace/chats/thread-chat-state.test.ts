@@ -16,7 +16,9 @@ void test("resolves /new routes to a fresh draft thread state", () => {
 
 void test("resolves persisted routes to a persisted thread state", () => {
   const state = resolveThreadChatState("persisted-thread-id", () => {
-    throw new Error("draft id factory should not be called for persisted routes");
+    throw new Error(
+      "draft id factory should not be called for persisted routes",
+    );
   });
 
   assert.deepEqual(state, {

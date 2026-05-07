@@ -16,7 +16,10 @@ export const Suggestions = ({
   children,
   ...props
 }: SuggestionsProps) => (
-  <ScrollArea className="max-w-full overflow-x-auto whitespace-nowrap" {...props}>
+  <ScrollArea
+    className="max-w-full overflow-x-auto whitespace-nowrap"
+    {...props}
+  >
     <div className={cn("flex flex-nowrap items-center gap-2 px-4", className)}>
       {Children.map(children, (child, index) =>
         child != null ? (

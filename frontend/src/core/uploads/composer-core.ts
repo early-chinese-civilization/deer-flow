@@ -20,7 +20,9 @@ export type RetryableComposerUploadAttachment = ComposerUploadAttachment & {
 export function hasBlockingAttachmentUploads(
   attachments: ComposerUploadAttachment[],
 ): boolean {
-  return attachments.some((attachment) => attachment.uploadState !== "uploaded");
+  return attachments.some(
+    (attachment) => attachment.uploadState !== "uploaded",
+  );
 }
 
 export function buildMessageFilesFromAttachments(

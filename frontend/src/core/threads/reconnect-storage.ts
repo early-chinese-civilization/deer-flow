@@ -79,7 +79,9 @@ let sessionRunReconnectStorage: RunReconnectStorage | null = null;
 export function getRunReconnectStorage(): RunReconnectStorage {
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
   if (sessionRunReconnectStorage === null) {
-    sessionRunReconnectStorage = createRunReconnectStorage(window.sessionStorage);
+    sessionRunReconnectStorage = createRunReconnectStorage(
+      window.sessionStorage,
+    );
   }
   return sessionRunReconnectStorage;
 }

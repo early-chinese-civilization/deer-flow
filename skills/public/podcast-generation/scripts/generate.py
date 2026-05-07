@@ -5,7 +5,7 @@ import logging
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Literal, Optional
+from typing import Literal
 
 import requests
 
@@ -21,7 +21,7 @@ class ScriptLine:
 
 
 class Script:
-    def __init__(self, locale: Literal["en", "zh"] = "en", lines: Optional[list[ScriptLine]] = None):
+    def __init__(self, locale: Literal["en", "zh"] = "en", lines: list[ScriptLine] | None = None):
         self.locale = locale
         self.lines = lines or []
 
@@ -38,7 +38,7 @@ class Script:
         return script
 
 
-def text_to_speech(text: str, voice_type: str) -> Optional[bytes]:
+def text_to_speech(text: str, voice_type: str) -> bytes | None:
     """Convert text to speech using Volcengine TTS."""
     app_id = os.getenv("VOLCENGINE_TTS_APPID")
     access_token = os.getenv("VOLCENGINE_TTS_ACCESS_TOKEN")
@@ -99,7 +99,7 @@ def text_to_speech(text: str, voice_type: str) -> Optional[bytes]:
     return None
 
 
-def _process_line(args: tuple[int, ScriptLine, int]) -> tuple[int, Optional[bytes]]:
+def _process_line(args: tuple[int, ScriptLine, int]) -> tuple[int, bytes | None]:
     """Process a single script line for TTS. Returns (index, audio_bytes)."""
     i, line, total = args
 
@@ -137,7 +137,7 @@ def tts_node(script: Script, max_workers: int = 4) -> list[bytes]:
     tasks = [(i, line, total) for i, line in enumerate(script.lines)]
 
     # Use ThreadPoolExecutor for parallel TTS generation
-    results: dict[int, Optional[bytes]] = {}
+    results: dict[int, bytes | None] = {}
     failed_indices: list[int] = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(_process_line, task): task[0] for task in tasks}
@@ -204,12 +204,12 @@ def generate_markdown(script: Script, title: str = "Podcast Script") -> str:
 def generate_podcast(
     script_file: str,
     output_file: str,
-    transcript_file: Optional[str] = None,
+    transcript_file: str | None = None,
 ) -> str:
     """Generate a podcast from a script JSON file."""
 
     # Read script JSON
-    with open(script_file, "r", encoding="utf-8") as f:
+    with open(script_file, encoding="utf-8") as f:
         script_json = json.load(f)
 
     if "lines" not in script_json:

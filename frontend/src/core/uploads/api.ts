@@ -103,10 +103,7 @@ async function readErrorDetail(
   return error.detail ?? fallback;
 }
 
-function buildUploadsUrl(
-  workspaceId: string,
-  suffix = "",
-): string {
+function buildUploadsUrl(workspaceId: string, suffix = ""): string {
   return `${getBackendBaseURL()}/api/workspaces/${encodeURIComponent(workspaceId)}/uploads${suffix}`;
 }
 
@@ -180,7 +177,9 @@ export async function prepareUpload(
   });
 
   if (!response.ok) {
-    throw new Error(await readErrorDetail(response, "Failed to prepare upload"));
+    throw new Error(
+      await readErrorDetail(response, "Failed to prepare upload"),
+    );
   }
 
   return response.json();
@@ -206,7 +205,9 @@ export async function finalizeUpload(
   });
 
   if (!response.ok) {
-    throw new Error(await readErrorDetail(response, "Failed to finalize upload"));
+    throw new Error(
+      await readErrorDetail(response, "Failed to finalize upload"),
+    );
   }
 
   return response.json();

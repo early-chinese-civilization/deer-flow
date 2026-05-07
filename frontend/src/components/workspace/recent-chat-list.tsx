@@ -10,7 +10,12 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  useParams,
+  usePathname,
+  useRouter,
+  useSearchParams,
+} from "next/navigation";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 

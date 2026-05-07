@@ -30,8 +30,8 @@ export interface LogoutResponse {
  */
 export async function getCurrentUser(): Promise<User | null> {
   try {
-    const res = await fetch('/api/auth/me', {
-      credentials: 'include', // 重要：携带 cookie
+    const res = await fetch("/api/auth/me", {
+      credentials: "include", // 重要：携带 cookie
     });
 
     if (!res.ok) {
@@ -41,7 +41,7 @@ export async function getCurrentUser(): Promise<User | null> {
     const data: MeResponse = await res.json();
     return data.user;
   } catch (error) {
-    console.error('Failed to get current user:', error);
+    console.error("Failed to get current user:", error);
     return null;
   }
 }
@@ -53,21 +53,21 @@ export async function getCurrentUser(): Promise<User | null> {
  */
 export async function logout(): Promise<string> {
   try {
-    const res = await fetch('/api/auth/logout', {
-      method: 'POST',
-      credentials: 'include',
+    const res = await fetch("/api/auth/logout", {
+      method: "POST",
+      credentials: "include",
     });
 
     if (!res.ok) {
-      throw new Error('Logout failed');
+      throw new Error("Logout failed");
     }
 
     const data: LogoutResponse = await res.json();
     return data.logoutUrl;
   } catch (error) {
-    console.error('Logout failed:', error);
+    console.error("Logout failed:", error);
     // 返回默认登出 URL
-    return '/';
+    return "/";
   }
 }
 
@@ -78,14 +78,14 @@ export async function logout(): Promise<string> {
  */
 export async function refreshToken(): Promise<boolean> {
   try {
-    const res = await fetch('/api/auth/refresh', {
-      method: 'POST',
-      credentials: 'include',
+    const res = await fetch("/api/auth/refresh", {
+      method: "POST",
+      credentials: "include",
     });
 
     return res.ok;
   } catch (error) {
-    console.error('Token refresh failed:', error);
+    console.error("Token refresh failed:", error);
     return false;
   }
 }
@@ -98,9 +98,9 @@ export async function refreshToken(): Promise<boolean> {
 export function login(returnTo?: string) {
   const params = new URLSearchParams();
   if (returnTo) {
-    params.set('return_to', returnTo);
+    params.set("return_to", returnTo);
   }
 
-  const url = `/api/auth/login${params.toString() ? '?' + params.toString() : ''}`;
+  const url = `/api/auth/login${params.toString() ? "?" + params.toString() : ""}`;
   window.location.href = url;
 }

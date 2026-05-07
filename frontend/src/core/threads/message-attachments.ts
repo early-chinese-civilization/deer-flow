@@ -39,7 +39,11 @@ function findPendingHumanMessageIndex(
   messages: Message[],
   fromIndex: number,
 ): number {
-  for (let index = Math.max(0, fromIndex); index < messages.length; index += 1) {
+  for (
+    let index = Math.max(0, fromIndex);
+    index < messages.length;
+    index += 1
+  ) {
     if (messages[index]?.type === "human") {
       return index;
     }

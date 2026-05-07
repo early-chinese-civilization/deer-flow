@@ -38,7 +38,7 @@ export function DraftAgentControl({
           size="sm"
           variant="outline"
           disabled={disabled}
-          className="text-muted-foreground min-w-28 w-fit justify-between gap-2 rounded-full px-4 text-xs font-normal transition-colors hover:bg-accent hover:text-accent-foreground"
+          className="text-muted-foreground hover:bg-accent hover:text-accent-foreground w-fit min-w-28 justify-between gap-2 rounded-full px-4 text-xs font-normal transition-colors"
         >
           <BotIcon className="size-4" />
           <span className="truncate">{agentName ?? t.agents.noAgent}</span>

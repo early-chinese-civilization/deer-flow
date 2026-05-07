@@ -104,8 +104,7 @@ export function ArtifactFileDetail({
   }, [filepath, getArtifactSource, isWriteFile, threadId]);
   const { isMock } = useThread();
   const artifactViewUrl =
-    artifactSource?.viewUrl ??
-    urlOfArtifact({ filepath, threadId, isMock });
+    artifactSource?.viewUrl ?? urlOfArtifact({ filepath, threadId, isMock });
   const { content, url } = useArtifactContent({
     threadId,
     filepath: filepathFromProps,
@@ -241,10 +240,7 @@ export function ArtifactFileDetail({
           />
         )}
         {displayMode === "iframe-preview" && (
-          <iframe
-            className="size-full"
-            src={artifactViewUrl}
-          />
+          <iframe className="size-full" src={artifactViewUrl} />
         )}
         {displayMode === "unsupported-preview" && (
           <ArtifactUnsupportedPreview
@@ -256,15 +252,11 @@ export function ArtifactFileDetail({
   );
 }
 
-function ArtifactUnsupportedPreview({
-  fileType,
-}: {
-  fileType: string;
-}) {
+function ArtifactUnsupportedPreview({ fileType }: { fileType: string }) {
   const { t } = useI18n();
 
   return (
-    <Empty className="border-0 rounded-none">
+    <Empty className="rounded-none border-0">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <AlertCircleIcon />
