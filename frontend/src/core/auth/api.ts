@@ -27,23 +27,13 @@ type AuthErrorPayload = {
   detail?: unknown;
 };
 
+import { withBasePath } from "./base-path";
+
 const EXPECTED_UNAUTHENTICATED_DETAILS = new Set([
   'Not authenticated',
   'Session expired',
   'Logged out',
 ]);
-
-const BASE_PATH = (process.env.NEXT_PUBLIC_BASE_PATH ?? '').replace(
-  /\/+$/,
-  '',
-);
-
-function withBasePath(path: string): string {
-  if (!BASE_PATH || path === BASE_PATH || path.startsWith(`${BASE_PATH}/`)) {
-    return path;
-  }
-  return `${BASE_PATH}${path.startsWith('/') ? path : `/${path}`}`;
-}
 
 async function readAuthErrorDetail(response: Response): Promise<string> {
   const body = await response.text();

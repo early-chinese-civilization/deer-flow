@@ -1,19 +1,11 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
+import { withBasePath } from "@/core/auth/base-path";
 
 type LoginRedirectProps = {
   returnTo: string;
 };
-
-const BASE_PATH = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/+$/, "");
-
-function withBasePath(path: string) {
-  if (!BASE_PATH || path === BASE_PATH || path.startsWith(`${BASE_PATH}/`)) {
-    return path;
-  }
-  return `${BASE_PATH}${path.startsWith("/") ? path : `/${path}`}`;
-}
 
 export function LoginRedirect({ returnTo }: LoginRedirectProps) {
   const loginUrl = useMemo(() => {

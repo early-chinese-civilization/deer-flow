@@ -14,30 +14,8 @@
 #   DEER_FLOW_ROOT — project root on host
 #
 # Host openresty/nginx must proxy /deer-flow to http://127.0.0.1:18226
-
+name: ecc-deer-flow
 services:
-  # ── PostgreSQL Database ─────────────────────────────────────────────────
-  postgres:
-    image: postgres:${PG_VERSION:-16}-alpine
-    container_name: ecc-deerflow-postgres
-    environment:
-      - POSTGRES_USER=${PG_USER:-deerflow}
-      - POSTGRES_PASSWORD=${PG_PASSWORD:-123456}
-      - POSTGRES_DB=${PG_DB:-flow}
-    ports:
-      - "15432:5432"
-    volumes:
-      - server-pgdata:/var/lib/postgresql/data
-    networks:
-      - deer-flow-server
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-deerflow} -d ${PG_DB:-flow}"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-      start_period: 15s
-
   # ── Reverse Proxy ──────────────────────────────────────────────────────
   nginx:
     build:
@@ -71,7 +49,7 @@ services:
       args:
         PNPM_STORE_PATH: ${PNPM_STORE_PATH:-/root/.local/share/pnpm/store}
         NPM_REGISTRY: ${NPM_REGISTRY:-}
-        NEXT_PUBLIC_BASE_PATH: /deer-flow
+        NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-/deer-flow}
         NEXT_PUBLIC_BACKEND_BASE_URL: /deer-flow
         NEXT_PUBLIC_LANGGRAPH_BASE_URL: /deer-flow/api/langgraph
     container_name: ecc-deerflow-frontend
@@ -79,7 +57,7 @@ services:
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-}
       - DEER_FLOW_INTERNAL_GATEWAY_BASE_URL=http://gateway:8001
       - DEER_FLOW_INTERNAL_LANGGRAPH_BASE_URL=http://gateway:8001
-      - NEXT_PUBLIC_BASE_PATH=/deer-flow
+      - NEXT_PUBLIC_BASE_PATH=${NEXT_PUBLIC_BASE_PATH:-/deer-flow}
       - NEXT_PUBLIC_BACKEND_BASE_URL=/deer-flow
       - NEXT_PUBLIC_LANGGRAPH_BASE_URL=/deer-flow/api/langgraph
     env_file:
@@ -123,15 +101,15 @@ services:
     environment:
       - CI=true
       - DEER_FLOW_HOME=/app/backend/.deer-flow
-      - DEER_FLOW_PUBLIC_BASE_PATH=/deer-flow
+      - DEER_FLOW_PUBLIC_BASE_PATH=${DEER_FLOW_PUBLIC_BASE_PATH:-/deer-flow}
       - DEER_FLOW_CHANNELS_LANGGRAPH_URL=http://gateway:8001
       - DEER_FLOW_CHANNELS_GATEWAY_URL=http://gateway:8001
       - DEER_FLOW_HOST_BASE_DIR=${DEER_FLOW_ROOT}/backend/.deer-flow
       - DEER_FLOW_HOST_SHARED_FS_ROOT=${DEER_FLOW_ROOT}/backend/.deer-flow
       - DEER_FLOW_HOST_SKILLS_PATH=${DEER_FLOW_ROOT}/skills
       - DEER_FLOW_SANDBOX_HOST=host.docker.internal
-      - DATABASE_URL=postgresql://${PG_USER:-deerflow}:${PG_PASSWORD:-123456}@postgres:5432/${PG_DB:-flow}
-      - DEER_FLOW_CHECKPOINTER_DATABASE_URL=postgresql://${PG_USER:-deerflow}:${PG_PASSWORD:-123456}@postgres:5432/check_point
+      - DATABASE_URL=postgresql://${PG_USER}:${PG_PASSWORD}@${PG_HOST}:${PG_PORT:-5432}/${PG_DB}
+      - DEER_FLOW_CHECKPOINTER_DATABASE_URL=postgresql://${PGCP_USER}:${PGCP_PASSWORD}@${PG_HOST}:${PG_PORT:-5432}/${PGCP_DB}
     env_file:
       - ../.env
     extra_hosts:
@@ -145,9 +123,6 @@ services:
       timeout: 5s
       retries: 6
       start_period: 60s
-
-volumes:
-  server-pgdata:
 
 networks:
   deer-flow-server:

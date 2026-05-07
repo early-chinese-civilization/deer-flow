@@ -86,26 +86,7 @@ cmd_up() {
         set +a
     fi
 
-    # Start PostgreSQL first
-    log_step "Starting PostgreSQL..."
-    docker compose -f "$COMPOSE_FILE" up -d --build postgres
-
-    # Wait for PostgreSQL to be healthy
-    log_step "Waiting for PostgreSQL to be ready..."
-    for _ in $(seq 1 30); do
-        if docker compose -f "$COMPOSE_FILE" exec -T postgres pg_isready -U "${PG_USER:-deerflow}" -d "${PG_DB:-flow}" > /dev/null 2>&1; then
-            break
-        fi
-        sleep 2
-    done
-
-    # Create check_point database before gateway starts
-    log_step "Creating check_point database..."
-    docker compose -f "$COMPOSE_FILE" exec -T postgres \
-        psql -U "${PG_USER:-deerflow}" -d "${PG_DB:-flow}" \
-        -c "CREATE DATABASE check_point;" 2>/dev/null || log_warn "check_point DB may already exist"
-
-    # Build all images first (without starting services that depend on DB)
+    # Build all images first
     log_step "Building images..."
     docker compose -f "$COMPOSE_FILE" build
 
@@ -200,16 +181,11 @@ cmd_db_init() {
         set +a
     fi
 
-    # Create check_point database
-    log_step "Creating check_point database..."
-    docker compose -f "$COMPOSE_FILE" exec -T postgres \
-        psql -U "${PG_USER:-deerflow}" -d "${PG_DB:-flow}" \
-        -c "CREATE DATABASE check_point;" 2>/dev/null || log_warn "check_point DB may already exist"
-
     # Run migrations
     log_step "Running migrations..."
-    docker compose -f "$COMPOSE_FILE" exec -T gateway \
-        sh -c "cd /app/backend && uv run alembic upgrade head"
+    docker compose -f "$COMPOSE_FILE" run --rm \
+        -e CI=true \
+        gateway sh -c "cd /app/backend && uv run alembic upgrade head"
 
     log_info "Database initialization complete."
 }

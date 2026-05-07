@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { withBasePath } from "@/core/auth/base-path";
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const DEV_SYNTHETIC_MODES = new Set(["dev", "development", "local", "test"]);
-const BASE_PATH = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/+$/, "");
 
 function isTruthy(value: string | undefined) {
   return TRUE_VALUES.has((value ?? "").trim().toLowerCase());
@@ -13,13 +13,6 @@ function isDevSyntheticAuthEnabled() {
   const enabled = isTruthy(process.env.DEER_FLOW_DEV_SYNTHETIC_AUTH);
   const mode = process.env.DEER_FLOW_SERVER_MODE ?? process.env.NODE_ENV;
   return enabled && DEV_SYNTHETIC_MODES.has((mode ?? "").trim().toLowerCase());
-}
-
-function withBasePath(path: string) {
-  if (!BASE_PATH || path === BASE_PATH || path.startsWith(`${BASE_PATH}/`)) {
-    return path;
-  }
-  return `${BASE_PATH}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 export function middleware(request: NextRequest) {
