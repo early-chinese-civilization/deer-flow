@@ -98,6 +98,7 @@ make format     # Format code with ruff
 Alembic note:
 - `backend/alembic/versions/` is currently squashed to a single baseline revision for the Gateway-owned schema
 - Fresh databases should be initialized with `cd backend && uv run alembic upgrade head` before starting the Gateway
+- Gateway-owned `users`, `workspaces`, and `threads` include `deleted_at` soft-delete columns. Repository helpers and ownership checks must filter active rows, and delete flows should mark these business records deleted after external Store/checkpoint/local cleanup.
 
 Regression tests related to Docker/provisioner behavior:
 - `tests/test_docker_sandbox_mode_detection.py` (mode detection from `config.yaml`)
