@@ -10,6 +10,34 @@ export type SkillInstallState =
   | "installed"
   | "update-available";
 
+export type SkillWorkspaceSegment =
+  | "all"
+  | "downloaded"
+  | "authored"
+  | "published"
+  | "updates"
+  | "forks";
+
+export type SkillWorkspaceCardRole =
+  | "official-community"
+  | "community"
+  | "self-published-community"
+  | "downloaded"
+  | "authored"
+  | "authored-published"
+  | "authored-unpublished-changes"
+  | "forked";
+
+export type SkillWorkspacePrimaryAction =
+  | "add-to-personal"
+  | "view-personal"
+  | "view-update"
+  | "manage-published"
+  | "publish"
+  | "publish-update"
+  | "manage-owned"
+  | "none";
+
 const SKILL_SPACES = ["community", "personal"] as const;
 const SKILL_SOURCE_KINDS = [
   "official",
@@ -33,6 +61,12 @@ export interface SkillDisplayContract {
   sourceKind: SkillSourceKind;
   viewerRelation: SkillViewerRelation;
   identityKey: string;
+}
+
+export interface SkillWorkspaceCardState {
+  role: SkillWorkspaceCardRole;
+  primaryAction: SkillWorkspacePrimaryAction;
+  segments: SkillWorkspaceSegment[];
 }
 
 function isSkillSpace(value: unknown): value is SkillSpace {
@@ -157,6 +191,142 @@ export function isSelfAuthoredCommunitySkill(skill: Skill): boolean {
     display.space === "community" &&
     (display.viewerRelation === "authored_published" ||
       display.viewerRelation === "authored_unpublished_changes")
+  );
+}
+
+export function isDownloadedSkillRelation(skill: Skill): boolean {
+  const display = getSkillDisplayContract(skill);
+  return (
+    display.space === "personal" &&
+    (display.viewerRelation === "downloaded" ||
+      display.viewerRelation === "update_available")
+  );
+}
+
+export function getSkillWorkspaceCardState(
+  skill: Skill,
+  installedSkill: Skill | null = null,
+): SkillWorkspaceCardState {
+  const display = getSkillDisplayContract(skill);
+  const segments = new Set<SkillWorkspaceSegment>(["all"]);
+
+  if (display.space === "community") {
+    const installState = getSkillInstallState(skill, installedSkill);
+
+    if (isSelfAuthoredCommunitySkill(skill)) {
+      segments.add("authored");
+      segments.add("published");
+      if (display.viewerRelation === "authored_unpublished_changes") {
+        segments.add("updates");
+      }
+      return {
+        role: "self-published-community",
+        primaryAction: "manage-published",
+        segments: Array.from(segments),
+      };
+    }
+
+    if (installState === "update-available") {
+      segments.add("downloaded");
+      segments.add("updates");
+      return {
+        role:
+          display.sourceKind === "official"
+            ? "official-community"
+            : "community",
+        primaryAction: "view-update",
+        segments: Array.from(segments),
+      };
+    }
+
+    if (installState === "installed") {
+      segments.add("downloaded");
+      return {
+        role:
+          display.sourceKind === "official"
+            ? "official-community"
+            : "community",
+        primaryAction: "view-personal",
+        segments: Array.from(segments),
+      };
+    }
+
+    return {
+      role:
+        display.sourceKind === "official" ? "official-community" : "community",
+      primaryAction: "add-to-personal",
+      segments: Array.from(segments),
+    };
+  }
+
+  if (display.viewerRelation === "update_available") {
+    segments.add("downloaded");
+    segments.add("updates");
+    return {
+      role: "downloaded",
+      primaryAction: "view-update",
+      segments: Array.from(segments),
+    };
+  }
+
+  if (display.viewerRelation === "downloaded") {
+    segments.add("downloaded");
+    return {
+      role: "downloaded",
+      primaryAction: "none",
+      segments: Array.from(segments),
+    };
+  }
+
+  if (display.viewerRelation === "forked") {
+    segments.add("authored");
+    segments.add("forks");
+    return {
+      role: "forked",
+      primaryAction: "publish",
+      segments: Array.from(segments),
+    };
+  }
+
+  if (display.viewerRelation === "authored_unpublished_changes") {
+    segments.add("authored");
+    segments.add("published");
+    segments.add("updates");
+    return {
+      role: "authored-unpublished-changes",
+      primaryAction: "publish-update",
+      segments: Array.from(segments),
+    };
+  }
+
+  if (display.viewerRelation === "authored_published") {
+    segments.add("authored");
+    segments.add("published");
+    return {
+      role: "authored-published",
+      primaryAction: "manage-owned",
+      segments: Array.from(segments),
+    };
+  }
+
+  segments.add("authored");
+  return {
+    role: "authored",
+    primaryAction: "publish",
+    segments: Array.from(segments),
+  };
+}
+
+export function skillMatchesWorkspaceSegment(
+  skill: Skill,
+  segment: SkillWorkspaceSegment,
+  installedSkill: Skill | null = null,
+): boolean {
+  if (segment === "all") {
+    return true;
+  }
+  return getSkillWorkspaceCardState(skill, installedSkill).segments.includes(
+    segment,
   );
 }
 

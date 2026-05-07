@@ -13,8 +13,10 @@ const {
   getSkillHubLatestPlatformVersion,
   getSkillInstallState,
   getSkillPlatformVersion,
+  getSkillWorkspaceCardState,
   isAgentSkillBindingUnavailable,
   isSelfAuthoredCommunitySkill,
+  skillMatchesWorkspaceSegment,
 } = await import(new URL("./display.ts", import.meta.url).href);
 
 function skill(overrides: Partial<Skill>): Skill {
@@ -363,6 +365,167 @@ void test("detects self-authored Community listings from explicit relation", () 
     ),
     true,
   );
+});
+
+void test("classifies authored Personal Space upload with version and publish state", () => {
+  const authored = skill({
+    category: "custom",
+    space: "personal",
+    source_kind: "personal",
+    viewer_relation: "authored",
+    skill_install_id: 700,
+    skill_definition_id: 600,
+    platform_version: 1,
+  });
+
+  assert.equal(getSkillPlatformVersion(authored), 1);
+  assert.deepEqual(getSkillWorkspaceCardState(authored), {
+    role: "authored",
+    primaryAction: "publish",
+    segments: ["all", "authored"],
+  });
+  assert.equal(skillMatchesWorkspaceSegment(authored, "authored"), true);
+  assert.equal(skillMatchesWorkspaceSegment(authored, "downloaded"), false);
+});
+
+void test("uses manage state for publisher's own Community listing", () => {
+  const ownPublishedListing = skill({
+    space: "community",
+    source_kind: "community",
+    viewer_relation: "authored_published",
+    skill_definition_id: 701,
+    platform_version: 1,
+  });
+
+  assert.deepEqual(getSkillWorkspaceCardState(ownPublishedListing), {
+    role: "self-published-community",
+    primaryAction: "manage-published",
+    segments: ["all", "authored", "published"],
+  });
+  assert.equal(
+    getSkillWorkspaceCardState(ownPublishedListing).primaryAction,
+    "manage-published",
+  );
+});
+
+void test("uses add-to-Personal-Space action for downloader Community rows", () => {
+  const officialCommunity = skill({
+    space: "community",
+    source_kind: "official",
+    viewer_relation: "official_available",
+    owner_display_name: "official",
+    skill_definition_id: 801,
+    platform_version: 2,
+  });
+  const userCommunity = skill({
+    space: "community",
+    source_kind: "community",
+    viewer_relation: "community_available",
+    owner_display_name: "Demo Publisher",
+    skill_definition_id: 802,
+    platform_version: 3,
+  });
+
+  assert.deepEqual(getSkillWorkspaceCardState(officialCommunity), {
+    role: "official-community",
+    primaryAction: "add-to-personal",
+    segments: ["all"],
+  });
+  assert.deepEqual(getSkillWorkspaceCardState(userCommunity), {
+    role: "community",
+    primaryAction: "add-to-personal",
+    segments: ["all"],
+  });
+  assert.equal(getSkillHubLatestPlatformVersion(userCommunity), 3);
+});
+
+void test("shows downloaded Personal Space rows with version and update state", () => {
+  const currentDownloaded = skill({
+    category: "custom",
+    space: "personal",
+    source_kind: "community",
+    viewer_relation: "downloaded",
+    owner_display_name: "Demo Publisher",
+    skill_definition_id: 899,
+    skill_install_id: 898,
+    current_platform_version: 2,
+    latest_platform_version: 2,
+    update_available: false,
+  });
+  const downloaded = skill({
+    category: "custom",
+    space: "personal",
+    source_kind: "community",
+    viewer_relation: "update_available",
+    owner_display_name: "Demo Publisher",
+    skill_definition_id: 900,
+    skill_install_id: 901,
+    current_platform_version: 1,
+    latest_platform_version: 2,
+    update_available: true,
+  });
+
+  assert.equal(getSkillPlatformVersion(currentDownloaded), 2);
+  assert.deepEqual(getSkillWorkspaceCardState(currentDownloaded), {
+    role: "downloaded",
+    primaryAction: "none",
+    segments: ["all", "downloaded"],
+  });
+  assert.equal(getSkillPlatformVersion(downloaded), 1);
+  assert.deepEqual(getSkillWorkspaceCardState(downloaded), {
+    role: "downloaded",
+    primaryAction: "view-update",
+    segments: ["all", "downloaded", "updates"],
+  });
+  assert.equal(skillMatchesWorkspaceSegment(downloaded, "downloaded"), true);
+  assert.equal(skillMatchesWorkspaceSegment(downloaded, "updates"), true);
+});
+
+void test("separates forked Personal Space rows from downloaded rows", () => {
+  const forked = skill({
+    category: "custom",
+    space: "personal",
+    source_kind: "fork",
+    viewer_relation: "forked",
+    owner_display_name: "Original Publisher",
+    skill_definition_id: 902,
+    skill_install_id: 903,
+    current_platform_version: 1,
+  });
+
+  assert.deepEqual(getSkillWorkspaceCardState(forked), {
+    role: "forked",
+    primaryAction: "publish",
+    segments: ["all", "authored", "forks"],
+  });
+  assert.equal(skillMatchesWorkspaceSegment(forked, "authored"), true);
+  assert.equal(skillMatchesWorkspaceSegment(forked, "forks"), true);
+  assert.equal(skillMatchesWorkspaceSegment(forked, "downloaded"), false);
+});
+
+void test("keeps same-name Community cards distinguishable without user-facing IDs", () => {
+  const alice = skill({
+    name: "same-skill",
+    space: "community",
+    source_kind: "community",
+    viewer_relation: "community_available",
+    owner_display_name: "Alice",
+    skill_definition_id: 1000,
+  });
+  const bob = skill({
+    name: "same-skill",
+    space: "community",
+    source_kind: "community",
+    viewer_relation: "community_available",
+    owner_display_name: "Bob",
+    skill_definition_id: 1001,
+  });
+
+  assert.notEqual(getSkillIdentityKey(alice), getSkillIdentityKey(bob));
+  assert.equal(alice.owner_display_name, "Alice");
+  assert.equal(bob.owner_display_name, "Bob");
+  assert.equal(getSkillIdentityKey(alice).startsWith("definition:"), true);
+  assert.equal(getSkillIdentityKey(bob).startsWith("definition:"), true);
 });
 
 void test("reports not-installed when no install identity or version exists", () => {

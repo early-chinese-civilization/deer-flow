@@ -48,15 +48,23 @@ import {
   getSkillHubLatestPlatformVersion,
   getSkillInstallState,
   getSkillPlatformVersion,
+  getSkillWorkspaceCardState,
   isAuthoredSkillRelation,
   isCommunitySkill,
   isPersonalSkill,
-  isSelfAuthoredCommunitySkill,
+  skillMatchesWorkspaceSegment,
   type SkillInstallState,
+  type SkillWorkspacePrimaryAction,
+  type SkillWorkspaceSegment,
 } from "@/core/skills/display";
 import type { Skill } from "@/core/skills/type";
 
-type SkillsSurface = "skillhub" | "my-skills";
+type SkillsSurface = "community" | "personal";
+
+const SKILL_SURFACE_SEGMENTS: Record<SkillsSurface, SkillWorkspaceSegment[]> = {
+  community: ["all", "downloaded", "published", "updates"],
+  personal: ["all", "downloaded", "authored", "published", "updates", "forks"],
+};
 
 export function SkillsGallery() {
   const { t } = useI18n();
@@ -67,7 +75,8 @@ export function SkillsGallery() {
   const publishSkill = usePublishSkill();
   const uploadSkills = useUploadSkills();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [filter, setFilter] = useState<SkillsSurface>("skillhub");
+  const [surface, setSurface] = useState<SkillsSurface>("community");
+  const [segment, setSegment] = useState<SkillWorkspaceSegment>("all");
   const [publishCandidate, setPublishCandidate] = useState<Skill | null>(null);
   const [updateCandidate, setUpdateCandidate] = useState<Skill | null>(null);
   const [releaseNotes, setReleaseNotes] = useState("");
@@ -82,9 +91,16 @@ export function SkillsGallery() {
     },
   );
 
-  const filteredSkills = skills.filter((skill) =>
-    filter === "skillhub" ? isCommunitySkill(skill) : isPersonalSkill(skill),
-  );
+  const filteredSkills = skills.filter((skill) => {
+    const installedSkill = findInstalledSkillForSkillHubItem(skill, skills);
+    const inSurface =
+      surface === "community"
+        ? isCommunitySkill(skill)
+        : isPersonalSkill(skill);
+    return (
+      inSurface && skillMatchesWorkspaceSegment(skill, segment, installedSkill)
+    );
+  });
 
   function getVersionText(version: number | null) {
     if (version != null) {
@@ -127,6 +143,13 @@ export function SkillsGallery() {
     if (display.sourceKind === "official") {
       return t.settings.skills.officialSource;
     }
+    if (
+      display.space === "community" &&
+      (display.viewerRelation === "authored_published" ||
+        display.viewerRelation === "authored_unpublished_changes")
+    ) {
+      return t.settings.skills.publishedByYou;
+    }
     if (display.space === "community") {
       return skill.owner_display_name
         ? t.settings.skills.communitySource(skill.owner_display_name)
@@ -138,19 +161,92 @@ export function SkillsGallery() {
       display.viewerRelation === "downloaded" ||
       display.viewerRelation === "update_available"
     ) {
-      return t.settings.skills.installedSource;
+      return t.settings.skills.downloadedSource(
+        skill.owner_display_name ?? t.settings.skills.communitySpaceSource,
+      );
+    }
+    if (display.viewerRelation === "forked") {
+      return skill.owner_display_name
+        ? t.settings.skills.forkedSource(skill.owner_display_name)
+        : t.settings.skills.forkedSkill;
     }
     return t.settings.skills.createdSource;
   }
 
-  function getInstallStateText(state: SkillInstallState) {
-    if (state === "update-available") {
+  function getSegmentText(value: SkillWorkspaceSegment) {
+    switch (value) {
+      case "downloaded":
+        return t.settings.skills.downloadedSegment;
+      case "authored":
+        return t.settings.skills.authoredSegment;
+      case "published":
+        return t.settings.skills.publishedSegment;
+      case "updates":
+        return t.settings.skills.updatesSegment;
+      case "forks":
+        return t.settings.skills.forksSegment;
+      case "all":
+        return t.settings.skills.allSegment;
+    }
+  }
+
+  function getWorkspaceStatusText(
+    skill: Skill,
+    action: SkillWorkspacePrimaryAction,
+    installState: SkillInstallState,
+  ) {
+    const display = getSkillDisplayContract(skill);
+    if (
+      display.viewerRelation === "authored_unpublished_changes" ||
+      action === "publish-update"
+    ) {
+      return t.settings.skills.unpublishedChanges;
+    }
+    if (
+      display.viewerRelation === "authored_published" ||
+      action === "manage-published" ||
+      action === "manage-owned"
+    ) {
+      return t.settings.skills.published;
+    }
+    if (display.viewerRelation === "forked") {
+      return t.settings.skills.forkedSkill;
+    }
+    if (display.space === "personal" && display.viewerRelation === "authored") {
+      return t.settings.skills.mySkill;
+    }
+    if (action === "view-update" || installState === "update-available") {
       return t.settings.skills.updateAvailable;
     }
-    if (state === "installed") {
-      return t.settings.skills.installed;
+    if (action === "view-personal" || display.viewerRelation === "downloaded") {
+      return t.settings.skills.downloadedToPersonal;
     }
-    return t.settings.skills.notInstalled;
+    return t.settings.skills.availableInCommunity;
+  }
+
+  function getPrimaryActionText(action: SkillWorkspacePrimaryAction) {
+    switch (action) {
+      case "add-to-personal":
+        return t.settings.skills.addToPersonalSpace;
+      case "view-personal":
+        return t.settings.skills.viewInPersonalSpace;
+      case "view-update":
+        return t.settings.skills.viewUpdate;
+      case "manage-published":
+      case "manage-owned":
+        return t.settings.skills.managePublished;
+      case "publish":
+        return t.settings.skills.publishSkill;
+      case "publish-update":
+        return t.settings.skills.publishUpdate;
+      case "none":
+        return null;
+    }
+  }
+
+  function moveToPersonalSpace(nextSegment: SkillWorkspaceSegment) {
+    setSurface("personal");
+    setSegment(nextSegment);
   }
 
   function getAffectedAgentsText(agentNames: string[]) {
@@ -224,9 +320,7 @@ export function SkillsGallery() {
       setUpdateCandidate(null);
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : t.settings.skills.updateError,
+        error instanceof Error ? error.message : t.settings.skills.updateError,
       );
     }
   }
@@ -341,16 +435,35 @@ export function SkillsGallery() {
       <div className="flex-1 overflow-y-auto p-6">
         <div className="mb-4 flex gap-2">
           <Tabs
-            defaultValue="skillhub"
-            onValueChange={(value) => setFilter(value as SkillsSurface)}
+            value={surface}
+            onValueChange={(value) => {
+              setSurface(value as SkillsSurface);
+              setSegment("all");
+            }}
           >
             <TabsList variant="line">
-              <TabsTrigger value="skillhub">
-                {t.settings.skills.skillHubTab}
+              <TabsTrigger value="community">
+                {t.settings.skills.communitySpaceTab}
               </TabsTrigger>
-              <TabsTrigger value="my-skills">
-                {t.settings.skills.mySkillsTab}
+              <TabsTrigger value="personal">
+                {t.settings.skills.personalSpaceTab}
               </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+        <div className="mb-5 flex gap-2">
+          <Tabs
+            value={segment}
+            onValueChange={(value) =>
+              setSegment(value as SkillWorkspaceSegment)
+            }
+          >
+            <TabsList variant="line">
+              {SKILL_SURFACE_SEGMENTS[surface].map((value) => (
+                <TabsTrigger key={value} value={value}>
+                  {getSegmentText(value)}
+                </TabsTrigger>
+              ))}
             </TabsList>
           </Tabs>
         </div>
@@ -363,7 +476,7 @@ export function SkillsGallery() {
           <div className="text-destructive text-sm">{error.message}</div>
         ) : filteredSkills.length === 0 ? (
           <div className="text-muted-foreground text-sm">
-            {filter === "skillhub"
+            {surface === "community"
               ? t.settings.skills.noSkillHubSkills
               : t.settings.skills.noMySkills}
           </div>
@@ -376,18 +489,18 @@ export function SkillsGallery() {
                 skills,
               );
               const installState = getSkillInstallState(skill, installedSkill);
-              const isSelfAuthoredCommunity =
-                isSelfAuthoredCommunitySkill(skill);
+              const cardState = getSkillWorkspaceCardState(
+                skill,
+                installedSkill,
+              );
               const canPublishSkill = isAuthoredSkillRelation(skill);
               const platformVersion =
                 display.space === "community"
                   ? getSkillHubLatestPlatformVersion(skill)
                   : getSkillPlatformVersion(skill);
-              const isInstallDisabled =
-                isSelfAuthoredCommunity ||
-                (installState !== "not-installed" &&
-                  installState !== "update-available") ||
-                installSkillHubSkill.isPending;
+              const primaryActionText = getPrimaryActionText(
+                cardState.primaryAction,
+              );
 
               return (
                 <Item
@@ -412,15 +525,11 @@ export function SkillsGallery() {
                             : "outline"
                         }
                       >
-                        {display.space === "community"
-                          ? isSelfAuthoredCommunity
-                            ? t.settings.skills.published
-                            : getInstallStateText(installState)
-                          : installState === "update-available"
-                            ? t.settings.skills.updateAvailable
-                            : display.viewerRelation === "authored_published"
-                              ? t.settings.skills.published
-                              : t.settings.skills.unpublished}
+                        {getWorkspaceStatusText(
+                          skill,
+                          cardState.primaryAction,
+                          installState,
+                        )}
                       </Badge>
                     </div>
                     <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
@@ -440,70 +549,108 @@ export function SkillsGallery() {
                       <Button
                         size="sm"
                         variant={
-                          installState === "not-installed"
+                          cardState.primaryAction === "add-to-personal"
                             ? "default"
                             : "outline"
                         }
-                        disabled={isInstallDisabled}
+                        disabled={
+                          installSkillHubSkill.isPending &&
+                          cardState.primaryAction === "add-to-personal"
+                        }
                         onClick={() => {
-                          if (isSelfAuthoredCommunity) {
+                          if (cardState.primaryAction === "manage-published") {
+                            moveToPersonalSpace("published");
                             return;
                           }
-                          if (installState === "update-available") {
+                          if (cardState.primaryAction === "view-personal") {
+                            moveToPersonalSpace("downloaded");
+                            return;
+                          }
+                          if (cardState.primaryAction === "view-update") {
                             setUpdateCandidate(installedSkill ?? skill);
                             return;
                           }
                           void handleInstall(skill);
                         }}
                       >
-                        {installSkillHubSkill.isPending
+                        {installSkillHubSkill.isPending &&
+                        cardState.primaryAction === "add-to-personal"
                           ? t.settings.skills.installPending
-                          : isSelfAuthoredCommunity
-                            ? t.settings.skills.published
-                            : installState === "not-installed"
-                            ? t.settings.skills.installSkill
-                            : getInstallStateText(installState)}
+                          : primaryActionText}
                       </Button>
                     ) : (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
+                      <div className="flex items-center gap-1">
+                        {primaryActionText ? (
                           <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                          >
-                            <MoreVerticalIcon className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onSelect={() => {
-                              void handleDelete(skill);
-                            }}
-                          >
-                            {t.common.delete}
-                          </DropdownMenuItem>
-                          {installState === "update-available" ? (
-                            <DropdownMenuItem
-                              onSelect={() => {
+                            size="sm"
+                            disabled={
+                              cardState.primaryAction === "manage-owned"
+                            }
+                            variant={
+                              cardState.primaryAction === "publish" ||
+                              cardState.primaryAction === "publish-update"
+                                ? "default"
+                                : "outline"
+                            }
+                            onClick={() => {
+                              if (cardState.primaryAction === "view-update") {
                                 setUpdateCandidate(skill);
-                              }}
-                            >
-                              {t.settings.skills.viewUpdate}
-                            </DropdownMenuItem>
-                          ) : null}
-                          {canPublishSkill ? (
-                            <DropdownMenuItem
-                              onSelect={() => {
+                                return;
+                              }
+                              if (
+                                cardState.primaryAction === "publish" ||
+                                cardState.primaryAction === "publish-update"
+                              ) {
                                 setReleaseNotes("");
                                 setPublishCandidate(skill);
+                              }
+                            }}
+                          >
+                            {primaryActionText}
+                          </Button>
+                        ) : null}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                            >
+                              <MoreVerticalIcon className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onSelect={() => {
+                                void handleDelete(skill);
                               }}
                             >
-                              {t.settings.skills.publishSkill}
+                              {t.common.delete}
                             </DropdownMenuItem>
-                          ) : null}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                            {installState === "update-available" ? (
+                              <DropdownMenuItem
+                                onSelect={() => {
+                                  setUpdateCandidate(skill);
+                                }}
+                              >
+                                {t.settings.skills.viewUpdate}
+                              </DropdownMenuItem>
+                            ) : null}
+                            {canPublishSkill ? (
+                              <DropdownMenuItem
+                                onSelect={() => {
+                                  setReleaseNotes("");
+                                  setPublishCandidate(skill);
+                                }}
+                              >
+                                {cardState.primaryAction === "publish-update"
+                                  ? t.settings.skills.publishUpdate
+                                  : t.settings.skills.publishSkill}
+                              </DropdownMenuItem>
+                            ) : null}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     )}
                   </ItemActions>
                 </Item>
