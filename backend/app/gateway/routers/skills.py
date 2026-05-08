@@ -26,6 +26,7 @@ from app.gateway.db.repository import (
     SkillReleaseRepository,
     SkillRepository,
     SkillVersionRepository,
+    is_system_skill_definition,
 )
 from app.gateway.deps import get_current_user, get_db
 from app.gateway.path_utils import resolve_thread_virtual_path
@@ -46,9 +47,10 @@ router = APIRouter(prefix="/api", tags=["skills"])
 
 ALLOWED_SKILL_FRONTMATTER_KEYS = ALLOWED_FRONTMATTER_PROPERTIES
 
-SkillSpace = Literal["community", "personal"]
+SkillSpace = Literal["system", "community", "personal"]
 SkillSourceKind = Literal["official", "community", "personal", "fork"]
 SkillViewerRelation = Literal[
+    "system_available",
     "official_available",
     "community_available",
     "downloaded",
@@ -142,7 +144,7 @@ def _display_name_for_source_version(version: SkillVersion | None) -> str | None
 
 def _is_official_skill_source(skill: Skill, definition: SkillDefinition | None) -> bool:
     if definition is not None:
-        return definition.source_type == "legacy" and definition.source_identifier == "legacy"
+        return is_system_skill_definition(definition)
     return skill.user_id is None and skill.owner_user_id is None
 
 
@@ -184,6 +186,9 @@ def _derive_skill_viewer_relation(
 ) -> SkillViewerRelation:
     if source_kind == "fork":
         return "forked"
+
+    if space == "system":
+        return "system_available"
 
     if space == "community":
         if authored_by_current_user:
@@ -392,7 +397,7 @@ def _skill_to_response(
     current_platform_version = skill_install.current_version.version_number if skill_install is not None and skill_install.current_version is not None else None
     installed_platform_version = skill_install.installed_version.version_number if skill_install is not None and skill_install.installed_version is not None else current_platform_version
     latest_platform_version = latest_skill_version.version_number if latest_skill_version is not None else None
-    space: SkillSpace = "community" if skill.user_id is None else "personal"
+    base_space: SkillSpace = "community" if skill.user_id is None else "personal"
     authored_by_current_user = _is_authored_by_current_user(skill, definition, current_user_id)
     update_available = None
     if skill_install is not None and latest_skill_version is not None and not authored_by_current_user:
@@ -400,9 +405,15 @@ def _skill_to_response(
     source_kind = _derive_skill_source_kind(
         skill=skill,
         definition=definition,
-        space=space,
+        space=base_space,
         authored_by_current_user=authored_by_current_user,
     )
+    space: SkillSpace = "system" if source_kind == "official" else base_space
+    if source_kind == "official":
+        skill_install = None
+        current_platform_version = None
+        installed_platform_version = None
+        update_available = None
     viewer_relation = _derive_skill_viewer_relation(
         space=space,
         source_kind=source_kind,
@@ -1263,6 +1274,17 @@ def _source_kind_for_public_skill(source_skill: Skill, source_version: SkillVers
     return "community"
 
 
+def _reject_system_skill_action(source_skill: Skill, source_version: SkillVersion, *, action: str) -> None:
+    """Reject install/export actions that do not apply to directly usable System Skills."""
+    if _source_kind_for_public_skill(source_skill, source_version) != "official":
+        return
+    if action == "install":
+        raise HTTPException(status_code=400, detail="System Skills are directly usable and cannot be installed to My Skills")
+    if action == "download":
+        raise HTTPException(status_code=400, detail="System Skills cannot be downloaded as editable packages")
+    raise HTTPException(status_code=400, detail="System Skill action is not supported")
+
+
 def _build_fork_claim_metadata(
     *,
     claim: PendingSkillForkClaim,
@@ -1592,6 +1614,7 @@ async def download_skill_fork_package(
         source_version = source_release.skill_version if source_release is not None else None
         if source_version is None or source_version.definition is None:
             raise HTTPException(status_code=404, detail=f"Published version for skill '{skill_name}' not found")
+        _reject_system_skill_action(source_skill, source_version, action="download")
         if not _is_skill_version_artifact_available(source_version):
             raise HTTPException(status_code=409, detail=f"Published version for skill '{skill_name}' is unavailable")
 
@@ -1671,6 +1694,8 @@ async def check_skill_download(
 
         source_release = await SkillReleaseRepository.get_latest_release_for_public_skill(db, published_skill_id=source_skill.id) if source_skill.id is not None else None
         version = source_release.skill_version if source_release is not None else None
+        if version is not None:
+            _reject_system_skill_action(source_skill, version, action="install")
         existing_install = (
             await SkillInstallRepository.get_by_user_and_definition(
                 db,
@@ -1730,6 +1755,7 @@ async def download_skill(
         version = source_release.skill_version if source_release is not None else None
         if version is None or version.definition is None:
             raise HTTPException(status_code=404, detail=f"Published version for skill '{skill_name}' not found")
+        _reject_system_skill_action(source_skill, version, action="install")
 
         existing_install = await SkillInstallRepository.get_by_user_and_definition(
             db,

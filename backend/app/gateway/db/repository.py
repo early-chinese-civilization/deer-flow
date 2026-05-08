@@ -43,7 +43,11 @@ class RuntimeSkillDescriptor:
     virtual_path: str
     skill_definition_id: int
     skill_version_id: int
-    skill_install_id: int
+    skill_install_id: int | None
+    system_skill_definition_id: int | None
+    system_skill_version_id: int | None
+    source_kind: str
+    binding_kind: str
     version_number: int
     content_hash: str
     file_manifest_hash: str
@@ -73,6 +77,11 @@ def build_skill_definition_source(owner_user_id: int | None) -> tuple[str, str]:
     if owner_user_id is None:
         return "legacy", "legacy"
     return "user", str(owner_user_id)
+
+
+def is_system_skill_definition(definition: SkillDefinition | None) -> bool:
+    """Return whether a definition represents a platform-provided System Skill."""
+    return definition is not None and definition.source_type == "legacy" and definition.source_identifier == "legacy"
 
 
 def _as_optional_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
@@ -404,6 +413,8 @@ class AgentRepository:
             selectinload(Agent.agent_skills).selectinload(AgentSkill.skill),
             selectinload(Agent.agent_skills).selectinload(AgentSkill.skill_install).selectinload(SkillInstall.definition).selectinload(SkillDefinition.owner_user),
             selectinload(Agent.agent_skills).selectinload(AgentSkill.skill_install).selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
+            selectinload(Agent.agent_skills).selectinload(AgentSkill.system_skill_definition).selectinload(SkillDefinition.owner_user),
+            selectinload(Agent.agent_skills).selectinload(AgentSkill.system_skill_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
         )
 
     @staticmethod
@@ -475,6 +486,41 @@ class AgentRepository:
             skill_definition_id=definition.id,
             skill_version_id=version.id,
             skill_install_id=install.id,
+            system_skill_definition_id=None,
+            system_skill_version_id=None,
+            source_kind="install",
+            binding_kind="install",
+            version_number=version.version_number,
+            content_hash=version.content_hash,
+            file_manifest_hash=version.file_manifest_hash,
+            artifact_uri=version.artifact_uri,
+            source_package_version=version.source_package_version,
+        )
+
+    @staticmethod
+    def _build_runtime_system_skill_descriptor(version: SkillVersion, explicit_definition: SkillDefinition | None = None) -> RuntimeSkillDescriptor:
+        """Project a direct system SkillVersion binding into runtime manifest metadata."""
+        definition = explicit_definition or version.definition
+        if definition is None:
+            raise RuntimeManifestResolutionError(f"System skill version {version.id} has no definition")
+        if version.skill_definition_id != definition.id:
+            raise RuntimeManifestResolutionError(f"System skill version {version.id} points to another definition")
+        if not is_system_skill_definition(definition):
+            raise RuntimeManifestResolutionError(f"Skill definition {definition.id} is not a system skill")
+        file_path = version.artifact_uri
+        _ensure_artifact_integrity(file_path, skill_name=definition.name, expected_file_manifest_hash=version.file_manifest_hash)
+        return RuntimeSkillDescriptor(
+            name=definition.name,
+            description=version.description or definition.description or "",
+            file_path=file_path,
+            virtual_path=build_skill_virtual_path(definition.name, container_base_path=_get_skills_container_path(), identity_suffix=f"system-{definition.id}-version-{version.id}"),
+            skill_definition_id=definition.id,
+            skill_version_id=version.id,
+            skill_install_id=None,
+            system_skill_definition_id=definition.id,
+            system_skill_version_id=version.id,
+            source_kind="system",
+            binding_kind="system",
             version_number=version.version_number,
             content_hash=version.content_hash,
             file_manifest_hash=version.file_manifest_hash,
@@ -489,9 +535,18 @@ class AgentRepository:
         active_associations.sort(key=lambda association: (association.display_order, association.id))
         descriptors: list[RuntimeSkillDescriptor] = []
         for association in active_associations:
-            if association.skill_install is None or association.skill_install.deleted_at is not None:
+            if association.skill_install is not None:
+                if association.skill_install.deleted_at is not None:
+                    raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
+                descriptors.append(AgentRepository._build_runtime_skill_descriptor(association.skill_install))
+                continue
+            if association.system_skill_version is not None:
+                descriptors.append(AgentRepository._build_runtime_system_skill_descriptor(association.system_skill_version, association.system_skill_definition))
+                continue
+            if association.system_skill_version_id is not None:
+                raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a system skill binding without an active version")
+            else:
                 raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
-            descriptors.append(AgentRepository._build_runtime_skill_descriptor(association.skill_install))
         return descriptors
 
     @staticmethod
@@ -512,6 +567,10 @@ class AgentRepository:
                 "skill_definition_id": skill.skill_definition_id,
                 "skill_version_id": skill.skill_version_id,
                 "skill_install_id": skill.skill_install_id,
+                "system_skill_definition_id": skill.system_skill_definition_id,
+                "system_skill_version_id": skill.system_skill_version_id,
+                "source_kind": skill.source_kind,
+                "binding_kind": skill.binding_kind,
                 "version_number": skill.version_number,
                 "content_hash": skill.content_hash,
                 "file_manifest_hash": skill.file_manifest_hash,
@@ -623,6 +682,7 @@ class AgentRepository:
         agent: Agent,
         skill_ids: list[int],
         skill_install_ids: list[int] | None = None,
+        system_skill_version_ids: list[int] | None = None,
         commit: bool = True,
     ) -> Agent:
         """Replace the agent's active skill associations with the provided skills."""
@@ -638,6 +698,7 @@ class AgentRepository:
         install_ids = skill_install_ids if skill_install_ids is not None else []
         if skill_install_ids is None:
             install_ids = []
+        system_version_ids = system_skill_version_ids if system_skill_version_ids is not None else []
 
         for display_order, skill_id in enumerate(skill_ids):
             association = AgentSkill(
@@ -648,7 +709,8 @@ class AgentRepository:
             )
             db.add(association)
 
-        for display_order, install_id in enumerate(install_ids):
+        display_order = 0
+        for install_id in install_ids:
             association = AgentSkill(
                 agent_id=reloaded_agent.id,
                 skill_id=None,
@@ -657,6 +719,23 @@ class AgentRepository:
                 enabled=True,
             )
             db.add(association)
+            display_order += 1
+
+        for system_version_id in system_version_ids:
+            version = await SkillVersionRepository.get_by_id(db, skill_version_id=system_version_id)
+            if version is None or version.definition is None or not is_system_skill_definition(version.definition):
+                raise ValueError(f"System skill version {system_version_id} is not available")
+            association = AgentSkill(
+                agent_id=reloaded_agent.id,
+                skill_id=None,
+                skill_install_id=None,
+                system_skill_definition_id=version.skill_definition_id,
+                system_skill_version_id=version.id,
+                display_order=display_order,
+                enabled=True,
+            )
+            db.add(association)
+            display_order += 1
 
         reloaded_agent.updated_at = now
         await db.flush()

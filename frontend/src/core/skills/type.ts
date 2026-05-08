@@ -1,6 +1,7 @@
-export type SkillSpace = "community" | "personal";
+export type SkillSpace = "system" | "community" | "personal";
 export type SkillSourceKind = "official" | "community" | "personal" | "fork";
 export type SkillViewerRelation =
+  | "system_available"
   | "official_available"
   | "community_available"
   | "downloaded"

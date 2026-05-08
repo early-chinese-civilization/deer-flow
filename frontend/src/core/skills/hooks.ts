@@ -91,8 +91,6 @@ export function useInstallSkillHubSkill() {
   });
 }
 
-export const useDownloadSkill = useInstallSkillHubSkill;
-
 export function useDownloadSkillForkPackage() {
   return useMutation({
     mutationFn: async ({

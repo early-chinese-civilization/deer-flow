@@ -514,12 +514,13 @@ export const enUS: Translations = {
         `Published by ${ownerDisplayName}`,
       skillHubTab: "SkillHub",
       mySkillsTab: "My Skills",
+      systemSpaceTab: "System Skills",
       communitySpaceTab: "Community Skills",
       personalSpaceTab: "My Skills",
       communitySearchPlaceholder: "Search Community Skills by name or author",
       allSegment: "All",
       systemSegment: "System",
-      downloadedSegment: "Added",
+      installedSegment: "Installed",
       authoredSegment: "Created by me",
       publishedSegment: "Published",
       updatesSegment: "Updates",
@@ -537,17 +538,18 @@ export const enUS: Translations = {
       notInstalled: "Not installed",
       updateAvailable: "Update available",
       availableInCommunity: "Available to install",
-      downloadedToPersonal: "Added",
+      installedToPersonal: "Installed",
       published: "Published",
       unpublished: "Not published",
       unpublishedChanges: "Unpublished changes",
       mySkill: "My Skill",
+      systemDirectUse: "Directly usable",
       publishedByYou: "Published by you",
       forkedSkill: "My Skill",
       officialSource: "System",
       communitySpaceSource: "Community",
       communitySource: (ownerDisplayName: string) => `By ${ownerDisplayName}`,
-      downloadedSource: (ownerDisplayName: string) =>
+      installedFromSource: (ownerDisplayName: string) =>
         `From ${ownerDisplayName}`,
       forkedSource: (ownerDisplayName: string) =>
         `Based on ${ownerDisplayName}`,
@@ -561,7 +563,7 @@ export const enUS: Translations = {
             ? ` · Source version ${sourcePlatformVersion}`
             : ""
         }`,
-      installedSource: "Added",
+      installedSource: "Installed",
       createdSource: "Created by me",
       addToPersonalSpace: "Install",
       createMyVersion: "Download",
@@ -620,7 +622,7 @@ export const enUS: Translations = {
         "Installed Skills with available updates will appear here.",
       noSkillHubSkills: "No SkillHub Skills available.",
       noSkillHubSkillsDescription:
-        "Published community Skills and system Skills will appear here.",
+        "Published community Skills will appear here.",
       noSystemSkills: "No system Skills available.",
       noSystemSkillsDescription:
         "System Skills will appear here when they are available.",

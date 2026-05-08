@@ -390,7 +390,7 @@ To add support for a new MCP server:
 
 To create a new skill:
 
-1. Create directory in `skills/public/` or `skills/custom/`:
+1. Create a directory in `skills/public/` for committed/shared skills or `skills/local/` for standalone local installs. `skills/custom/` is legacy compatibility only and should not be used for new skills:
 
 ```
 skills/public/my-skill/

@@ -186,7 +186,8 @@ class TestInstallSkillFromArchive:
         result = install_skill_from_archive(zip_path, skills_root=skills_root)
         assert result["success"] is True
         assert result["skill_name"] == "test-skill"
-        assert (skills_root / "custom" / "test-skill" / "SKILL.md").exists()
+        assert (skills_root / "local" / "test-skill" / "SKILL.md").exists()
+        assert not (skills_root / "custom" / "test-skill").exists()
 
     def test_success_with_user_id_uses_private_shared_fs_layout(self, tmp_path):
         zip_path = self._make_skill_zip(tmp_path)
@@ -201,9 +202,19 @@ class TestInstallSkillFromArchive:
     def test_duplicate_raises(self, tmp_path):
         zip_path = self._make_skill_zip(tmp_path)
         skills_root = tmp_path / "skills"
-        (skills_root / "custom" / "test-skill").mkdir(parents=True)
+        (skills_root / "local" / "test-skill").mkdir(parents=True)
         with pytest.raises(ValueError, match="already exists"):
             install_skill_from_archive(zip_path, skills_root=skills_root)
+
+    def test_legacy_custom_duplicate_rejected_without_new_write(self, tmp_path):
+        zip_path = self._make_skill_zip(tmp_path)
+        skills_root = tmp_path / "skills"
+        (skills_root / "custom" / "test-skill").mkdir(parents=True)
+
+        with pytest.raises(ValueError, match="Legacy custom skill 'test-skill' already exists"):
+            install_skill_from_archive(zip_path, skills_root=skills_root)
+
+        assert not (skills_root / "local" / "test-skill").exists()
 
     def test_invalid_extension(self, tmp_path):
         bad_path = tmp_path / "bad.zip"

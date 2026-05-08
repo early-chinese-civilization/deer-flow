@@ -100,7 +100,7 @@ def parse_skill_file(skill_file: Path, category: str, relative_path: Path | None
 
     Args:
         skill_file: Path to the SKILL.md file
-        category: Category of the skill ('public' or 'custom')
+        category: Compatibility category for the skill ('public' or private/legacy 'custom')
 
     Returns:
         Skill object if parsing succeeds, None otherwise

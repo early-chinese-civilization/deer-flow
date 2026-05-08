@@ -82,6 +82,8 @@ REQUIRED_GATEWAY_COLUMNS = {
             "agent_id",
             "skill_id",
             "skill_install_id",
+            "system_skill_definition_id",
+            "system_skill_version_id",
             "display_order",
             "enabled",
             "created_at",

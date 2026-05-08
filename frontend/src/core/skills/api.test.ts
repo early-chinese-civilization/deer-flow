@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const {
@@ -65,6 +66,25 @@ void test("SkillHub install fallback errors use install semantics", () => {
     getSkillHubInstallFallbackError("Conflict"),
     "Failed to install skill: Conflict",
   );
+});
+
+void test("install APIs avoid download-named frontend aliases", async () => {
+  const [apiSource, hooksSource] = await Promise.all([
+    readFile(new URL("./api.ts", import.meta.url), "utf8"),
+    readFile(new URL("./hooks.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.doesNotMatch(apiSource, /\bcheckSkillDownload\b/);
+  assert.doesNotMatch(
+    apiSource,
+    /\bdownloadSkill\s*=\s*installSkillHubSkill\b/,
+  );
+  assert.doesNotMatch(
+    hooksSource,
+    /\buseDownloadSkill\s*=\s*useInstallSkillHubSkill\b/,
+  );
+  assert.match(apiSource, /\binstallSkillHubSkill\b/);
+  assert.match(hooksSource, /\buseInstallSkillHubSkill\b/);
 });
 
 void test("builds read-only Skill install update preview request", () => {

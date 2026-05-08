@@ -1,4 +1,4 @@
-export type AgentSkillSource = "skillhub" | "my_skills" | "unknown";
+export type AgentSkillSource = "system" | "skillhub" | "my_skills" | "unknown";
 
 export type AgentSkillStatus = "available" | "unavailable";
 
@@ -7,6 +7,8 @@ export interface AgentSkillMetadata {
   skill_install_id: number | null;
   skill_definition_id: number | null;
   skill_version_id: number | null;
+  system_skill_definition_id?: number | null;
+  system_skill_version_id?: number | null;
   current_platform_version: number | null;
   source: AgentSkillSource;
   source_label: string;
@@ -58,6 +60,8 @@ export interface CreateAgentRequest {
   description?: string;
   skills?: string[] | null;
   skill_install_ids?: number[] | null;
+  system_skill_version_ids?: number[] | null;
+  system_skill_definition_ids?: number[] | null;
   soul?: string;
 }
 
@@ -65,5 +69,7 @@ export interface UpdateAgentRequest {
   description?: string | null;
   skills?: string[] | null;
   skill_install_ids?: number[] | null;
+  system_skill_version_ids?: number[] | null;
+  system_skill_definition_ids?: number[] | null;
   soul?: string | null;
 }

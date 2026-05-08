@@ -34,11 +34,12 @@ function collectSkillsCopy(skillsCopy: typeof enUS.settings.skills): string[] {
     skillsCopy.publishedBy("Demo Publisher"),
     skillsCopy.skillHubTab,
     skillsCopy.mySkillsTab,
+    skillsCopy.systemSpaceTab,
     skillsCopy.communitySpaceTab,
     skillsCopy.personalSpaceTab,
     skillsCopy.allSegment,
     skillsCopy.systemSegment,
-    skillsCopy.downloadedSegment,
+    skillsCopy.installedSegment,
     skillsCopy.authoredSegment,
     skillsCopy.publishedSegment,
     skillsCopy.updatesSegment,
@@ -52,16 +53,17 @@ function collectSkillsCopy(skillsCopy: typeof enUS.settings.skills): string[] {
     skillsCopy.notInstalled,
     skillsCopy.updateAvailable,
     skillsCopy.availableInCommunity,
-    skillsCopy.downloadedToPersonal,
+    skillsCopy.installedToPersonal,
     skillsCopy.published,
     skillsCopy.unpublished,
     skillsCopy.unpublishedChanges,
     skillsCopy.mySkill,
+    skillsCopy.systemDirectUse,
     skillsCopy.publishedByYou,
     skillsCopy.forkedSkill,
     skillsCopy.officialSource,
     skillsCopy.communitySource("Demo Publisher"),
-    skillsCopy.downloadedSource("Demo Publisher"),
+    skillsCopy.installedFromSource("Demo Publisher"),
     skillsCopy.forkedSource("Demo Publisher"),
     skillsCopy.forkedSourceDetail("demo-skill", "Demo Publisher", 1),
     skillsCopy.installedSource,
@@ -138,45 +140,55 @@ function collectAgentSkillCopy(agentsCopy: typeof enUS.agents): string[] {
 }
 
 void test("Skills locale copy uses SkillHub and install terminology", () => {
+  assert.equal(enUS.settings.skills.systemSpaceTab, "System Skills");
   assert.equal(enUS.settings.skills.communitySpaceTab, "Community Skills");
   assert.equal(enUS.settings.skills.personalSpaceTab, "My Skills");
   assert.equal(enUS.settings.skills.addToPersonalSpace, "Install");
+  assert.equal(enUS.settings.skills.installedSegment, "Installed");
+  assert.equal(enUS.settings.skills.installedToPersonal, "Installed");
+  assert.equal(zhCN.settings.skills.systemSpaceTab, "系统 Skills");
   assert.equal(zhCN.settings.skills.communitySpaceTab, "社区 Skills");
   assert.equal(zhCN.settings.skills.personalSpaceTab, "我的 Skills");
   assert.equal(zhCN.settings.skills.addToPersonalSpace, "安装");
+  assert.equal(zhCN.settings.skills.installedSegment, "已安装");
+  assert.equal(zhCN.settings.skills.installedToPersonal, "已安装");
 });
 
 void test("Skills visible IA avoids Space and Fork labels", () => {
   const englishIaCopy = [
+    enUS.settings.skills.systemSpaceTab,
     enUS.settings.skills.communitySpaceTab,
     enUS.settings.skills.personalSpaceTab,
     enUS.settings.skills.allSegment,
     enUS.settings.skills.systemSegment,
-    enUS.settings.skills.downloadedSegment,
+    enUS.settings.skills.installedSegment,
     enUS.settings.skills.authoredSegment,
     enUS.settings.skills.updatesSegment,
     enUS.settings.skills.forksSegment,
     enUS.settings.skills.availableInCommunity,
-    enUS.settings.skills.downloadedToPersonal,
+    enUS.settings.skills.installedToPersonal,
     enUS.settings.skills.forkedSkill,
     enUS.settings.skills.officialSource,
+    enUS.settings.skills.systemDirectUse,
     enUS.settings.skills.installedSource,
     enUS.settings.skills.createdSource,
     enUS.settings.skills.viewInPersonalSpace,
   ].join(" ");
   const chineseIaCopy = [
+    zhCN.settings.skills.systemSpaceTab,
     zhCN.settings.skills.communitySpaceTab,
     zhCN.settings.skills.personalSpaceTab,
     zhCN.settings.skills.allSegment,
     zhCN.settings.skills.systemSegment,
-    zhCN.settings.skills.downloadedSegment,
+    zhCN.settings.skills.installedSegment,
     zhCN.settings.skills.authoredSegment,
     zhCN.settings.skills.updatesSegment,
     zhCN.settings.skills.forksSegment,
     zhCN.settings.skills.availableInCommunity,
-    zhCN.settings.skills.downloadedToPersonal,
+    zhCN.settings.skills.installedToPersonal,
     zhCN.settings.skills.forkedSkill,
     zhCN.settings.skills.officialSource,
+    zhCN.settings.skills.systemDirectUse,
     zhCN.settings.skills.installedSource,
     zhCN.settings.skills.createdSource,
     zhCN.settings.skills.viewInPersonalSpace,

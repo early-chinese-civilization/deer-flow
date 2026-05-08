@@ -1,10 +1,13 @@
+import os
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
+from deerflow.sandbox import skill_scope as skill_scope_module
 from deerflow.sandbox.exceptions import SandboxRuntimeError
 from deerflow.sandbox.skill_scope import derive_skill_scope_from_runtime
 from deerflow.sandbox.tools import (
@@ -646,6 +649,131 @@ def test_derive_skill_scope_materializes_bundle_for_manifest_artifacts(tmp_path)
     bundle_dir = skills_root / scope
     assert (bundle_dir / "probe-skill" / "SKILL.md").read_text(encoding="utf-8") == "authorized"
     assert not (bundle_dir / "public" / "probe-skill" / "SKILL.md").exists()
+
+
+def test_derive_skill_scope_reuses_system_skill_bundle_for_repeated_direct_bindings(tmp_path) -> None:
+    skills_root = tmp_path / "skills"
+    artifact_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "system-skill"
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "SKILL.md").write_text("system authorized", encoding="utf-8")
+    file_manifest_hash = hash_skill_file_manifest(artifact_dir)
+
+    def runtime_for_user(user_id: int) -> SimpleNamespace:
+        return SimpleNamespace(
+            state={"thread_data": _THREAD_DATA.copy()},
+            context={
+                "runtime_agent": {
+                    "user_id": user_id,
+                    "skills": [
+                        {
+                            "name": "system-skill",
+                            "artifact_uri": "artifacts/skills/1/v1/system-skill",
+                            "file_path": "artifacts/skills/1/v1/system-skill",
+                            "virtual_path": "/mnt/skills/system-skill/SKILL.md",
+                            "skill_version_id": 101,
+                            "system_skill_definition_id": 1,
+                            "system_skill_version_id": 101,
+                            "source_kind": "system",
+                            "binding_kind": "system",
+                            "content_hash": "hash-v1",
+                            "file_manifest_hash": file_manifest_hash,
+                        }
+                    ],
+                }
+            },
+            config={},
+        )
+
+    with patch(
+        "deerflow.sandbox.skill_scope._get_skills_root_path",
+        return_value=skills_root,
+    ):
+        first_scope = derive_skill_scope_from_runtime(runtime_for_user(7))
+        second_scope = derive_skill_scope_from_runtime(runtime_for_user(9))
+
+    assert first_scope == second_scope
+    assert len([path for path in (skills_root / ".runtime-skill-bundles").iterdir() if path.is_dir()]) == 1
+    assert (skills_root / first_scope / "system-skill" / "SKILL.md").read_text(encoding="utf-8") == "system authorized"
+
+
+def test_derive_skill_scope_prunes_stale_runtime_skill_bundles(tmp_path, monkeypatch) -> None:
+    skills_root = tmp_path / "skills"
+    artifact_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "probe-skill"
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "SKILL.md").write_text("authorized", encoding="utf-8")
+    file_manifest_hash = hash_skill_file_manifest(artifact_dir)
+
+    stale_bundle = skills_root / ".runtime-skill-bundles" / "stale-bundle"
+    stale_bundle.mkdir(parents=True)
+    (stale_bundle / ".deerflow-runtime-bundle.json").write_text("{}", encoding="utf-8")
+    stale_time = time.time() - 10
+    (stale_bundle / ".deerflow-runtime-bundle.json").touch()
+    os.utime(stale_bundle / ".deerflow-runtime-bundle.json", (stale_time, stale_time))
+    os.utime(stale_bundle, (stale_time, stale_time))
+
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "user_id": 7,
+                "skills": [
+                    {
+                        "name": "probe-skill",
+                        "artifact_uri": "artifacts/skills/1/v1/probe-skill",
+                        "file_path": "artifacts/skills/1/v1/probe-skill",
+                        "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
+                        "skill_version_id": 101,
+                        "content_hash": "hash-v1",
+                        "file_manifest_hash": file_manifest_hash,
+                    }
+                ],
+            }
+        },
+        config={},
+    )
+
+    monkeypatch.setattr(skill_scope_module, "_RUNTIME_BUNDLE_RETENTION_SECONDS", 1)
+    with patch(
+        "deerflow.sandbox.skill_scope._get_skills_root_path",
+        return_value=skills_root,
+    ):
+        current_scope = derive_skill_scope_from_runtime(runtime)
+
+    assert current_scope is not None
+    assert not stale_bundle.exists()
+    assert (skills_root / current_scope / "probe-skill" / "SKILL.md").exists()
+
+
+def test_derive_skill_scope_rejects_missing_manifest_artifact(tmp_path) -> None:
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir()
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "user_id": 7,
+                "skills": [
+                    {
+                        "name": "probe-skill",
+                        "artifact_uri": "artifacts/skills/1/missing/probe-skill",
+                        "file_path": "artifacts/skills/1/missing/probe-skill",
+                        "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
+                        "skill_version_id": 101,
+                        "content_hash": "hash-v1",
+                        "file_manifest_hash": "expected-file-manifest-hash",
+                    }
+                ],
+            }
+        },
+        config={},
+    )
+
+    with patch(
+        "deerflow.sandbox.skill_scope._get_skills_root_path",
+        return_value=skills_root,
+    ):
+        with pytest.raises(SandboxRuntimeError, match="artifact is missing"):
+            derive_skill_scope_from_runtime(runtime)
 
 
 def test_derive_skill_scope_rejects_artifact_file_manifest_hash_mismatch(tmp_path) -> None:

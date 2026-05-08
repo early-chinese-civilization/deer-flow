@@ -4,6 +4,7 @@ from pathlib import Path, PurePosixPath
 
 PUBLIC_SKILLS_DIR = "public"
 LEGACY_CUSTOM_SKILLS_DIR = "custom"
+LOCAL_CLIENT_SKILLS_DIR = "local"
 
 
 def build_private_skill_file_path(user_id: int | str, skill_name: str) -> str:

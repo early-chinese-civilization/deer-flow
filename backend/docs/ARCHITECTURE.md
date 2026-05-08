@@ -316,8 +316,10 @@ Directory Structure:
 │ │   ├── frontend-design/                                                │
 │ │   │   └── SKILL.md                                                    │
 │ │   └── ...                                                             │
-│ └── custom/                        # Custom skills (gitignored)          │
-│     └── user-installed/                                                 │
+│ ├── local/                         # Standalone client installs          │
+│ │   └── user-installed/                                                 │
+│ └── custom/                        # Legacy compatibility only           │
+│     └── old-installed/                                                  │
 │         └── SKILL.md                                                    │
 └─────────────────────────────────────────────────────────────────────────┘
 

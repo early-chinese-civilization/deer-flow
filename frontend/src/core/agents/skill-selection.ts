@@ -1,3 +1,4 @@
+import { getSkillDisplayContract } from "../skills/display";
 import type { Skill } from "../skills/type";
 
 import type { AgentSkillMetadata } from "./types";
@@ -19,6 +20,11 @@ export interface AgentSkillDisplaySummary {
   unavailable: boolean;
 }
 
+export interface AgentSkillSelectionGroups {
+  mySkills: Skill[];
+  systemSkills: Skill[];
+}
+
 function getPlatformVersionNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -32,6 +38,36 @@ function getPlatformVersionNumber(value: unknown): number | null {
 function formatPlatformVersion(value: unknown): string | null {
   const version = getPlatformVersionNumber(value);
   return version == null ? null : `v${version}`;
+}
+
+function getSystemSkillVersionId(skill: Skill): number | null {
+  return getPlatformVersionNumber(skill.skill_version_id);
+}
+
+function getSystemSkillDefinitionId(skill: Skill): number | null {
+  return getPlatformVersionNumber(skill.skill_definition_id);
+}
+
+function getMetadataSystemSkillVersionId(
+  skill: AgentSkillMetadata,
+): number | null {
+  return (
+    getPlatformVersionNumber(skill.system_skill_version_id) ??
+    (skill.source === "system"
+      ? getPlatformVersionNumber(skill.skill_version_id)
+      : null)
+  );
+}
+
+function getMetadataSystemSkillDefinitionId(
+  skill: AgentSkillMetadata,
+): number | null {
+  return (
+    getPlatformVersionNumber(skill.system_skill_definition_id) ??
+    (skill.source === "system"
+      ? getPlatformVersionNumber(skill.skill_definition_id)
+      : null)
+  );
 }
 
 function getSkillSelectionPlatformVersion(skill: Skill): number | null {
@@ -52,16 +88,70 @@ function hasSkillSelectionUpdate(skill: Skill, platformVersion: number | null) {
   );
 }
 
+function compareSkillRows(left: Skill, right: Skill): number {
+  if (left.name !== right.name) {
+    return left.name.localeCompare(right.name);
+  }
+  return getSkillSelectionKey(left).localeCompare(getSkillSelectionKey(right));
+}
+
+export function getAgentSkillSelectionGroups(
+  skills: Skill[],
+): AgentSkillSelectionGroups {
+  const mySkills: Skill[] = [];
+  const systemSkills: Skill[] = [];
+
+  for (const skill of skills) {
+    const display = getSkillDisplayContract(skill);
+    if (display.space === "system") {
+      systemSkills.push(skill);
+      continue;
+    }
+    if (display.space === "personal" && skill.skill_install_id != null) {
+      mySkills.push(skill);
+    }
+  }
+
+  return {
+    mySkills: mySkills.sort(compareSkillRows),
+    systemSkills: systemSkills.sort(compareSkillRows),
+  };
+}
+
 export function getSkillSelectionKey(skill: Skill): string {
-  return skill.skill_install_id != null
-    ? `install:${skill.skill_install_id}`
-    : `name:${skill.name}`;
+  const display = getSkillDisplayContract(skill);
+  if (display.space === "system") {
+    const systemVersionId = getSystemSkillVersionId(skill);
+    if (systemVersionId != null) {
+      return `system-version:${systemVersionId}`;
+    }
+    const systemDefinitionId = getSystemSkillDefinitionId(skill);
+    if (systemDefinitionId != null) {
+      return `system-definition:${systemDefinitionId}`;
+    }
+  }
+  if (skill.skill_install_id != null) {
+    return `install:${skill.skill_install_id}`;
+  }
+  if (skill.skill_definition_id != null) {
+    return `definition:${skill.skill_definition_id}`;
+  }
+  return `name:${skill.name}`;
 }
 
 export function getMetadataSelectionKey(skill: AgentSkillMetadata): string {
-  return skill.skill_install_id != null
-    ? `install:${skill.skill_install_id}`
-    : `name:${skill.name}`;
+  if (skill.skill_install_id != null) {
+    return `install:${skill.skill_install_id}`;
+  }
+  const systemVersionId = getMetadataSystemSkillVersionId(skill);
+  if (systemVersionId != null) {
+    return `system-version:${systemVersionId}`;
+  }
+  const systemDefinitionId = getMetadataSystemSkillDefinitionId(skill);
+  if (systemDefinitionId != null) {
+    return `system-definition:${systemDefinitionId}`;
+  }
+  return `name:${skill.name}`;
 }
 
 export function getSelectionInstallIds(selection: string[]): number[] {
@@ -80,11 +170,47 @@ export function getSelectionInstallIds(selection: string[]): number[] {
 
 export function getSelectionSkillNames(selection: string[]): string[] {
   return selection
-    .filter((value) => !value.startsWith("install:"))
+    .filter(
+      (value) =>
+        !value.startsWith("install:") &&
+        !value.startsWith("system-version:") &&
+        !value.startsWith("system-definition:") &&
+        !value.startsWith("definition:"),
+    )
     .map((value) =>
       value.startsWith("name:") ? value.slice("name:".length) : value,
     )
     .filter(Boolean);
+}
+
+export function getSelectionSystemSkillVersionIds(selection: string[]): number[] {
+  const versionIds: number[] = [];
+  for (const value of selection) {
+    if (!value.startsWith("system-version:")) {
+      continue;
+    }
+    const versionId = Number(value.slice("system-version:".length));
+    if (Number.isInteger(versionId)) {
+      versionIds.push(versionId);
+    }
+  }
+  return versionIds;
+}
+
+export function getSelectionSystemSkillDefinitionIds(
+  selection: string[],
+): number[] {
+  const definitionIds: number[] = [];
+  for (const value of selection) {
+    if (!value.startsWith("system-definition:")) {
+      continue;
+    }
+    const definitionId = Number(value.slice("system-definition:".length));
+    if (Number.isInteger(definitionId)) {
+      definitionIds.push(definitionId);
+    }
+  }
+  return definitionIds;
 }
 
 export function getSkillSourceLabel(
@@ -125,6 +251,9 @@ export function getMetadataSourceLabel(
   if (skill.source === "my_skills") {
     return labels.mySkills;
   }
+  if (skill.source === "system") {
+    return labels.official;
+  }
   return labels.unknown;
 }
 
@@ -133,11 +262,15 @@ export function getSkillDisplaySummary(
   labels: AgentSkillSourceLabels & { unavailableVersion: string },
 ): AgentSkillDisplaySummary {
   const platformVersion = getSkillSelectionPlatformVersion(skill);
+  const display = getSkillDisplayContract(skill);
   const unavailable =
-    skill.skill_install_id == null ||
-    skill.skill_definition_id == null ||
-    skill.skill_version_id == null ||
-    platformVersion == null;
+    display.space === "system"
+      ? getSystemSkillVersionId(skill) == null &&
+        getSystemSkillDefinitionId(skill) == null
+      : skill.skill_install_id == null ||
+        skill.skill_definition_id == null ||
+        skill.skill_version_id == null ||
+        platformVersion == null;
   return {
     key: getSkillSelectionKey(skill),
     name: skill.name,

@@ -2,7 +2,7 @@
 
 日期：2026-04-29
 
-状态：代码探索结论
+状态：历史代码探索结论。本文描述的是旧基线，不是目标行为；`custom/<skill_name>` 已收口为 legacy compatibility，新的 local/client 或 Gateway 写入不应再创建该路径。
 
 ## 文档目的
 

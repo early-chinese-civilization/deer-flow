@@ -25,9 +25,10 @@ def load_skills(skills_path: Path | None = None, use_config: bool = True, enable
     """
     Load all skills from the skills directory.
 
-    Scans public, legacy custom, and per-user private skill directories,
-    parsing SKILL.md files to extract metadata. The enabled state is
-    determined by the skills_state_config.json file.
+    Scans public and private skill directories, parsing SKILL.md files to
+    extract metadata. Existing ``custom/`` directories are loaded only as
+    legacy standalone/client compatibility and produce an explicit warning.
+    The enabled state is determined by the skills_state_config.json file.
 
     Args:
         skills_path: Optional custom path to skills directory.
@@ -63,6 +64,10 @@ def load_skills(skills_path: Path | None = None, use_config: bool = True, enable
 
     legacy_custom_path = skills_path / LEGACY_CUSTOM_SKILLS_DIR
     if legacy_custom_path.exists() and legacy_custom_path.is_dir():
+        logger.warning(
+            "Loading skills from legacy %s/ directory for compatibility only; new installs use private user or local-client paths.",
+            LEGACY_CUSTOM_SKILLS_DIR,
+        )
         scan_roots.append(("custom", legacy_custom_path))
 
     for child in sorted(skills_path.iterdir(), key=lambda item: item.name.lower()):

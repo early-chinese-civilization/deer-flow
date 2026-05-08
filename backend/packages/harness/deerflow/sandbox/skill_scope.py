@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
+import time
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -15,6 +17,10 @@ from deerflow.skills.path_utils import resolve_skill_storage_dir
 _ARTIFACTS_SCOPE_ROOT = "artifacts"
 _RUNTIME_BUNDLE_SCOPE_ROOT = ".runtime-skill-bundles"
 _BUNDLE_READY_FILE = ".deerflow-runtime-bundle.json"
+_RUNTIME_BUNDLE_RETENTION_SECONDS = 7 * 24 * 60 * 60
+_RUNTIME_BUNDLE_TMP_RETENTION_SECONDS = 60 * 60
+
+logger = logging.getLogger(__name__)
 
 
 def get_runtime_agent_context(
@@ -149,6 +155,56 @@ def _verify_authorized_artifact_tree(skills_root: Path, entry: Mapping[str, Any]
     return artifact_dir
 
 
+def _remove_runtime_bundle_tree(path: Path) -> None:
+    try:
+        shutil.rmtree(path)
+    except OSError:
+        logger.warning("Failed to remove stale runtime skill bundle %s", path, exc_info=True)
+
+
+def _prune_runtime_skill_bundle_cache(skills_root: Path, *, keep_bundle_scope: str) -> None:
+    """Remove stale bundle copies while preserving the bundle needed for this run.
+
+    Bundle ids are keyed by the full manifest projection, including virtual roots.
+    That safely reuses repeated direct System Skill bindings with the same virtual
+    path, but install-specific virtual roots can still create many copies of the
+    same artifact over time. Age-based pruning bounds that cache growth without
+    changing authorization or artifact integrity semantics.
+    """
+    bundle_root = resolve_skill_storage_dir(skills_root, _RUNTIME_BUNDLE_SCOPE_ROOT)
+    if not bundle_root.exists():
+        return
+
+    keep_bundle_name = PurePosixPath(keep_bundle_scope).name
+    now = time.time()
+
+    try:
+        children = list(bundle_root.iterdir())
+    except OSError:
+        logger.warning("Failed to inspect runtime skill bundle cache %s", bundle_root, exc_info=True)
+        return
+
+    for child in children:
+        if child.name == keep_bundle_name:
+            continue
+        if child.is_symlink() or not child.is_dir():
+            continue
+
+        try:
+            age_seconds = now - child.stat().st_mtime
+        except OSError:
+            logger.warning("Failed to stat runtime skill bundle %s", child, exc_info=True)
+            continue
+
+        is_tmp_bundle = child.name.startswith(".") and ".tmp-" in child.name
+        if is_tmp_bundle and age_seconds >= _RUNTIME_BUNDLE_TMP_RETENTION_SECONDS:
+            _remove_runtime_bundle_tree(child)
+            continue
+
+        if (child / _BUNDLE_READY_FILE).exists() and age_seconds >= _RUNTIME_BUNDLE_RETENTION_SECONDS:
+            _remove_runtime_bundle_tree(child)
+
+
 def _materialize_runtime_skill_bundle(entries: list[dict[str, Any]]) -> str:
     """Create a deterministic readonly-bundle source for Manifest-authorized skills.
 
@@ -156,7 +212,9 @@ def _materialize_runtime_skill_bundle(entries: list[dict[str, Any]]) -> str:
     ``<skills_root>/.runtime-skill-bundles/<manifest-hash>/<virtual-skill-name>/...``.
     The bundle is populated only from exact ``SkillVersion.artifact_uri`` roots
     listed in the Runtime Manifest; it never scans the skills root or falls back
-    to public/latest/same-name directories.
+    to public/latest/same-name directories. The deterministic bundle id reuses
+    repeated identical manifest projections, while stale cache entries are
+    pruned by retention window to prevent unbounded copy accumulation.
     """
     skills_root = _get_skills_root_path()
     payload = json.dumps(entries, sort_keys=True, separators=(",", ":"), default=str)
@@ -175,6 +233,7 @@ def _materialize_runtime_skill_bundle(entries: list[dict[str, Any]]) -> str:
         verified_sources.append((entry, _verify_authorized_artifact_tree(skills_root, entry)))
 
     if ready_file.exists():
+        _prune_runtime_skill_bundle_cache(skills_root, keep_bundle_scope=bundle_scope)
         return bundle_scope
     if bundle_dir.exists():
         shutil.rmtree(bundle_dir)
@@ -195,6 +254,7 @@ def _materialize_runtime_skill_bundle(entries: list[dict[str, Any]]) -> str:
             tmp_dir.replace(bundle_dir)
         except FileExistsError:
             shutil.rmtree(tmp_dir)
+        _prune_runtime_skill_bundle_cache(skills_root, keep_bundle_scope=bundle_scope)
         return bundle_scope
     except Exception:
         shutil.rmtree(tmp_dir, ignore_errors=True)

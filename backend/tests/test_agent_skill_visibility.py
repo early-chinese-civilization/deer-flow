@@ -27,6 +27,8 @@ def _definition(*, owner_user_id: int | None = 7) -> SkillDefinition:
         display_name="Probe Skill",
         description="Probe description",
         owner_user_id=owner_user_id,
+        source_type="legacy" if owner_user_id is None else "user",
+        source_identifier="legacy" if owner_user_id is None else str(owner_user_id),
         owner_user=owner_user,
     )
 
@@ -185,15 +187,61 @@ def test_agent_response_keeps_legacy_skill_binding_visible_but_unavailable() -> 
 def test_agent_response_labels_official_skill_source_without_namespace() -> None:
     definition = _definition(owner_user_id=None)
     current_version = _version(definition, version_id=101, version_number=1)
-    agent = _agent_with_install(current_version=current_version, definition=definition)
+    agent = Agent(
+        id=501,
+        user_id=22,
+        name="probe-agent",
+        agent_skills=[
+            AgentSkill(
+                id=601,
+                agent_id=501,
+                system_skill_definition_id=definition.id,
+                system_skill_version_id=current_version.id,
+                system_skill_definition=definition,
+                system_skill_version=current_version,
+                display_order=0,
+                enabled=True,
+            )
+        ],
+    )
 
     response = agents_router._agent_to_response(agent)
 
+    assert response.skills == ["probe-skill"]
     assert response.skill_metadata is not None
     metadata = response.skill_metadata[0]
-    assert metadata.source == "skillhub"
-    assert metadata.source_label == "Official"
+    assert metadata.skill_install_id is None
+    assert metadata.system_skill_definition_id == definition.id
+    assert metadata.system_skill_version_id == current_version.id
+    assert metadata.source == "system"
+    assert metadata.source_label == "System"
     assert metadata.current_platform_version == 1
+    assert metadata.available is True
+
+
+def test_agent_request_resolves_system_skill_definition_without_install(monkeypatch) -> None:
+    definition = _definition(owner_user_id=None)
+    version = _version(definition, version_id=101, version_number=1)
+
+    async def get_latest_published_release_for_definition(_db, *, skill_definition_id):
+        assert skill_definition_id == definition.id
+        return type("Release", (), {"skill_version": version})()
+
+    async def get_by_id_for_user(*_args, **_kwargs):
+        raise AssertionError("system skill binding must not resolve or create user installs")
+
+    monkeypatch.setattr(agents_router.SkillReleaseRepository, "get_latest_published_release_for_definition", get_latest_published_release_for_definition)
+    monkeypatch.setattr(agents_router.SkillInstallRepository, "get_by_id_for_user", get_by_id_for_user)
+
+    result = asyncio.run(
+        agents_router._resolve_system_skill_version_ids_for_request(
+            object(),
+            system_skill_version_ids=None,
+            system_skill_definition_ids=[definition.id],
+        )
+    )
+
+    assert result == [version.id]
 
 
 def test_agent_metadata_publish_v2_keeps_bound_runtime_on_installed_v1_until_manual_update() -> None:
