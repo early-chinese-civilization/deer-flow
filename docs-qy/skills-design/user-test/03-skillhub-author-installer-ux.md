@@ -8,15 +8,16 @@
 
 这份文档补充 `01-skills-user-flow-and-acceptance.md` 和 `02-skill-version-must-pass-user-test-cases.md` 中缺少的角色视角。
 
-同一个 Skill 在不同用户眼里不是同一个产品任务。更准确地说，Skills 产品有两个空间：
+同一个 Skill 在不同用户眼里不是同一个产品任务。更准确地说，Skills 产品有三个空间：
 
-1. 社区空间：负责展示官方和社区发布的 Skills，并提供下载到我的空间的入口。
-2. 我的空间：负责展示我下载的 Skills 和我的 Skills，让它们可以被 Agent 选择和使用。
+1. 系统空间：负责展示平台预置 Skills，直接可用于 Agent，不提供安装或下载。
+2. 社区空间：负责展示用户发布的 Skills，并提供安装到我的空间的入口。
+3. 我的空间：负责展示我安装的 Skills 和我的 Skills，让它们可以被 Agent 选择和使用。
 
 同一个 Skill 在不同空间和不同用户眼里承担不同任务：
 
 1. 作者关心“我创建了什么、我发布了哪个版本、别人能否安装、我是否还有未发布改动”。
-2. 下载者关心“这个 Skill 谁做的、我有没有下载到我的空间、我的 Agent 当前用哪个版本、是否有更新”。
+2. 安装者关心“这个 Skill 谁做的、我有没有安装到我的空间、我的 Agent 当前用哪个版本、是否有更新”。
 
 页面不能把这两类用户都塞进同一套“已安装/未发布/当前版本”小徽标里。目标用户不理解内部机制，所以 UI 必须用自然语言把角色和下一步讲清楚。
 
@@ -25,8 +26,8 @@
 | 角色 | 说明 | 主要任务 |
 | --- | --- | --- |
 | 作者 / Publisher | 当前登录用户创建、上传或 fork 了 Skill，并可以发布到社区空间 | 迭代版本、发布、查看发布状态 |
-| 下载者 / Downloader | 当前登录用户从社区空间下载别人或官方的 Skill 到我的空间 | 下载、绑定 Agent、手动更新 |
-| 双重身份用户 | 当前登录用户既创建了某个 Skill，也可能从社区空间下载过同名或不同来源 Skill | 区分“我下载的”和“我的 Skill”，不能绑定错 |
+| 安装者 / Installer | 当前登录用户从社区空间安装别人的 Skill 到我的空间 | 安装、绑定 Agent、手动更新 |
+| 双重身份用户 | 当前登录用户既创建了某个 Skill，也可能从社区空间安装过同名或不同来源 Skill | 区分“我安装的”和“我的 Skill”，不能绑定错 |
 
 ## 用户可见状态词
 
@@ -40,7 +41,7 @@
 | 我的本地版本比已发布版本新 | 有未发布改动 |
 | 别人发布的 Skill | 来自 `<作者>` |
 | 官方预置 Skill | 官方 / official |
-| 我从社区空间下载的 Skill | 已下载到我的空间 |
+| 我从社区空间安装的 Skill | 已安装到我的空间 |
 | 我安装的版本落后 | 有更新 |
 | Agent 当前使用 | Agent 使用版本 `<n>` |
 | fork 后的新 Skill | 基于 `<来源>` 创建 |
@@ -86,36 +87,36 @@
 3. 发布后作者不知道别人看到的是哪个版本。
 4. 页面用内部字段解释版本或来源。
 
-## 流程 B：下载者下载作者发布的 Skill
+## 流程 B：安装者安装作者发布的 Skill
 
 ### 前置条件
 
-用户 A 已发布“运行验收 Skill”版本 1。用户 B 已登录，尚未下载该 Skill。
+用户 A 已发布“运行验收 Skill”版本 1。用户 B 已登录，尚未安装该 Skill。
 
 ### 步骤
 
 1. 用户 B 打开社区空间。
 2. 用户 B 找到用户 A 发布的“运行验收 Skill”。
-3. 用户 B 点击“下载到我的空间”。
+3. 用户 B 点击“安装”。
 4. 用户 B 打开我的空间。
 5. 用户 B 进入 Agent 配置页并绑定该 Skill。
 
 ### 预期
 
 1. 社区空间卡片展示名称、描述、作者、来源、当前公开版本。
-2. 官方 Skill 的作者/来源显示为 official/官方。
-3. 未下载时主操作是“下载到我的空间”。
-4. 下载后显示“已下载到我的空间”，并提供自然下一步“绑定到 Agent”。
-5. 我的空间中该 Skill 明确显示“来自用户 A”或“从社区空间下载”。
-6. Agent 绑定选项显示 Skill 名称、作者/来源、当前已下载版本。
+2. 系统 Skill 不在社区安装流程里要求安装，系统空间中也不提供下载。
+3. 未安装时主操作是“安装”。
+4. 安装后显示“已安装到我的空间”，并提供自然下一步“绑定到 Agent”。
+5. 我的空间中该 Skill 明确显示“来自用户 A”或“从社区空间安装”。
+6. Agent 绑定选项显示 Skill 名称、作者/来源、当前已安装版本。
 7. 如果存在同名 Skill，用户 B 可以仅凭页面信息区分来源。
 
 ### 失败信号
 
 1. 用户 B 只看到 Skill 名称，看不到作者或来源。
-2. 下载成功后用户不知道是否还需要绑定 Agent。
+2. 安装成功后用户不知道是否还需要绑定 Agent。
 3. Agent 绑定页按名称合并同名 Skill。
-4. UI 显示“已下载”，但我的空间或 Agent 绑定页找不到该 Skill。
+4. UI 显示“已安装”，但我的空间或 Agent 绑定页找不到该 Skill。
 
 ## 流程 C：作者发布 v2 后，作者和安装者看到不同状态
 
@@ -214,19 +215,20 @@ SkillHub 中存在两个同名或近似同名 Skill：
 3. 运行时读取另一个同名来源。
 4. 页面要求用户理解内部 ID 才能判断选哪个。
 
-## 流程 F：下载后 fork 成我的 Skill
+## 流程 F：下载后上传成我的 Skill
 
 ### 前置条件
 
-用户 B 已从社区空间下载一个官方或社区 Skill。
+用户 B 找到一个符合条件的社区 Skill。系统 Skill 本轮不提供下载。
 
 ### 步骤
 
 1. 用户 B 打开我的空间。
-2. 用户 B 找到已下载的 Skill。
-3. 用户 B 点击“基于此创建我的版本”。
-4. 系统创建一个新的“我的 Skill”。
-5. 用户 B 查看新 Skill 的来源归因和发布状态。
+2. 用户 B 点击“下载”。
+3. 系统导出带来源 claim 的可编辑包。
+4. 用户 B 修改后上传。
+5. 系统创建一个新的“我的 Skill”。
+6. 用户 B 查看新 Skill 的来源归因和发布状态。
 
 ### 预期
 
@@ -245,31 +247,31 @@ SkillHub 中存在两个同名或近似同名 Skill：
 
 ### 后端发布保护验收补充
 
-1. 用户下载官方或他人的社区 Skill 后，不能把这个下载态按原 Skill 身份发布；接口必须在创建 SkillHub 公开条目或发布记录前拒绝，并提示需要先“基于此创建我的版本”。
+1. 用户安装他人的社区 Skill 后，不能把这个安装态按原 Skill 身份发布；接口必须在创建 SkillHub 公开条目或发布记录前拒绝，并提示需要先通过“下载”形成自己的版本。
 2. fork 后的新 Skill 如果仍与记录的来源版本文件/内容 hash 完全一致，发布接口必须 hard-block；拒绝后不能创建新的社区空间 listing，也不能创建新的发布记录。
 3. 本轮只要求精确 hash 相等拦截。近似相似度、许可证判断、人工审核、举报、评审队列属于后续发布治理，不作为当前验收阻塞项。
 
 ## 核心 UI 验收矩阵
 
-| 场景 | 作者应该看到 | 下载者应该看到 | 必须验证 |
+| 场景 | 作者应该看到 | 安装者应该看到 | 必须验证 |
 | --- | --- | --- | --- |
-| 上传 v1 | 我的 Skill，版本 1，未发布/可发布 | 不可见或尚未下载 | 作者不被提示下载自己的未发布 Skill |
-| 发布 v1 | 已发布到社区空间，社区版本 1 | 社区空间可下载，来自作者 A 或官方，版本 1 | 发布不等于下载者已拥有 |
-| 下载 v1 | 可看到发布状态 | 已下载到我的空间，当前版本 1 | Personal Space install 指向 v1 |
+| 上传 v1 | 我的 Skill，版本 1，未发布/可发布 | 不可见或尚未安装 | 作者不被提示安装自己的未发布 Skill |
+| 发布 v1 | 已发布到社区空间，社区版本 1 | 社区空间可安装，来自作者 A，版本 1 | 发布不等于安装者已拥有 |
+| 安装 v1 | 可看到发布状态 | 已安装到我的空间，当前版本 1 | Personal Space install 指向 v1 |
 | 绑定 Agent | 不影响作者除非作者也绑定 | Agent 使用版本 1 | Agent 绑定安装态，不绑定 SkillHub 公共对象 |
 | 发布 v2 | 社区空间当前发布版本 2 | 有更新，当前使用版本 1，可更新版本 2 | 未手动更新前 runtime 仍是 v1 |
 | 手动更新 | 作者无自动影响提示 | 当前版本变成 2，Agent 下一次用 v2 | Runtime Manifest / Agent display / chat display 一致 |
 | 同名不同来源 | 作者身份清楚 | 安装来源清楚 | 不按 name 串线 |
-| fork | 生成新的我的 Skill | 原下载 Skill 不被修改 | 本版本 hard-block 未修改 fork 发布；本轮只要求精确 hash 相等拦截 |
+| 下载/fork | 生成新的我的 Skill | 原安装 Skill 不被修改 | 本版本 hard-block 未修改 fork 发布；系统 Skill 无下载动作 |
 
 ## 自动化建议
 
 前端应补以下 focused tests：
 
-1. Skill display helper 能区分 official-community、user-community、downloaded-to-personal、authored-by-me、published-by-me、forked-by-me。
+1. Skill display helper 能区分 system、user-community、installed-to-personal、authored-by-me、published-by-me、forked-by-me。
 2. Community Space self-authored row 不以“下载/安装”为主操作。
 3. Installer row 显示 author/source/version/update state。
-4. Personal Space filters 能区分我下载的、我的 Skill、已发布、有更新、fork。
+4. Personal Space filters 能区分我安装的、我的 Skill、已发布、有更新、fork。
 5. Same-name different-source rows 保留独立 selection key。
 6. Agent/chat Skill metadata copy 不出现内部 ID、artifact、Runtime Manifest 文案。
 

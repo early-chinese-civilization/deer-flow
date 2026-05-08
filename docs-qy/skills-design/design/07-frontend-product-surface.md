@@ -14,7 +14,7 @@
 
 当前 Skills Gallery 已经提供基础操作，但信息架构仍是旧模型：
 
-1. 只有 public/custom 两个 tab，不足以表达官方、社区、我创建的、我安装的。
+1. 只有 public/custom 两个 tab，不足以表达系统、社区、我创建的、我安装的。
 2. “Download”不是普通用户心智中的安装。
 3. 发布弹窗告诉用户“版本仍来自 SKILL.md”，与目标产品口径相反。
 4. Badge 展示 package/release，暴露内部实现。
@@ -25,19 +25,42 @@
 
 第一版至少需要：
 
-1. SkillHub：官方、社区、可安装、已安装、有更新。
-2. 我的 Skills：我创建的、我安装的、已发布、有更新。
-3. Skill 详情页：描述、来源、版本历史、安装/发布/基于此创建。
-4. Agent Skills 区域：已绑定 Skill、当前版本、是否有更新、解绑。
-5. 更新确认页：当前版本、新版本、更新说明、受影响 Agent。
+1. System Skills：系统预置、直接可用、不可安装、不可下载。
+2. Community Skills：社区、可安装、已安装、有更新。
+3. 我的 Skills：我创建的、我安装的、已发布、有更新。
+4. Skill 详情页：描述、来源、版本历史、安装/发布/下载。
+5. Agent Skills 区域：已绑定 Skill、当前版本、是否有更新、解绑。
+6. 更新确认页：当前版本、新版本、更新说明、受影响 Agent。
 
-## SkillHub 列表
+## System Skills 列表
+
+每个系统 Skill 卡片至少展示：
+
+1. 名称。
+2. 简短描述。
+3. 来源：系统。
+4. 当前平台版本。
+5. 直接可用状态。
+
+主操作：
+
+1. 用于 Agent / 选择到 Agent。
+2. 查看。
+
+禁止出现：
+
+1. 安装。
+2. 下载。
+3. 已安装。
+4. 加入我的 Skills。
+
+## Community Skills 列表
 
 每个 Skill 卡片至少展示：
 
 1. 名称。
 2. 简短描述。
-3. 来源：官方或社区。
+3. 来源：社区。
 4. 作者。
 5. 当前公开版本。
 6. 更新时间。
@@ -48,7 +71,7 @@
 1. 未安装：安装。
 2. 已安装且无更新：查看。
 3. 已安装且有更新：查看更新。
-4. 任何可见 Skill：基于此创建。
+4. 符合条件的社区 Skill：下载。
 
 ## Skill 详情页
 
@@ -60,7 +83,7 @@
 4. 更新说明。
 5. 版本历史。
 6. 安装按钮。
-7. 基于此创建按钮。
+7. 下载按钮。
 8. 权限或安全提示。
 
 不要默认展示完整内部说明内容。是否允许查看源内容需要单独产品决策，尤其涉及社区 Skill 的安全和作者权益。
@@ -159,11 +182,11 @@ Agent 配置页需要有一个 Skills 区域：
 
 | 旧文案/概念 | 新文案/概念 |
 | --- | --- |
-| Download | 安装 |
+| backend download route for adding to My Skills | 安装 |
+| create-my-version / fork export | 下载 |
 | Public | SkillHub |
 | Custom | 我的 Skill |
 | Package version | 版本 |
 | Latest version | 当前版本 |
 | Public latest | SkillHub 当前发布版本 |
 | Version still comes from SKILL.md | 删除，不再出现 |
-

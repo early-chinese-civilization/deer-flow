@@ -141,7 +141,7 @@ MVP 校验规则：
 3. 我的 Skill：当前用户拥有的 SkillDefinition。
 4. 已安装 Skill：当前用户的 SkillInstall。
 
-运行时不因为 official/community 改变授权模型。Runtime Resolver 仍然只看 SkillInstall、SkillVersion、policy 和 Manifest。official/community 只影响发布权限、展示分组、信任提示和审核策略。
+运行时仍然必须解析到具体 SkillVersion 和 Manifest。社区 Skill 通过 SkillInstall 进入运行时；系统 Skill 是平台预置共享资源，允许直接绑定/选择，但 Manifest 中仍必须记录具体 SkillVersion 和系统来源。
 
 ### name 和 display_name 的必要性
 
@@ -259,17 +259,17 @@ MVP 校验规则：
 2. 更新只修改 `current_version_id`，不覆盖源 Skill，不覆盖旧版本 artifact。
 3. 用户未确认更新时，`current_version_id` 不变。
 4. 更新前必须能查询受影响 Agent。
-5. custom Agent 使用官方 Skill 时，也必须有 SkillInstall。
+5. 系统 Skill 不创建用户级 SkillInstall；如果绑定到 Agent，resolver 直接记录系统 SkillVersion 和系统来源。
 
 ### AgentSkillBinding
 
-回答“某个 Agent 使用哪个安装态”。
+回答“某个 Agent 使用哪个安装态或系统 Skill 引用”。
 
 最小字段：
 
 1. `id`
 2. `agent_id`
-3. `skill_install_id`
+3. `skill_install_id` 或系统 Skill 引用字段
 4. `enabled`
 5. `version_policy`：第一版默认为 `follow_install_current`
 6. `pinned_version_id`：第一版预留，不做主界面
@@ -526,9 +526,9 @@ prompt 应在冲突时明确说明两个 Skill 来源不同。
 
 默认无自定义 Agent 的公共 Skills 可以在迁移期保留 legacy 注入。
 
-但目标模型中，只要 Skill 被绑定到 custom Agent，就必须创建 SkillInstall。官方 Skill、社区 Skill、用户自建 Skill 在 Agent 绑定层不分叉。
+目标模型中，社区 Skill 和用户自建 Skill 仍通过安装态进入 Agent 绑定；系统 Skill 作为平台预置共享资源直接绑定，不创建 per-user SkillInstall。
 
-迁移完成后，官方默认 Skill 也应通过系统生成的 install 或 resolver synthetic install 进入 Manifest。即使 UI 上看起来是默认能力，运行审计里也必须能看到具体 SkillVersion。
+迁移完成后，系统 Skill 进入 Manifest 时必须能看到具体 SkillVersion 和系统来源，但不需要制造用户级安装记录。即使 UI 上看起来是默认能力，运行审计也必须能指向具体版本。
 
 ## MVP 切片
 
@@ -588,7 +588,7 @@ prompt 应在冲突时明确说明两个 Skill 来源不同。
 
 1. Agent 不再绑定 public latest。
 2. 删除或禁用 install 时能解释受影响 Agent。
-3. custom Agent 绑定官方 Skill 也进入安装态模型。
+3. custom Agent 绑定系统 Skill 不创建 per-user install，但 Manifest 能审计到具体系统 SkillVersion。
 
 ### Slice 5：Runtime Resolver 和 Manifest 持久化
 
