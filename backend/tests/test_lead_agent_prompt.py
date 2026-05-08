@@ -135,6 +135,7 @@ def test_runtime_skill_prompt_descriptors_require_manifest_location():
                 "virtual_path": "/mnt/skills/manifest-skill/SKILL.md",
                 "skill_version_id": 102,
                 "version_number": 2,
+                "file_manifest_hash": "manifest-hash",
             },
         ],
         container_base_path="/mnt/skills",
@@ -148,6 +149,6 @@ def test_runtime_skill_prompt_descriptors_require_manifest_location():
             "skill_version_id": "102",
             "version_number": "2",
             "content_hash": "",
-            "file_manifest_hash": "",
+            "file_manifest_hash": "manifest-hash",
         }
     ]

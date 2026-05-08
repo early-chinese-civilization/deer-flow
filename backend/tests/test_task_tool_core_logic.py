@@ -23,8 +23,11 @@ class FakeSubagentStatus(Enum):
     TIMED_OUT = "timed_out"
 
 
-def _make_runtime() -> SimpleNamespace:
+def _make_runtime(*, runtime_agent: dict | None = None) -> SimpleNamespace:
     # Minimal ToolRuntime-like object; task_tool only reads these three attributes.
+    context = {"thread_id": "thread-1"}
+    if runtime_agent is not None:
+        context["runtime_agent"] = runtime_agent
     return SimpleNamespace(
         state={
             "sandbox": {"sandbox_id": "local"},
@@ -34,7 +37,7 @@ def _make_runtime() -> SimpleNamespace:
                 "outputs_path": "/tmp/outputs",
             },
         },
-        context={"thread_id": "thread-1"},
+        context=context,
         config={"metadata": {"model_name": "ark-model", "trace_id": "trace-1"}},
     )
 
@@ -113,7 +116,6 @@ def test_task_tool_rejects_bash_subagent_when_host_bash_disabled(monkeypatch):
 
 def test_task_tool_emits_running_and_completed_events(monkeypatch):
     config = _make_subagent_config()
-    runtime = _make_runtime()
     events = []
     captured = {}
     get_available_tools = MagicMock(return_value=["tool-a", "tool-b"])
@@ -142,7 +144,7 @@ def test_task_tool_emits_running_and_completed_events(monkeypatch):
     monkeypatch.setattr(task_tool_module, "SubagentStatus", FakeSubagentStatus)
     monkeypatch.setattr(task_tool_module, "SubagentExecutor", DummyExecutor)
     monkeypatch.setattr(task_tool_module, "get_subagent_config", lambda _: config)
-    monkeypatch.setattr(task_tool_module, "get_skills_prompt_section", lambda: "Skills Appendix")
+    monkeypatch.setattr(task_tool_module, "get_skills_prompt_section", lambda runtime_agent_context=None: "Skills Appendix" if runtime_agent_context else "")
     monkeypatch.setattr(task_tool_module, "get_background_task_result", lambda _: next(responses))
     monkeypatch.setattr(task_tool_module, "get_stream_writer", lambda: events.append)
     monkeypatch.setattr(task_tool_module.asyncio, "sleep", _no_sleep)
@@ -150,7 +152,7 @@ def test_task_tool_emits_running_and_completed_events(monkeypatch):
     monkeypatch.setattr("deerflow.tools.get_available_tools", get_available_tools)
 
     output = _run_task_tool(
-        runtime=runtime,
+        runtime=_make_runtime(runtime_agent={"skills": [{"name": "demo"}]}),
         description="运行子任务",
         prompt="collect diagnostics",
         subagent_type="general-purpose",
@@ -162,6 +164,7 @@ def test_task_tool_emits_running_and_completed_events(monkeypatch):
     assert captured["prompt"] == "collect diagnostics"
     assert captured["task_id"] == "tc-123"
     assert captured["executor_kwargs"]["thread_id"] == "thread-1"
+    assert captured["executor_kwargs"]["runtime_agent_context"] == {"skills": [{"name": "demo"}]}
     assert captured["executor_kwargs"]["parent_model"] == "ark-model"
     assert captured["executor_kwargs"]["config"].max_turns == 7
     assert "Skills Appendix" in captured["executor_kwargs"]["config"].system_prompt

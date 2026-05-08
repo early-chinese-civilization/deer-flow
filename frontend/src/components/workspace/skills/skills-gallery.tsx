@@ -356,7 +356,11 @@ export function SkillsGallery() {
     }
 
     try {
-      await deleteSkill.mutateAsync(skill.name);
+      await deleteSkill.mutateAsync({
+        skillName: skill.name,
+        skillDefinitionId: skill.skill_definition_id ?? null,
+        skillInstallId: skill.skill_install_id ?? null,
+      });
       toast.success(`${skill.name} ${t.common.delete}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -456,6 +460,7 @@ export function SkillsGallery() {
     try {
       await publishSkill.mutateAsync({
         skillName: publishCandidate.name,
+        skillDefinitionId: publishCandidate.skill_definition_id ?? null,
         releaseNotes: releaseNotes.trim() || null,
       });
       toast.success(t.settings.skills.publishSuccess(publishCandidate.name));

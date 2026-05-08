@@ -69,12 +69,18 @@ export interface SkillForkPackageRequest {
 }
 
 export interface SkillPublishRequest {
+  skill_definition_id?: number | null;
   release_notes?: string | null;
 }
 
 export interface SkillInstallUpdateRequest {
   skill_install_id?: number | null;
   skill_version_id?: number | null;
+}
+
+export interface SkillManagementIdentity {
+  skill_definition_id?: number | null;
+  skill_install_id?: number | null;
 }
 
 export interface SkillUpdateAffectedAgent {
@@ -110,7 +116,11 @@ export async function loadSkills() {
   return json.skills;
 }
 
-export async function enableSkill(skillName: string, enabled: boolean) {
+export async function enableSkill(
+  skillName: string,
+  enabled: boolean,
+  identity: SkillManagementIdentity = {},
+) {
   const response = await fetch(
     `${getBackendBaseURL()}/api/skills/${skillName}`,
     {
@@ -120,6 +130,8 @@ export async function enableSkill(skillName: string, enabled: boolean) {
       },
       body: JSON.stringify({
         enabled,
+        skill_definition_id: identity.skill_definition_id ?? null,
+        skill_install_id: identity.skill_install_id ?? null,
       }),
       credentials: "include",
     },
@@ -127,14 +139,30 @@ export async function enableSkill(skillName: string, enabled: boolean) {
   return response.json();
 }
 
-export async function deleteSkill(skillName: string): Promise<void> {
-  const response = await fetch(
-    `${getBackendBaseURL()}/api/skills/${skillName}`,
-    {
-      method: "DELETE",
-      credentials: "include",
-    },
+export async function deleteSkill(
+  skillName: string,
+  identity: SkillManagementIdentity = {},
+): Promise<void> {
+  const url = new URL(
+    `${getBackendBaseURL()}/api/skills/${encodeURIComponent(skillName)}`,
+    "http://placeholder.local",
   );
+  if (identity.skill_definition_id != null) {
+    url.searchParams.set(
+      "skill_definition_id",
+      String(identity.skill_definition_id),
+    );
+  }
+  if (identity.skill_install_id != null) {
+    url.searchParams.set("skill_install_id", String(identity.skill_install_id));
+  }
+  const requestUrl = getBackendBaseURL()
+    ? url.toString().replace("http://placeholder.local", "")
+    : `${url.pathname}${url.search}`;
+  const response = await fetch(requestUrl, {
+    method: "DELETE",
+    credentials: "include",
+  });
   if (!response.ok) {
     const errorData = (await response.json().catch(() => ({}))) as {
       detail?: string;

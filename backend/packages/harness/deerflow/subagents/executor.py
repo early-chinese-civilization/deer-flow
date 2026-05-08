@@ -132,6 +132,7 @@ class SubagentExecutor:
         thread_data: ThreadDataState | None = None,
         thread_id: str | None = None,
         workspace_id: str | None = None,
+        runtime_agent_context: dict[str, Any] | None = None,
         trace_id: str | None = None,
     ):
         """Initialize the executor.
@@ -144,6 +145,7 @@ class SubagentExecutor:
             thread_data: Thread data from parent agent.
             thread_id: Thread ID for sandbox operations.
             workspace_id: Workspace ID for shared filesystem access.
+            runtime_agent_context: Runtime Agent manifest context for skill_load authorization.
             trace_id: Trace ID from parent for distributed tracing.
         """
         self.config = config
@@ -152,6 +154,7 @@ class SubagentExecutor:
         self.thread_data = thread_data
         self.thread_id = thread_id
         self.workspace_id = workspace_id
+        self.runtime_agent_context = runtime_agent_context
         # Generate trace_id if not provided (for top-level calls)
         self.trace_id = trace_id or str(uuid.uuid4())[:8]
 
@@ -241,6 +244,8 @@ class SubagentExecutor:
             if self.workspace_id:
                 run_config.setdefault("configurable", {})["workspace_id"] = self.workspace_id
                 context["workspace_id"] = self.workspace_id
+            if self.runtime_agent_context is not None:
+                context["runtime_agent"] = self.runtime_agent_context
 
             logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} starting async execution with max_turns={self.config.max_turns}")
 

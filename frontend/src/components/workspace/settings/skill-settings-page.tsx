@@ -23,6 +23,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useI18n } from "@/core/i18n/hooks";
+import { getSkillIdentityKey } from "@/core/skills/display";
 import { useEnableSkill, useSkills } from "@/core/skills/hooks";
 import type { Skill } from "@/core/skills/type";
 import { env } from "@/env";
@@ -104,7 +105,11 @@ function SkillSettingsList({
       )}
       {filteredSkills.length > 0 &&
         filteredSkills.map((skill) => (
-          <Item className="w-full" variant="outline" key={skill.name}>
+          <Item
+            className="w-full"
+            variant="outline"
+            key={getSkillIdentityKey(skill)}
+          >
             <ItemContent>
               <ItemTitle>
                 <div className="flex items-center gap-2">{skill.name}</div>
@@ -118,7 +123,12 @@ function SkillSettingsList({
                 checked={skill.enabled}
                 disabled={env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true"}
                 onCheckedChange={(checked) =>
-                  enableSkill({ skillName: skill.name, enabled: checked })
+                  enableSkill({
+                    skillName: skill.name,
+                    enabled: checked,
+                    skillDefinitionId: skill.skill_definition_id ?? null,
+                    skillInstallId: skill.skill_install_id ?? null,
+                  })
                 }
               />
             </ItemActions>

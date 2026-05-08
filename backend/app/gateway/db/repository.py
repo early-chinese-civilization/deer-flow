@@ -752,6 +752,18 @@ class SkillDefinitionRepository:
     """Persistence helpers for stable skill definitions."""
 
     @staticmethod
+    async def get_by_id(db: AsyncSession, *, skill_definition_id: int) -> SkillDefinition | None:
+        result = await db.execute(
+            select(SkillDefinition)
+            .options(selectinload(SkillDefinition.owner_user))
+            .where(
+                SkillDefinition.id == skill_definition_id,
+                SkillDefinition.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def get_by_identity(
         db: AsyncSession,
         *,
@@ -1263,7 +1275,7 @@ class PendingSkillForkClaimRepository:
                 PendingSkillForkClaim.id == claim_id,
                 PendingSkillForkClaim.user_id == user_id,
                 PendingSkillForkClaim.claim_token_hash == token_hash,
-                PendingSkillForkClaim.status.in_(("pending", "claimed")),
+                PendingSkillForkClaim.status == "pending",
                 PendingSkillForkClaim.expires_at > now,
             )
         )
