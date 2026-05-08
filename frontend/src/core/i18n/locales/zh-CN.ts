@@ -516,9 +516,9 @@ export const zhCN: Translations = {
       forkedSkill: "我的 Skill",
       officialSource: "系统",
       communitySpaceSource: "社区",
-      communitySource: (ownerDisplayName: string) =>
-        `作者 ${ownerDisplayName}`,
-      downloadedSource: (ownerDisplayName: string) => `来自 ${ownerDisplayName}`,
+      communitySource: (ownerDisplayName: string) => `作者 ${ownerDisplayName}`,
+      downloadedSource: (ownerDisplayName: string) =>
+        `来自 ${ownerDisplayName}`,
       forkedSource: (ownerDisplayName: string) => `基于 ${ownerDisplayName}`,
       forkedSourceDetail: (
         sourceName: string,
@@ -526,23 +526,25 @@ export const zhCN: Translations = {
         sourcePlatformVersion: number | null,
       ) =>
         `基于「${sourceName}」，作者 ${ownerDisplayName}${
-          sourcePlatformVersion != null ? ` · 来源版本 ${sourcePlatformVersion}` : ""
+          sourcePlatformVersion != null
+            ? ` · 来源版本 ${sourcePlatformVersion}`
+            : ""
         }`,
       installedSource: "已添加",
       createdSource: "我创建的",
       addToPersonalSpace: "安装",
-      createMyVersion: "基于此创建我的版本",
+      createMyVersion: "下载",
       forkDialogTitle: "下载可编辑副本",
       forkDialogDescription:
         "下载一份包含来源信息的 ZIP 到本机。编辑后回到这里上传，即可创建你的版本。原 Skill 不会被修改。",
       forkUploadBackNotice:
         "在本机编辑文件后，使用上传 Skill 将 ZIP 添加为你的版本。",
       confirmForkDownload: "下载可编辑副本",
-      forkDownloadPending: "准备中...",
-      forkDownloadSuccess: "可编辑副本已下载。编辑后上传 ZIP，即可创建你的版本。",
+      forkDownloadPending: "下载中...",
+      forkDownloadSuccess:
+        "可编辑副本已下载。编辑后上传 ZIP，即可创建你的版本。",
       forkDownloadError: "下载可编辑 Skill 副本失败。",
       viewInPersonalSpace: "在我的 Skills 查看",
-      managePublished: "管理已发布版本",
       publishUpdate: "发布更新",
       publishDialogTitle: "发布技能",
       publishDialogDescription: "发布到 SkillHub 前请确认 Skill 信息。",
@@ -572,8 +574,23 @@ export const zhCN: Translations = {
       conflictConfirm: (skillName: string) =>
         `技能“${skillName}”已存在，是否覆盖？`,
       noMySkills: "我的 Skills 还没有 Skill。",
+      noMySkillsDescription: "上传或已安装的 Skill 会在这里统一管理。",
+      noAuthoredSkills: "还没有我创建的 Skill。",
+      noAuthoredSkillsDescription:
+        "上传 Skill ZIP 后，可以在我的 Skills 中管理和发布。",
+      noInstalledSkills: "还没有已安装的 Skill。",
+      noInstalledSkillsDescription: "从社区 Skills 安装的 Skill 会展示在这里。",
+      noSkillUpdates: "所有 Skills 都是最新版本。",
+      noSkillUpdatesDescription: "有可用更新的已安装 Skill 会展示在这里。",
       noSkillHubSkills: "SkillHub 暂无可用 Skill。",
+      noSkillHubSkillsDescription:
+        "社区发布的 Skill 和系统 Skill 会展示在这里。",
+      noSystemSkills: "暂无系统 Skill。",
+      noSystemSkillsDescription: "可用的系统 Skill 会展示在这里。",
       noCommunitySearchResults: "没有匹配的社区 Skill。",
+      noCommunitySearchResultsDescription: "可以换一个名称或作者再试。",
+      browseCommunitySkills: "浏览社区 Skills",
+      clearSearch: "清空搜索",
     },
     notification: {
       title: "通知",

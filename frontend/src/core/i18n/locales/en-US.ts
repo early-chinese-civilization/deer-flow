@@ -546,9 +546,9 @@ export const enUS: Translations = {
       forkedSkill: "My Skill",
       officialSource: "System",
       communitySpaceSource: "Community",
-      communitySource: (ownerDisplayName: string) =>
-        `By ${ownerDisplayName}`,
-      downloadedSource: (ownerDisplayName: string) => `From ${ownerDisplayName}`,
+      communitySource: (ownerDisplayName: string) => `By ${ownerDisplayName}`,
+      downloadedSource: (ownerDisplayName: string) =>
+        `From ${ownerDisplayName}`,
       forkedSource: (ownerDisplayName: string) =>
         `Based on ${ownerDisplayName}`,
       forkedSourceDetail: (
@@ -564,19 +564,18 @@ export const enUS: Translations = {
       installedSource: "Added",
       createdSource: "Created by me",
       addToPersonalSpace: "Install",
-      createMyVersion: "Create my version",
+      createMyVersion: "Download",
       forkDialogTitle: "Download editable copy",
       forkDialogDescription:
         "Download a ZIP with source attribution. Edit it locally, then upload it here to create your version. The original Skill will not change.",
       forkUploadBackNotice:
         "After editing the files locally, use Upload Skill to add the ZIP as your version.",
       confirmForkDownload: "Download editable copy",
-      forkDownloadPending: "Preparing...",
+      forkDownloadPending: "Downloading...",
       forkDownloadSuccess:
         "Editable copy downloaded. Edit it locally, then upload the ZIP to create your version.",
       forkDownloadError: "Failed to download editable Skill copy.",
       viewInPersonalSpace: "View in My Skills",
-      managePublished: "Manage published version",
       publishUpdate: "Publish update",
       publishDialogTitle: "Publish skill",
       publishDialogDescription:
@@ -608,8 +607,27 @@ export const enUS: Translations = {
       conflictConfirm: (skillName: string) =>
         `Skill "${skillName}" already exists. Do you want to overwrite it?`,
       noMySkills: "No Skills in My Skills yet.",
+      noMySkillsDescription:
+        "Uploaded and installed Skills will appear here for management.",
+      noAuthoredSkills: "No Skills created by you yet.",
+      noAuthoredSkillsDescription:
+        "Upload a Skill ZIP to manage and publish it from My Skills.",
+      noInstalledSkills: "No installed Skills yet.",
+      noInstalledSkillsDescription:
+        "Skills installed from Community Skills will appear here.",
+      noSkillUpdates: "All Skills are up to date.",
+      noSkillUpdatesDescription:
+        "Installed Skills with available updates will appear here.",
       noSkillHubSkills: "No SkillHub Skills available.",
+      noSkillHubSkillsDescription:
+        "Published community Skills and system Skills will appear here.",
+      noSystemSkills: "No system Skills available.",
+      noSystemSkillsDescription:
+        "System Skills will appear here when they are available.",
       noCommunitySearchResults: "No Community Skills match that search.",
+      noCommunitySearchResultsDescription: "Try a different name or author.",
+      browseCommunitySkills: "Browse Community Skills",
+      clearSearch: "Clear search",
     },
     notification: {
       title: "Notification",

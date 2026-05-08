@@ -1,8 +1,9 @@
 "use client";
 
 import {
-  GitForkIcon,
+  DownloadIcon,
   MoreVerticalIcon,
+  PackageIcon,
   SearchIcon,
   UploadIcon,
 } from "lucide-react";
@@ -25,6 +26,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import {
   InputGroup,
   InputGroupAddon,
@@ -60,7 +69,6 @@ import {
   getSkillInstallState,
   getSkillPlatformVersion,
   getSkillWorkspaceCardState,
-  isAuthoredSkillRelation,
   isCommunitySkill,
   isPersonalSkill,
   isSelfAuthoredCommunitySkill,
@@ -73,6 +81,13 @@ import {
 import type { Skill } from "@/core/skills/type";
 
 type SkillsSurface = "community" | "personal";
+
+type SkillGalleryEmptyContent = {
+  title: string;
+  description: string;
+  icon: "search" | "package";
+  action: "clear-search" | "browse-community" | "upload" | null;
+};
 
 const SKILL_SURFACE_SEGMENTS: Record<SkillsSurface, SkillWorkspaceSegment[]> = {
   community: ["all", "system"],
@@ -94,6 +109,12 @@ export function SkillsGallery() {
   const [communitySearch, setCommunitySearch] = useState("");
   const [publishCandidate, setPublishCandidate] = useState<Skill | null>(null);
   const [updateCandidate, setUpdateCandidate] = useState<Skill | null>(null);
+  const [installingSkillKey, setInstallingSkillKey] = useState<string | null>(
+    null,
+  );
+  const [downloadingSkillKey, setDownloadingSkillKey] = useState<string | null>(
+    null,
+  );
   const [releaseNotes, setReleaseNotes] = useState("");
   const updatePreview = usePreviewSkillInstallUpdate(
     updateCandidate?.name ?? null,
@@ -217,11 +238,7 @@ export function SkillsGallery() {
     ) {
       return t.settings.skills.unpublishedChanges;
     }
-    if (
-      display.viewerRelation === "authored_published" ||
-      action === "manage-published" ||
-      action === "manage-owned"
-    ) {
+    if (display.viewerRelation === "authored_published") {
       return t.settings.skills.published;
     }
     if (display.space === "personal" && display.viewerRelation === "authored") {
@@ -247,9 +264,6 @@ export function SkillsGallery() {
         return t.settings.skills.viewInPersonalSpace;
       case "view-update":
         return t.settings.skills.viewUpdate;
-      case "manage-published":
-      case "manage-owned":
-        return t.settings.skills.managePublished;
       case "publish":
         return t.settings.skills.publishSkill;
       case "publish-update":
@@ -264,6 +278,67 @@ export function SkillsGallery() {
       return t.settings.skills.noAffectedAgents;
     }
     return agentNames.join(", ");
+  }
+
+  function getEmptyStateContent(): SkillGalleryEmptyContent {
+    if (surface === "community") {
+      if (communitySearch.trim()) {
+        return {
+          title: t.settings.skills.noCommunitySearchResults,
+          description: t.settings.skills.noCommunitySearchResultsDescription,
+          icon: "search" as const,
+          action: "clear-search" as const,
+        };
+      }
+
+      if (segment === "system") {
+        return {
+          title: t.settings.skills.noSystemSkills,
+          description: t.settings.skills.noSystemSkillsDescription,
+          icon: "package" as const,
+          action: null,
+        };
+      }
+
+      return {
+        title: t.settings.skills.noSkillHubSkills,
+        description: t.settings.skills.noSkillHubSkillsDescription,
+        icon: "package" as const,
+        action: null,
+      };
+    }
+
+    switch (segment) {
+      case "authored":
+        return {
+          title: t.settings.skills.noAuthoredSkills,
+          description: t.settings.skills.noAuthoredSkillsDescription,
+          icon: "package" as const,
+          action: "upload" as const,
+        };
+      case "downloaded":
+        return {
+          title: t.settings.skills.noInstalledSkills,
+          description: t.settings.skills.noInstalledSkillsDescription,
+          icon: "package" as const,
+          action: "browse-community" as const,
+        };
+      case "updates":
+        return {
+          title: t.settings.skills.noSkillUpdates,
+          description: t.settings.skills.noSkillUpdatesDescription,
+          icon: "package" as const,
+          action: null,
+        };
+      case "all":
+      case "system":
+        return {
+          title: t.settings.skills.noMySkills,
+          description: t.settings.skills.noMySkillsDescription,
+          icon: "package" as const,
+          action: "upload" as const,
+        };
+    }
   }
 
   function openUploadDialog() {
@@ -290,7 +365,12 @@ export function SkillsGallery() {
     }
   }
 
-  async function handleInstall(skill: Skill) {
+  async function handleInstall(skill: Skill, skillKey: string) {
+    if (installingSkillKey !== null) {
+      return;
+    }
+
+    setInstallingSkillKey(skillKey);
     try {
       const result = await checkSkillHubInstall(skill.name, {
         owner_user_id: skill.owner_user_id ?? null,
@@ -315,6 +395,8 @@ export function SkillsGallery() {
       toast.error(
         error instanceof Error ? error.message : t.settings.skills.installError,
       );
+    } finally {
+      setInstallingSkillKey(null);
     }
   }
 
@@ -338,7 +420,12 @@ export function SkillsGallery() {
     }
   }
 
-  async function handleDownloadForkPackage(skill: Skill) {
+  async function handleDownloadForkPackage(skill: Skill, skillKey: string) {
+    if (downloadingSkillKey !== null) {
+      return;
+    }
+
+    setDownloadingSkillKey(skillKey);
     try {
       await downloadForkPackage.mutateAsync({
         skillName: skill.name,
@@ -352,6 +439,8 @@ export function SkillsGallery() {
           ? error.message
           : t.settings.skills.forkDownloadError,
       );
+    } finally {
+      setDownloadingSkillKey(null);
     }
   }
 
@@ -521,13 +610,17 @@ export function SkillsGallery() {
         ) : error ? (
           <div className="text-destructive text-sm">{error.message}</div>
         ) : filteredSkills.length === 0 ? (
-          <div className="text-muted-foreground text-sm">
-            {surface === "community" && communitySearch.trim()
-              ? t.settings.skills.noCommunitySearchResults
-              : surface === "community"
-                ? t.settings.skills.noSkillHubSkills
-                : t.settings.skills.noMySkills}
-          </div>
+          <SkillGalleryEmptyState
+            content={getEmptyStateContent()}
+            isUploadPending={uploadSkills.isPending}
+            onBrowseCommunity={() => {
+              setSurface("community");
+              setSegment("all");
+              setCommunitySearch("");
+            }}
+            onClearSearch={() => setCommunitySearch("")}
+            onUpload={openUploadDialog}
+          />
         ) : (
           <div className="space-y-4">
             {filteredSkills.map((skill) => {
@@ -541,7 +634,6 @@ export function SkillsGallery() {
                 skill,
                 installedSkill,
               );
-              const canPublishSkill = isAuthoredSkillRelation(skill);
               const communityActionInstalled =
                 isSelfAuthoredCommunitySkill(skill) ||
                 installState !== "not-installed";
@@ -551,6 +643,10 @@ export function SkillsGallery() {
                 display.space === "community"
                   ? getSkillHubLatestPlatformVersion(skill)
                   : getSkillPlatformVersion(skill);
+              const isInstallingSkill =
+                installingSkillKey === display.identityKey;
+              const isDownloadingSkill =
+                downloadingSkillKey === display.identityKey;
               const primaryActionText = getPrimaryActionText(
                 cardState.primaryAction,
               );
@@ -609,16 +705,16 @@ export function SkillsGallery() {
                           }
                           disabled={
                             communityActionInstalled ||
-                            installSkillHubSkill.isPending
+                            installingSkillKey !== null
                           }
                           onClick={() => {
                             if (!communityActionInstalled) {
-                              void handleInstall(skill);
+                              void handleInstall(skill, display.identityKey);
                             }
                           }}
                         >
-                          {installSkillHubSkill.isPending &&
-                          !communityActionInstalled
+                          <PackageIcon className="size-4" />
+                          {isInstallingSkill && !communityActionInstalled
                             ? t.settings.skills.installPending
                             : communityActionInstalled
                               ? t.settings.skills.installed
@@ -628,13 +724,16 @@ export function SkillsGallery() {
                           <Button
                             size="sm"
                             variant="outline"
-                            disabled={downloadForkPackage.isPending}
+                            disabled={downloadingSkillKey !== null}
                             onClick={() =>
-                              void handleDownloadForkPackage(skill)
+                              void handleDownloadForkPackage(
+                                skill,
+                                display.identityKey,
+                              )
                             }
                           >
-                            <GitForkIcon className="mr-1.5 h-4 w-4" />
-                            {downloadForkPackage.isPending
+                            <DownloadIcon className="size-4" />
+                            {isDownloadingSkill
                               ? t.settings.skills.forkDownloadPending
                               : t.settings.skills.createMyVersion}
                           </Button>
@@ -645,9 +744,6 @@ export function SkillsGallery() {
                         {primaryActionText ? (
                           <Button
                             size="sm"
-                            disabled={
-                              cardState.primaryAction === "manage-owned"
-                            }
                             variant={
                               cardState.primaryAction === "publish" ||
                               cardState.primaryAction === "publish-update"
@@ -689,27 +785,6 @@ export function SkillsGallery() {
                             >
                               {t.common.delete}
                             </DropdownMenuItem>
-                            {installState === "update-available" ? (
-                              <DropdownMenuItem
-                                onSelect={() => {
-                                  setUpdateCandidate(skill);
-                                }}
-                              >
-                                {t.settings.skills.viewUpdate}
-                              </DropdownMenuItem>
-                            ) : null}
-                            {canPublishSkill ? (
-                              <DropdownMenuItem
-                                onSelect={() => {
-                                  setReleaseNotes("");
-                                  setPublishCandidate(skill);
-                                }}
-                              >
-                                {cardState.primaryAction === "publish-update"
-                                  ? t.settings.skills.publishUpdate
-                                  : t.settings.skills.publishSkill}
-                              </DropdownMenuItem>
-                            ) : null}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
@@ -925,5 +1000,53 @@ export function SkillsGallery() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function SkillGalleryEmptyState({
+  content,
+  isUploadPending,
+  onBrowseCommunity,
+  onClearSearch,
+  onUpload,
+}: {
+  content: SkillGalleryEmptyContent;
+  isUploadPending: boolean;
+  onBrowseCommunity: () => void;
+  onClearSearch: () => void;
+  onUpload: () => void;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <Empty className="bg-muted/10 mt-6 min-h-72 border">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          {content.icon === "search" ? <SearchIcon /> : <PackageIcon />}
+        </EmptyMedia>
+        <EmptyTitle>{content.title}</EmptyTitle>
+        <EmptyDescription>{content.description}</EmptyDescription>
+      </EmptyHeader>
+      {content.action ? (
+        <EmptyContent>
+          {content.action === "clear-search" ? (
+            <Button variant="outline" onClick={onClearSearch}>
+              {t.settings.skills.clearSearch}
+            </Button>
+          ) : content.action === "browse-community" ? (
+            <Button variant="outline" onClick={onBrowseCommunity}>
+              {t.settings.skills.browseCommunitySkills}
+            </Button>
+          ) : (
+            <Button onClick={onUpload} disabled={isUploadPending}>
+              <UploadIcon className="size-4" />
+              {isUploadPending
+                ? t.settings.skills.uploadPending
+                : t.settings.skills.uploadSkill}
+            </Button>
+          )}
+        </EmptyContent>
+      ) : null}
+    </Empty>
   );
 }

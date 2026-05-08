@@ -390,6 +390,26 @@ void test("classifies authored Personal Space upload with version and publish st
   assert.equal(skillMatchesWorkspaceSegment(authored, "downloaded"), false);
 });
 
+void test("published authored Personal Space rows have no no-op manage action", () => {
+  const published = skill({
+    category: "custom",
+    space: "personal",
+    source_kind: "personal",
+    viewer_relation: "authored_published",
+    skill_install_id: 702,
+    skill_definition_id: 701,
+    current_platform_version: 2,
+  });
+
+  assert.deepEqual(getSkillWorkspaceCardState(published), {
+    role: "authored-published",
+    primaryAction: "none",
+    segments: ["all", "authored"],
+  });
+  assert.equal(skillMatchesWorkspaceSegment(published, "authored"), true);
+  assert.equal(skillMatchesWorkspaceSegment(published, "updates"), false);
+});
+
 void test("treats publisher's own Community listing as discovery-only", () => {
   const ownPublishedListing = skill({
     space: "community",
@@ -408,6 +428,7 @@ void test("treats publisher's own Community listing as discovery-only", () => {
     getSkillWorkspaceCardState(ownPublishedListing).primaryAction,
     "none",
   );
+  assert.equal(canCreateMyVersionFromSkillHubItem(ownPublishedListing), false);
 });
 
 void test("uses install action and System segment for Community discovery rows", () => {
@@ -652,13 +673,7 @@ void test("filters Community Space by first-class Skill name and author fields",
   );
   assert.deepEqual(
     rows.filter((row) => skillMatchesCommunitySearch(row, "community")),
-    [
-      community,
-      downloaded,
-      updateAvailable,
-      sameNameAlice,
-      sameNameBob,
-    ],
+    [community, downloaded, updateAvailable, sameNameAlice, sameNameBob],
   );
   assert.deepEqual(
     [

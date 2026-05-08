@@ -478,7 +478,6 @@ export interface Translations {
       forkDownloadSuccess: string;
       forkDownloadError: string;
       viewInPersonalSpace: string;
-      managePublished: string;
       publishUpdate: string;
       publishDialogTitle: string;
       publishDialogDescription: string;
@@ -504,8 +503,21 @@ export interface Translations {
       deleteBlocked: (agentName: string) => string;
       conflictConfirm: (skillName: string) => string;
       noMySkills: string;
+      noMySkillsDescription: string;
+      noAuthoredSkills: string;
+      noAuthoredSkillsDescription: string;
+      noInstalledSkills: string;
+      noInstalledSkillsDescription: string;
+      noSkillUpdates: string;
+      noSkillUpdatesDescription: string;
       noSkillHubSkills: string;
+      noSkillHubSkillsDescription: string;
+      noSystemSkills: string;
+      noSystemSkillsDescription: string;
       noCommunitySearchResults: string;
+      noCommunitySearchResultsDescription: string;
+      browseCommunitySkills: string;
+      clearSearch: string;
     };
     notification: {
       title: string;
