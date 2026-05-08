@@ -27,11 +27,18 @@ export function useEnableSkill() {
     mutationFn: async ({
       skillName,
       enabled,
+      skillDefinitionId,
+      skillInstallId,
     }: {
       skillName: string;
       enabled: boolean;
+      skillDefinitionId?: number | null;
+      skillInstallId?: number | null;
     }) => {
-      await enableSkill(skillName, enabled);
+      await enableSkill(skillName, enabled, {
+        skill_definition_id: skillDefinitionId,
+        skill_install_id: skillInstallId,
+      });
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["skills"] });
@@ -42,7 +49,19 @@ export function useEnableSkill() {
 export function useDeleteSkill() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (skillName: string) => deleteSkill(skillName),
+    mutationFn: async ({
+      skillName,
+      skillDefinitionId,
+      skillInstallId,
+    }: {
+      skillName: string;
+      skillDefinitionId?: number | null;
+      skillInstallId?: number | null;
+    }) =>
+      deleteSkill(skillName, {
+        skill_definition_id: skillDefinitionId,
+        skill_install_id: skillInstallId,
+      }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["skills"] });
     },
@@ -149,11 +168,17 @@ export function usePublishSkill() {
   return useMutation({
     mutationFn: async ({
       skillName,
+      skillDefinitionId,
       releaseNotes,
     }: {
       skillName: string;
+      skillDefinitionId?: number | null;
       releaseNotes?: string | null;
-    }) => publishSkill(skillName, { release_notes: releaseNotes }),
+    }) =>
+      publishSkill(skillName, {
+        skill_definition_id: skillDefinitionId,
+        release_notes: releaseNotes,
+      }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["skills"] });
     },

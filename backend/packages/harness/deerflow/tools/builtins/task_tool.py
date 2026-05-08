@@ -72,7 +72,13 @@ async def task_tool(
     # Build config overrides
     overrides: dict = {}
 
-    skills_section = get_skills_prompt_section()
+    runtime_agent_context = None
+    if runtime is not None and isinstance(runtime.context, dict):
+        candidate_runtime_agent = runtime.context.get("runtime_agent")
+        if isinstance(candidate_runtime_agent, dict):
+            runtime_agent_context = candidate_runtime_agent
+
+    skills_section = get_skills_prompt_section(runtime_agent_context=runtime_agent_context) if runtime_agent_context is not None else ""
     if skills_section:
         overrides["system_prompt"] = config.system_prompt + "\n\n" + skills_section
 
@@ -123,6 +129,7 @@ async def task_tool(
         thread_data=thread_data,
         thread_id=thread_id,
         workspace_id=workspace_id,
+        runtime_agent_context=runtime_agent_context if skills_section else None,
         trace_id=trace_id,
     )
 

@@ -313,8 +313,11 @@ def test_get_skill_includes_public_platform_version_and_publish_metadata(monkeyp
     version = _version(2)
     release = _release(12, version)
 
-    async def get_visible_skill_by_name(db_arg, *, user_id, name):
-        return public
+    async def list_user_skills_by_name(db_arg, *, user_id, name):
+        return []
+
+    async def list_public_skills_by_name(db_arg, *, name):
+        return [public]
 
     async def get_latest_release_for_public_skill(db_arg, *, published_skill_id):
         return release
@@ -325,7 +328,8 @@ def test_get_skill_includes_public_platform_version_and_publish_metadata(monkeyp
     async def get_install_by_user_and_definition(db_arg, *, user_id, skill_definition_id):
         return None
 
-    monkeypatch.setattr(skills_router.SkillRepository, "get_visible_skill_by_name", get_visible_skill_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_user_skills_by_name", list_user_skills_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_public_skills_by_name", list_public_skills_by_name)
     monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_release_for_public_skill", get_latest_release_for_public_skill)
     monkeypatch.setattr(skills_router.SkillVersionRepository, "get_by_id", get_version_by_id)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_definition", get_install_by_user_and_definition)
@@ -669,6 +673,10 @@ def test_manual_update_install_switches_current_platform_version(monkeypatch):
         install.current_version_id = version.id
         return install
 
+    async def get_by_id_for_user(db_arg, *, user_id, skill_install_id):
+        assert skill_install_id == install.id
+        return install
+
     async def list_bound_agents_for_install(db_arg, *, user_id, skill_install_id):
         return []
 
@@ -685,6 +693,7 @@ def test_manual_update_install_switches_current_platform_version(monkeypatch):
     monkeypatch.setattr(skills_router.SkillInstallRepository, "list_by_user_and_name", list_installs_by_user_and_name)
     monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_published_release_by_version_id", get_published_release_by_version_id)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "update_current_version", update_current_version)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_id_for_user", get_by_id_for_user)
     monkeypatch.setattr(skills_router.SkillRepository, "list_bound_agents_for_install", list_bound_agents_for_install)
     monkeypatch.setattr(skills_router.SkillRepository, "create_skill", create_skill)
     monkeypatch.setattr(skills_router.SkillRepository, "rebind_agent_skills", rebind_agent_skills)
@@ -702,9 +711,9 @@ def test_manual_update_install_switches_current_platform_version(monkeypatch):
 
     assert db.commits == 1
     assert install.current_version_id == v2.id
-    assert response.current_platform_version == 1
+    assert response.current_platform_version == 2
     assert response.target_platform_version == 2
-    assert response.update_available is True
+    assert response.update_available is False
     assert touched_user_skill is False
     assert touched_agent_bindings is False
 
@@ -745,6 +754,99 @@ def test_update_preview_uses_selected_install_id_for_same_name_collision(monkeyp
 
     assert response.skill_install_id == install.id
     assert response.status == "up_to_date"
+
+
+def test_delete_installed_skill_row_does_not_delete_immutable_artifact(tmp_path, monkeypatch):
+    db = FakeDb()
+    artifact_uri = "artifacts/skills/100/v1/demo-skill"
+    artifact_dir = tmp_path / artifact_uri
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "SKILL.md").write_text("artifact", encoding="utf-8")
+    user_skill = _custom_skill(104, "demo-skill")
+    user_skill.skill_definition_id = 100
+    user_skill.file_path = artifact_uri
+    deleted = {"called": False}
+
+    async def list_user_skills_by_name(db_arg, *, user_id, name):
+        return [user_skill]
+
+    async def list_bound_agent_names_for_skill(db_arg, *, user_id, skill_id):
+        return []
+
+    async def get_by_user_and_definition(db_arg, *, user_id, skill_definition_id):
+        return None
+
+    async def soft_delete_skill(db_arg, *, skill, commit=True):
+        deleted["called"] = True
+        assert skill is user_skill
+        if commit:
+            await db_arg.commit()
+
+    monkeypatch.setattr(skills_router, "_get_skills_root_dir", lambda: tmp_path)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_user_skills_by_name", list_user_skills_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_bound_agent_names_for_skill", list_bound_agent_names_for_skill)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_definition", get_by_user_and_definition)
+    monkeypatch.setattr(skills_router.SkillRepository, "soft_delete_skill", soft_delete_skill)
+
+    async def run():
+        await skills_router.delete_skill("demo-skill", current_user=_user(), db=db)
+
+    asyncio.run(run())
+
+    assert deleted["called"] is True
+    assert artifact_dir.exists()
+
+
+def test_name_only_public_lookup_rejects_same_name_ambiguity(monkeypatch):
+    first = _public_skill(101, "demo-skill")
+    first.skill_definition_id = 201
+    second = _public_skill(102, "demo-skill")
+    second.skill_definition_id = 202
+
+    async def list_public_skills_by_name(db_arg, *, name):
+        return [first, second]
+
+    monkeypatch.setattr(skills_router.SkillRepository, "list_public_skills_by_name", list_public_skills_by_name)
+
+    async def run():
+        return await skills_router._get_download_source_skill(
+            FakeDb(),
+            skill_name="demo-skill",
+            owner_user_id=None,
+            skill_definition_id=None,
+        )
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(run())
+
+    assert exc.value.status_code == 400
+    assert "ambiguous" in exc.value.detail
+
+
+def test_fork_claim_lookup_only_accepts_pending_status():
+    captured = {}
+
+    class Result:
+        def scalar_one_or_none(self):
+            return None
+
+    class Db:
+        async def execute(self, stmt):
+            captured["sql"] = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+            return Result()
+
+    async def run():
+        return await skills_router.PendingSkillForkClaimRepository.get_valid_claim(
+            Db(),
+            claim_id=10,
+            user_id=7,
+            claim_token="token",
+            now=datetime(2026, 5, 8, 0, 0, tzinfo=UTC),
+        )
+
+    assert asyncio.run(run()) is None
+    assert "pending_skill_fork_claims.status = 'pending'" in captured["sql"]
+    assert "pending_skill_fork_claims.status IN" not in captured["sql"]
 
 
 def test_update_preview_is_read_only_and_lists_affected_agents(monkeypatch):
@@ -964,6 +1066,9 @@ def test_delete_skill_blocks_install_backed_agent_binding(monkeypatch):
     async def get_user_skill_by_name(db_arg, *, user_id, name):
         return user_skill
 
+    async def list_user_skills_by_name(db_arg, *, user_id, name):
+        return [user_skill]
+
     async def list_bound_agent_names_for_skill(db_arg, *, user_id, skill_id):
         return []
 
@@ -982,6 +1087,7 @@ def test_delete_skill_blocks_install_backed_agent_binding(monkeypatch):
         deleted_directory = True
 
     monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_name", get_user_skill_by_name)
+    monkeypatch.setattr(skills_router.SkillRepository, "list_user_skills_by_name", list_user_skills_by_name)
     monkeypatch.setattr(skills_router.SkillRepository, "list_bound_agent_names_for_skill", list_bound_agent_names_for_skill)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_definition", get_by_user_and_definition)
     monkeypatch.setattr(skills_router.SkillRepository, "list_bound_agents_for_install", list_bound_agents_for_install)

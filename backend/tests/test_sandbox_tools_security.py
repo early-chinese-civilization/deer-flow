@@ -366,6 +366,7 @@ def test_local_bash_skills_paths_use_runtime_manifest_allowlist(tmp_path) -> Non
     artifact_dir.mkdir(parents=True)
     public_dir.mkdir(parents=True)
     (artifact_dir / "SKILL.md").write_text("authorized", encoding="utf-8")
+    file_manifest_hash = hash_skill_file_manifest(artifact_dir)
     (public_dir / "SKILL.md").write_text("public latest", encoding="utf-8")
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
@@ -378,6 +379,7 @@ def test_local_bash_skills_paths_use_runtime_manifest_allowlist(tmp_path) -> Non
                         "file_path": "artifacts/skills/1/v1/probe-skill",
                         "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
                         "skill_version_id": 101,
+                        "file_manifest_hash": file_manifest_hash,
                     }
                 ]
             }
@@ -415,6 +417,7 @@ def test_skill_load_uses_runtime_virtual_mapping_for_manifest_artifact(tmp_path:
     skill_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "sql-review"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text("review sql", encoding="utf-8")
+    file_manifest_hash = hash_skill_file_manifest(skill_dir)
 
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
@@ -427,6 +430,7 @@ def test_skill_load_uses_runtime_virtual_mapping_for_manifest_artifact(tmp_path:
                         "file_path": "artifacts/skills/1/v1/sql-review",
                         "virtual_path": "/mnt/skills/sql-review/SKILL.md",
                         "skill_version_id": 1,
+                        "file_manifest_hash": file_manifest_hash,
                     }
                 ]
             }
@@ -452,6 +456,7 @@ def test_skill_load_rejects_paths_not_in_runtime_allowlist(tmp_path: Path) -> No
     skill_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "sql-review"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text("review sql", encoding="utf-8")
+    file_manifest_hash = hash_skill_file_manifest(skill_dir)
 
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
@@ -464,6 +469,7 @@ def test_skill_load_rejects_paths_not_in_runtime_allowlist(tmp_path: Path) -> No
                         "file_path": "artifacts/skills/1/v1/sql-review",
                         "virtual_path": "/mnt/skills/sql-review/SKILL.md",
                         "skill_version_id": 1,
+                        "file_manifest_hash": file_manifest_hash,
                     }
                 ]
             }
@@ -501,6 +507,7 @@ def test_skill_load_rejects_manifest_artifact_traversal_to_public_latest(tmp_pat
                         "file_path": "artifacts/../public/sql-review",
                         "virtual_path": "/mnt/skills/sql-review/SKILL.md",
                         "skill_version_id": 1,
+                        "file_manifest_hash": "expected-file-manifest-hash",
                     }
                 ]
             }
@@ -528,6 +535,7 @@ def test_ls_uses_runtime_virtual_mapping_for_skill_directories(tmp_path: Path) -
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text("table skill", encoding="utf-8")
     (skill_dir / "notes.md").write_text("notes", encoding="utf-8")
+    file_manifest_hash = hash_skill_file_manifest(skill_dir)
 
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
@@ -540,6 +548,7 @@ def test_ls_uses_runtime_virtual_mapping_for_skill_directories(tmp_path: Path) -
                         "file_path": "artifacts/skills/2/v1/table-tools",
                         "virtual_path": "/mnt/skills/table-tools/SKILL.md",
                         "skill_version_id": 1,
+                        "file_manifest_hash": file_manifest_hash,
                     }
                 ]
             }
@@ -573,6 +582,7 @@ def test_ls_skills_root_lists_runtime_skill_directories() -> None:
                         "file_path": "artifacts/skills/1/v1/chart-visualization",
                         "virtual_path": "/mnt/skills/chart-visualization/SKILL.md",
                         "skill_version_id": 1,
+                        "file_manifest_hash": "chart-hash",
                     },
                     {
                         "name": "table-tools",
@@ -580,6 +590,7 @@ def test_ls_skills_root_lists_runtime_skill_directories() -> None:
                         "file_path": "artifacts/skills/2/v1/table-tools",
                         "virtual_path": "/mnt/skills/table-tools/SKILL.md",
                         "skill_version_id": 2,
+                        "file_manifest_hash": "table-hash",
                     },
                 ]
             }

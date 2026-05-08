@@ -665,9 +665,9 @@ def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_
         current_user["value"] = installer
         update = client.post("/api/skills/probe-skill/update-install", json={})
         assert update.status_code == 200, update.text
-        assert update.json()["current_skill_version_id"] == v1.id
+        assert update.json()["current_skill_version_id"] == v2.id
         assert update.json()["target_skill_version_id"] == v2.id
-        assert update.json()["update_available"] is True
+        assert update.json()["update_available"] is False
         assert installer_install.current_version_id == v2.id
 
         after_update_manifest, after_update_load, public_denied, legacy_denied, missing_denied = manifest_and_load(v2.id)
@@ -1323,7 +1323,7 @@ def test_skill_load_reads_manifest_artifact_and_denies_public_latest_same_name(t
     skills_root = tmp_path / "skills"
     v1_uri = "artifacts/skills/1/v1-aaa/probe-skill"
     public_uri = "public/probe-skill"
-    _write_artifact(skills_root, v1_uri, "SKILL_RUNTIME_OK_V1")
+    v1_file_manifest_hash = _write_artifact(skills_root, v1_uri, "SKILL_RUNTIME_OK_V1")
     _write_artifact(skills_root, public_uri, "SKILL_RUNTIME_OK_V2")
 
     runtime = SimpleNamespace(
@@ -1339,6 +1339,7 @@ def test_skill_load_reads_manifest_artifact_and_denies_public_latest_same_name(t
                         "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
                         "skill_version_id": 101,
                         "version_number": 1,
+                        "file_manifest_hash": v1_file_manifest_hash,
                     }
                 ],
             }
@@ -1365,3 +1366,45 @@ def test_skill_load_reads_manifest_artifact_and_denies_public_latest_same_name(t
 
     assert loaded == "SKILL_RUNTIME_OK_V1"
     assert "Permission denied" in denied
+
+
+def test_skill_load_rejects_manifest_artifact_hash_drift(tmp_path):
+    skills_root = tmp_path / "skills"
+    v1_uri = "artifacts/skills/1/v1-aaa/probe-skill"
+    expected_hash = _write_artifact(skills_root, v1_uri, "SKILL_RUNTIME_OK_V1")
+    (skills_root / v1_uri / "SKILL.md").write_text("DRIFTED", encoding="utf-8")
+
+    runtime = SimpleNamespace(
+        state={"thread_data": {"thread_id": "thread-1", "workspace_path": str(tmp_path)}},
+        context={
+            "runtime_agent": {
+                "manifest_id": "manifest-1",
+                "skills": [
+                    {
+                        "name": "probe-skill",
+                        "artifact_uri": v1_uri,
+                        "file_path": v1_uri,
+                        "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
+                        "skill_version_id": 101,
+                        "version_number": 1,
+                        "file_manifest_hash": expected_hash,
+                    }
+                ],
+            }
+        },
+        config={},
+    )
+
+    from unittest.mock import patch
+
+    with (
+        patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"),
+        patch("deerflow.sandbox.tools._get_skills_host_path", return_value=str(skills_root)),
+    ):
+        loaded = skill_load_tool.func(
+            runtime=runtime,
+            description="load drifted probe",
+            path="/mnt/skills/probe-skill/SKILL.md",
+        )
+
+    assert "file manifest hash mismatch" in loaded

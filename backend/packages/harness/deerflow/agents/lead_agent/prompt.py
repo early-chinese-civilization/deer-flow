@@ -43,6 +43,9 @@ def build_runtime_skill_descriptors(skills: list[dict] | None, *, container_base
         skill_version_id = skill.get("skill_version_id")
         if skill_version_id is None:
             continue
+        file_manifest_hash = skill.get("file_manifest_hash")
+        if not isinstance(file_manifest_hash, str) or not file_manifest_hash.strip():
+            continue
         descriptors.append(
             {
                 "name": normalized_name,
@@ -51,7 +54,7 @@ def build_runtime_skill_descriptors(skills: list[dict] | None, *, container_base
                 "skill_version_id": str(skill_version_id),
                 "version_number": str(skill.get("version_number") or ""),
                 "content_hash": str(skill.get("content_hash") or ""),
-                "file_manifest_hash": str(skill.get("file_manifest_hash") or ""),
+                "file_manifest_hash": file_manifest_hash.strip(),
             }
         )
     return descriptors

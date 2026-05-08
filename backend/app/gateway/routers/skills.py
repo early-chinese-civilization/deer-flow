@@ -221,11 +221,14 @@ class SkillUpdateRequest(BaseModel):
     """Request model for updating a skill."""
 
     enabled: bool = Field(..., description="Whether to enable or disable the skill")
+    skill_definition_id: int | None = Field(default=None, description="Selected SkillDefinition ID used to disambiguate same-name Skills")
+    skill_install_id: int | None = Field(default=None, description="Selected SkillInstall ID used to disambiguate same-name installed Skills")
 
 
 class SkillPublishRequest(BaseModel):
     """Request body for publishing the current installed SkillVersion to SkillHub."""
 
+    skill_definition_id: int | None = Field(default=None, description="Selected authored SkillDefinition ID used to disambiguate same-name Skills")
     release_notes: str | None = Field(
         default=None,
         max_length=4000,
@@ -692,13 +695,91 @@ def _resolve_skill_record_dir(skill: Skill) -> Path:
     raw_path = Path(skill.file_path)
     if raw_path.is_absolute():
         return raw_path.resolve()
-    return _resolve_skill_dir(
-        normalize_skill_file_path(
-            skill.file_path,
-            user_id=skill.user_id,
-            skill_name=skill.name,
-        )
+    normalized = str(skill.file_path or "").replace("\\", "/").strip("/")
+    if normalized.startswith("skills/"):
+        normalized = normalized.removeprefix("skills/")
+    if not normalized or (skill.user_id is not None and normalized.startswith("custom/")):
+        normalized = normalize_skill_file_path(skill.file_path, user_id=skill.user_id, skill_name=skill.name)
+    return _resolve_skill_dir(normalized)
+
+
+def _is_immutable_artifact_path(file_path: str | None) -> bool:
+    normalized = str(file_path or "").replace("\\", "/").strip("/")
+    return normalized == "artifacts" or normalized.startswith("artifacts/")
+
+
+def _build_definition_editable_skill_file_path(*, user_id: int, skill_name: str, skill_definition_id: int) -> str:
+    return f"{user_id}/definitions/{skill_definition_id}/{skill_name}"
+
+
+def _dedupe_public_candidates(skills: list[Skill]) -> list[Skill]:
+    deduped: list[Skill] = []
+    seen: set[tuple[int | None, int | None, str]] = set()
+    for skill in skills:
+        key = (skill.skill_definition_id, skill.owner_user_id, skill.file_path)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(skill)
+    return deduped
+
+
+async def _get_public_skill_by_name_compat(
+    db: AsyncSession,
+    *,
+    skill_name: str,
+    owner_user_id: int | None = None,
+) -> Skill | None:
+    """Resolve a legacy public name lookup only when it selects one candidate."""
+    candidates = (
+        await SkillRepository.list_public_skills_by_name_and_owner(db, name=skill_name, owner_user_id=owner_user_id)
+        if owner_user_id is not None
+        else await SkillRepository.list_public_skills_by_name(db, name=skill_name)
     )
+    candidates = _dedupe_public_candidates(candidates)
+    if not candidates:
+        return None
+    if len(candidates) > 1:
+        raise HTTPException(status_code=400, detail=f"Community Skill '{skill_name}' is ambiguous; submit skill_definition_id")
+    return candidates[0]
+
+
+async def _get_user_skill_by_name_compat(db: AsyncSession, *, user_id: int, skill_name: str) -> Skill | None:
+    """Resolve a legacy current-user name lookup only when it selects one row."""
+    candidates = await SkillRepository.list_user_skills_by_name(db, user_id=user_id, name=skill_name)
+    if not candidates:
+        return None
+    if len(candidates) > 1:
+        raise HTTPException(status_code=400, detail=f"Skill '{skill_name}' is ambiguous; submit skill_definition_id or skill_install_id")
+    return candidates[0]
+
+
+async def _get_user_skill_for_management(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    skill_name: str,
+    skill_definition_id: int | None = None,
+    skill_install_id: int | None = None,
+) -> Skill | None:
+    """Resolve the selected My Skills row without collapsing same-name identities."""
+    if skill_install_id is not None:
+        install = await _get_update_install(db, user_id=user_id, skill_name=skill_name, skill_install_id=skill_install_id)
+        return await SkillRepository.get_user_skill_by_definition(db, user_id=user_id, skill_definition_id=install.skill_definition_id)
+
+    if skill_definition_id is not None:
+        definition = await SkillDefinitionRepository.get_by_id(db, skill_definition_id=skill_definition_id)
+        if definition is None or definition.name != skill_name:
+            raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+        return await SkillRepository.get_user_skill_by_definition(db, user_id=user_id, skill_definition_id=skill_definition_id)
+
+    return await _get_user_skill_by_name_compat(db, user_id=user_id, skill_name=skill_name)
+
+
+async def _delete_editable_skill_directory(skill: Skill) -> None:
+    if _is_immutable_artifact_path(skill.file_path):
+        return
+    await asyncio.to_thread(_delete_skill_directory, _resolve_skill_record_dir(skill))
 
 
 def _is_skill_version_artifact_available(version: SkillVersion) -> bool:
@@ -793,8 +874,17 @@ async def _resolve_publish_definition_or_reject_downloaded(
     *,
     user_id: int,
     skill_name: str,
+    skill_definition_id: int | None = None,
 ) -> SkillDefinition | None:
     """Resolve the current user's publishable definition, or reject downloaded same-name installs."""
+    if skill_definition_id is not None:
+        definition = await SkillDefinitionRepository.get_by_id(db, skill_definition_id=skill_definition_id)
+        if definition is None or definition.name != skill_name:
+            raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+        if not _definition_is_publishable_by_user(definition, user_id=user_id):
+            raise HTTPException(status_code=403, detail=f"Skill '{skill_name}' was downloaded from Community Space. Create your own version before publishing it.")
+        return definition
+
     definition = await SkillDefinitionRepository.get_by_name_and_owner(db, name=skill_name, owner_user_id=user_id)
     if definition is not None:
         return definition
@@ -1258,9 +1348,9 @@ async def _get_download_source_skill(
         if skill is None or skill.name != skill_name:
             return None
         return skill
-    return await SkillRepository.get_public_skill_by_name_and_owner(
+    return await _get_public_skill_by_name_compat(
         db,
-        name=skill_name,
+        skill_name=skill_name,
         owner_user_id=owner_user_id,
     )
 
@@ -1450,8 +1540,6 @@ async def upload_skills(
                 description = ""
             description = description.strip()
 
-            target_path = build_private_skill_file_path(current_user.id, skill_name)
-            target_dir = _resolve_skill_dir(target_path)
             version, created_version, definition = await _ensure_skill_version_from_dir(
                 db,
                 user_id=current_user.id,
@@ -1473,6 +1561,8 @@ async def upload_skills(
                 skill_name=skill_name,
                 skill_definition_id=definition.id,
             )
+            target_path = _build_definition_editable_skill_file_path(user_id=current_user.id, skill_name=skill_name, skill_definition_id=definition.id)
+            target_dir = _resolve_skill_dir(target_path)
             await SkillInstallRepository.upsert_install(
                 db,
                 user_id=current_user.id,
@@ -1519,11 +1609,14 @@ async def upload_skills(
             await asyncio.to_thread(_replace_skill_directory, skill_dir, target_dir)
 
             if existing_skill is not None:
+                old_file_path = existing_skill.file_path
                 existing_skill.display_name = skill_name
                 existing_skill.description = description
                 existing_skill.file_path = target_path
                 existing_skill.skill_definition_id = definition.id
                 await db.flush()
+                if old_file_path != target_path and not _is_immutable_artifact_path(old_file_path):
+                    await asyncio.to_thread(_delete_skill_directory, _resolve_skill_dir(old_file_path))
                 action = "updated"
             else:
                 await SkillRepository.create_skill(
@@ -1866,7 +1959,17 @@ async def update_skill_install(
             )
 
         await db.commit()
-        return preview
+        refreshed_install = await SkillInstallRepository.get_by_id_for_user(db, user_id=current_user.id, skill_install_id=install.id)
+        if refreshed_install is None:
+            raise HTTPException(status_code=500, detail=f"Failed to load updated install for '{skill_name}'")
+        return await _build_skill_update_preview(
+            db,
+            skill_name=skill_name,
+            current_user=current_user,
+            install=refreshed_install,
+            target_version=version,
+            target_release=release,
+        )
     except HTTPException:
         await db.rollback()
         raise
@@ -1917,7 +2020,12 @@ async def publish_skill(
     artifact_committed = False
     try:
         _log_publish_phase(phase=phase, skill_name=skill_name, publisher_user_id=current_user.id)
-        definition = await _resolve_publish_definition_or_reject_downloaded(db, user_id=current_user.id, skill_name=skill_name)
+        definition = await _resolve_publish_definition_or_reject_downloaded(
+            db,
+            user_id=current_user.id,
+            skill_name=skill_name,
+            skill_definition_id=request.skill_definition_id if request is not None else None,
+        )
         if definition is None:
             raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
         custom_skill = await _get_user_skill_by_definition_or_legacy(
@@ -2045,7 +2153,9 @@ async def get_skill(
     db: AsyncSession = Depends(get_db),
 ) -> SkillResponse:
     try:
-        skill = await SkillRepository.get_visible_skill_by_name(db, user_id=current_user.id, name=skill_name)
+        skill = await _get_user_skill_by_name_compat(db, user_id=current_user.id, skill_name=skill_name)
+        if skill is None:
+            skill = await _get_public_skill_by_name_compat(db, skill_name=skill_name)
         if skill is None:
             raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
 
@@ -2069,16 +2179,21 @@ async def update_skill(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SkillResponse:
-    del request
     try:
-        user_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
+        user_skill = await _get_user_skill_for_management(
+            db,
+            user_id=current_user.id,
+            skill_name=skill_name,
+            skill_definition_id=request.skill_definition_id,
+            skill_install_id=request.skill_install_id,
+        )
         if user_skill is not None:
-            updated_skill = await SkillRepository.touch_user_skill(db, user_id=current_user.id, name=skill_name)
-            if updated_skill is None:
-                raise HTTPException(status_code=500, detail=f"Failed to refresh skill '{skill_name}'")
-            return await _skill_to_response_with_metadata(db, updated_skill, current_user_id=current_user.id)
+            user_skill.updated_at = datetime.now(UTC)
+            await db.commit()
+            await db.refresh(user_skill)
+            return await _skill_to_response_with_metadata(db, user_skill, current_user_id=current_user.id)
 
-        public_skill = await SkillRepository.get_public_skill_by_name(db, name=skill_name)
+        public_skill = await _get_public_skill_by_name_compat(db, skill_name=skill_name)
         if public_skill is not None:
             raise HTTPException(status_code=403, detail=f"Skill '{skill_name}' is public and cannot be modified")
 
@@ -2098,11 +2213,19 @@ async def update_skill(
 )
 async def delete_skill(
     skill_name: str,
+    skill_definition_id: int | None = None,
+    skill_install_id: int | None = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     try:
-        user_skill = await SkillRepository.get_user_skill_by_name(db, user_id=current_user.id, name=skill_name)
+        user_skill = await _get_user_skill_for_management(
+            db,
+            user_id=current_user.id,
+            skill_name=skill_name,
+            skill_definition_id=skill_definition_id,
+            skill_install_id=skill_install_id,
+        )
         if user_skill is not None:
             bound_agent_names = await SkillRepository.list_bound_agent_names_for_skill(
                 db,
@@ -2130,11 +2253,11 @@ async def delete_skill(
                     detail=f"Skill '{skill_name}' is bound to agent '{bound_agent_names[0]}' and cannot be deleted",
                 )
 
-            await asyncio.to_thread(_delete_skill_directory, _resolve_skill_record_dir(user_skill))
+            await _delete_editable_skill_directory(user_skill)
             await SkillRepository.soft_delete_skill(db, skill=user_skill, commit=True)
             return
 
-        public_skill = await SkillRepository.get_public_skill_by_name(db, name=skill_name)
+        public_skill = await _get_public_skill_by_name_compat(db, skill_name=skill_name)
         if public_skill is not None:
             raise HTTPException(status_code=403, detail=f"Skill '{skill_name}' is public and cannot be deleted")
 
