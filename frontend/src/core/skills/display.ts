@@ -31,10 +31,8 @@ export type SkillWorkspacePrimaryAction =
   | "add-to-personal"
   | "view-personal"
   | "view-update"
-  | "manage-published"
   | "publish"
   | "publish-update"
-  | "manage-owned"
   | "none";
 
 const SKILL_SPACES = ["community", "personal"] as const;
@@ -194,7 +192,8 @@ export function isSelfAuthoredCommunitySkill(skill: Skill): boolean {
 }
 
 export function canCreateMyVersionFromSkillHubItem(skill: Skill): boolean {
-  return getSkillDisplayContract(skill).space === "community";
+  const display = getSkillDisplayContract(skill);
+  return display.space === "community" && !isSelfAuthoredCommunitySkill(skill);
 }
 
 export function isDownloadedSkillRelation(skill: Skill): boolean {
@@ -288,7 +287,7 @@ export function getSkillWorkspaceCardState(
     segments.add("authored");
     return {
       role: "authored-published",
-      primaryAction: "manage-owned",
+      primaryAction: "none",
       segments: Array.from(segments),
     };
   }
