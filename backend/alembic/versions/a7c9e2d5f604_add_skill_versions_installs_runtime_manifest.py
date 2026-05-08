@@ -41,6 +41,22 @@ def upgrade() -> None:
         postgresql_where=sa.text("deleted_at IS NULL"),
     )
     op.create_index("ix_skill_definitions_deleted_at", "skill_definitions", ["deleted_at"])
+    op.execute(
+        """
+        INSERT INTO skill_definitions (name, display_name, description, owner_user_id, created_at, updated_at, deleted_at)
+        SELECT s.name,
+               COALESCE(MAX(s.display_name), s.name),
+               MAX(s.description),
+               MIN(COALESCE(s.owner_user_id, s.user_id)),
+               MIN(s.created_at),
+               MAX(s.updated_at),
+               NULL
+        FROM skills AS s
+        WHERE s.deleted_at IS NULL
+        GROUP BY s.name
+        ON CONFLICT DO NOTHING
+        """
+    )
 
     op.create_table(
         "skill_versions",
@@ -61,6 +77,37 @@ def upgrade() -> None:
         sa.UniqueConstraint("skill_definition_id", "content_hash", name="uq_skill_versions_definition_content_hash"),
     )
     op.create_index("ix_skill_versions_definition_created", "skill_versions", ["skill_definition_id", "created_at"])
+    op.execute(
+        """
+        INSERT INTO skill_versions (
+            skill_definition_id,
+            version_number,
+            source_package_version,
+            description,
+            content_hash,
+            file_manifest_hash,
+            artifact_uri,
+            created_by_user_id,
+            created_at
+        )
+        SELECT sd.id,
+               ROW_NUMBER() OVER (PARTITION BY sd.id ORDER BY s.created_at, s.id),
+               NULL,
+               s.description,
+               'legacy-skill-' || s.id::text,
+               'legacy-file-manifest-' || s.id::text,
+               CASE
+                   WHEN s.file_path LIKE 'artifacts/%' THEN s.file_path
+                   ELSE 'artifacts/legacy/skills/' || s.id::text || '/' || s.name
+               END,
+               s.user_id,
+               s.created_at
+        FROM skills AS s
+        JOIN skill_definitions AS sd ON sd.name = s.name AND sd.deleted_at IS NULL
+        WHERE s.deleted_at IS NULL
+        ON CONFLICT DO NOTHING
+        """
+    )
 
     op.create_table(
         "skill_installs",
@@ -87,6 +134,37 @@ def upgrade() -> None:
     )
     op.create_index("ix_skill_installs_current_version_id", "skill_installs", ["current_version_id"])
     op.create_index("ix_skill_installs_deleted_at", "skill_installs", ["deleted_at"])
+    op.execute(
+        """
+        INSERT INTO skill_installs (
+            user_id,
+            skill_definition_id,
+            installed_version_id,
+            current_version_id,
+            created_at,
+            updated_at,
+            deleted_at
+        )
+        SELECT s.user_id,
+               sv.skill_definition_id,
+               sv.id,
+               sv.id,
+               s.created_at,
+               s.updated_at,
+               NULL
+        FROM skills AS s
+        JOIN skill_versions AS sv ON sv.content_hash = 'legacy-skill-' || s.id::text
+        WHERE s.deleted_at IS NULL
+          AND s.user_id IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM skill_installs AS existing
+              WHERE existing.user_id = s.user_id
+                AND existing.skill_definition_id = sv.skill_definition_id
+                AND existing.deleted_at IS NULL
+          )
+        """
+    )
 
     op.add_column("skill_releases", sa.Column("skill_version_id", sa.BigInteger(), nullable=True))
     op.create_foreign_key(
@@ -108,6 +186,66 @@ def upgrade() -> None:
         ["skill_install_id"],
         ["id"],
         ondelete="CASCADE",
+    )
+    op.execute(
+        """
+        INSERT INTO skill_installs (
+            user_id,
+            skill_definition_id,
+            installed_version_id,
+            current_version_id,
+            created_at,
+            updated_at,
+            deleted_at
+        )
+        SELECT DISTINCT ON (a.user_id, sv.skill_definition_id)
+               a.user_id,
+               sv.skill_definition_id,
+               sv.id,
+               sv.id,
+               ask.created_at,
+               ask.created_at,
+               NULL
+        FROM agents_skills AS ask
+        JOIN agents AS a ON a.id = ask.agent_id
+        JOIN skills AS s ON s.id = ask.skill_id
+        JOIN skill_versions AS sv ON sv.content_hash = 'legacy-skill-' || s.id::text
+        WHERE ask.deleted_at IS NULL
+          AND ask.skill_id IS NOT NULL
+          AND a.user_id IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM skill_installs AS existing
+              WHERE existing.user_id = a.user_id
+                AND existing.skill_definition_id = sv.skill_definition_id
+                AND existing.deleted_at IS NULL
+          )
+        ORDER BY a.user_id, sv.skill_definition_id, ask.created_at, ask.id
+        """
+    )
+    op.execute(
+        """
+        UPDATE agents_skills AS ask
+        SET skill_install_id = si.id
+        FROM (
+            SELECT ask_inner.id AS agent_skill_id,
+                   install.id AS skill_install_id
+            FROM agents_skills AS ask_inner
+            JOIN agents AS agent ON agent.id = ask_inner.agent_id
+            JOIN skills AS skill ON skill.id = ask_inner.skill_id
+            JOIN skill_versions AS version ON version.content_hash = 'legacy-skill-' || skill.id::text
+            JOIN skill_installs AS install ON install.user_id = agent.user_id
+                                          AND install.skill_definition_id = version.skill_definition_id
+                                          AND install.deleted_at IS NULL
+            WHERE ask_inner.deleted_at IS NULL
+              AND ask_inner.skill_id IS NOT NULL
+              AND ask_inner.skill_install_id IS NULL
+        ) AS resolved
+        WHERE ask.id = resolved.agent_skill_id
+          AND ask.skill_id IS NOT NULL
+          AND ask.skill_install_id IS NULL
+          AND ask.deleted_at IS NULL
+        """
     )
     op.create_check_constraint(
         "ck_agents_skills_has_skill_or_install",

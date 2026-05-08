@@ -48,6 +48,7 @@ export interface SkillUploadResponse {
 
 export interface SkillHubInstallCheckRequest {
   owner_user_id?: number | null;
+  skill_definition_id?: number | null;
 }
 
 export interface SkillHubInstallCheckResponse {
@@ -58,6 +59,7 @@ export interface SkillHubInstallCheckResponse {
 
 export interface SkillHubInstallRequest {
   owner_user_id?: number | null;
+  skill_definition_id?: number | null;
   overwrite?: boolean;
 }
 
@@ -71,6 +73,7 @@ export interface SkillPublishRequest {
 }
 
 export interface SkillInstallUpdateRequest {
+  skill_install_id?: number | null;
   skill_version_id?: number | null;
 }
 
@@ -294,9 +297,14 @@ export async function downloadSkillForkPackage(
 
 export async function previewSkillInstallUpdate(
   skillName: string,
+  skillInstallId?: number | null,
 ): Promise<SkillInstallUpdatePreview> {
   const response = await fetch(
-    ...buildSkillInstallUpdatePreviewRequest(getBackendBaseURL(), skillName),
+    ...buildSkillInstallUpdatePreviewRequest(
+      getBackendBaseURL(),
+      skillName,
+      skillInstallId,
+    ),
   );
 
   if (!response.ok) {

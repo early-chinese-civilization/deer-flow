@@ -18,14 +18,17 @@ def build_public_skill_file_path(skill_name: str, owner_user_id: int | str | Non
     return f"{PUBLIC_SKILLS_DIR}/{skill_name}"
 
 
-def build_skill_virtual_root(skill_name: str, *, container_base_path: str = "/mnt/skills") -> str:
+def build_skill_virtual_root(skill_name: str, *, container_base_path: str = "/mnt/skills", identity_suffix: str | int | None = None) -> str:
     """Return the stable virtual root exposed to the model for a skill."""
-    return f"{container_base_path.rstrip('/')}/{skill_name}"
+    root_name = skill_name
+    if identity_suffix is not None:
+        root_name = f"{skill_name}--{identity_suffix}"
+    return f"{container_base_path.rstrip('/')}/{root_name}"
 
 
-def build_skill_virtual_path(skill_name: str, *, container_base_path: str = "/mnt/skills") -> str:
+def build_skill_virtual_path(skill_name: str, *, container_base_path: str = "/mnt/skills", identity_suffix: str | int | None = None) -> str:
     """Return the stable virtual SKILL.md path exposed to the model."""
-    return f"{build_skill_virtual_root(skill_name, container_base_path=container_base_path)}/SKILL.md"
+    return f"{build_skill_virtual_root(skill_name, container_base_path=container_base_path, identity_suffix=identity_suffix)}/SKILL.md"
 
 
 def normalize_skill_file_path(

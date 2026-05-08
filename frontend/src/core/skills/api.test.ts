@@ -14,11 +14,13 @@ const {
 void test("builds SkillHub install conflict request with install payload semantics", () => {
   const [url, init] = buildSkillHubInstallCheckRequest("", "demo-skill", {
     owner_user_id: 7,
+    skill_definition_id: 42,
   });
 
   assert.match(url, /\/api\/skills\/demo-skill\/check-download$/);
   assert.deepEqual(JSON.parse(String(init.body)), {
     owner_user_id: 7,
+    skill_definition_id: 42,
   });
   assert.equal(init.credentials, "include");
 });
@@ -26,12 +28,14 @@ void test("builds SkillHub install conflict request with install payload semanti
 void test("builds SkillHub install request through compatibility route payload", () => {
   const [url, init] = buildSkillHubInstallRequest("", "demo-skill", {
     owner_user_id: null,
+    skill_definition_id: 42,
     overwrite: true,
   });
 
   assert.match(url, /\/api\/skills\/demo-skill\/download$/);
   assert.deepEqual(JSON.parse(String(init.body)), {
     owner_user_id: null,
+    skill_definition_id: 42,
     overwrite: true,
   });
   assert.equal(init.credentials, "include");
@@ -64,9 +68,16 @@ void test("SkillHub install fallback errors use install semantics", () => {
 });
 
 void test("builds read-only Skill install update preview request", () => {
-  const [url, init] = buildSkillInstallUpdatePreviewRequest("", "demo-skill");
+  const [url, init] = buildSkillInstallUpdatePreviewRequest(
+    "",
+    "demo-skill",
+    301,
+  );
 
-  assert.match(url, /\/api\/skills\/demo-skill\/update-install\/preview$/);
+  assert.match(
+    url,
+    /\/api\/skills\/demo-skill\/update-install\/preview\?skill_install_id=301$/,
+  );
   assert.equal(init.method, "GET");
   assert.equal(init.credentials, "include");
   assert.equal(init.body, undefined);
@@ -74,11 +85,13 @@ void test("builds read-only Skill install update preview request", () => {
 
 void test("builds Skill install update confirm request for selected version", () => {
   const [url, init] = buildSkillInstallUpdateConfirmRequest("", "demo-skill", {
+    skill_install_id: 301,
     skill_version_id: 202,
   });
 
   assert.match(url, /\/api\/skills\/demo-skill\/update-install$/);
   assert.deepEqual(JSON.parse(String(init.body)), {
+    skill_install_id: 301,
     skill_version_id: 202,
   });
   assert.equal(init.method, "POST");

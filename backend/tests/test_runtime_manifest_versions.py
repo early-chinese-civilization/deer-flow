@@ -280,6 +280,16 @@ class _ApiFlowStore:
         ]
         return max(public_skills, key=lambda skill: skill.id, default=None)
 
+    async def get_public_skill_by_definition(self, db, *, skill_definition_id):
+        public_skills = [
+            skill
+            for skill in self.skills
+            if skill.user_id is None
+            and skill.skill_definition_id == skill_definition_id
+            and skill.deleted_at is None
+        ]
+        return max(public_skills, key=lambda skill: skill.id, default=None)
+
     async def list_public_skills_by_name(self, db, *, name):
         return [skill for skill in self.skills if skill.user_id is None and skill.name == name and skill.deleted_at is None]
 
@@ -471,6 +481,7 @@ def _install_api_flow_repositories(monkeypatch, store: _ApiFlowStore) -> None:
     monkeypatch.setattr(skills_router.SkillRepository, "get_user_skill_by_definition", store.get_user_skill_by_definition)
     monkeypatch.setattr(skills_router.SkillRepository, "get_public_skill_by_name", store.get_public_skill_by_name)
     monkeypatch.setattr(skills_router.SkillRepository, "get_public_skill_by_name_and_owner", store.get_public_skill_by_name_and_owner)
+    monkeypatch.setattr(skills_router.SkillRepository, "get_public_skill_by_definition", store.get_public_skill_by_definition)
     monkeypatch.setattr(skills_router.SkillRepository, "list_public_skills_by_name", store.list_public_skills_by_name)
     monkeypatch.setattr(skills_router.SkillRepository, "list_public_skills_by_name_and_owner", store.list_public_skills_by_name_and_owner)
     monkeypatch.setattr(skills_router.SkillRepository, "create_skill", store.create_skill)
@@ -552,7 +563,7 @@ def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_
             )
             manifest = db.added[-1]
             runtime = _runtime_for_manifest(tmp_path, manifest)
-            loaded = _load_skill(runtime, skills_root, "/mnt/skills/probe-skill/SKILL.md")
+            loaded = _load_skill(runtime, skills_root, manifest.manifest_json["skills"][0]["virtual_path"])
             public_denied = _load_skill(runtime, skills_root, "/mnt/skills/public/probe-skill/SKILL.md")
             legacy_denied = _load_skill(runtime, skills_root, "/mnt/skills/22/probe-skill/SKILL.md")
             missing_denied = _load_skill(runtime, skills_root, "/mnt/skills/missing-artifact/probe-skill/SKILL.md")
@@ -782,6 +793,80 @@ def test_runtime_manifest_resolves_installed_v1_then_manual_update_to_v2(tmp_pat
     assert after_manual_update[0].file_manifest_hash == v2_file_manifest_hash
 
 
+def test_runtime_manifest_uses_install_identity_for_same_name_virtual_roots(tmp_path, monkeypatch):
+    skills_root = tmp_path / "skills"
+    first_uri = "artifacts/skills/1/v1-aaa/same-skill"
+    second_uri = "artifacts/skills/2/v1-bbb/same-skill"
+    first_file_manifest_hash = _write_artifact(skills_root, first_uri, "FIRST_SOURCE")
+    second_file_manifest_hash = _write_artifact(skills_root, second_uri, "SECOND_SOURCE")
+    monkeypatch.setattr("deerflow.config.get_app_config", lambda: _runtime_config(skills_root))
+
+    first_definition = SkillDefinition(id=1, name="same-skill", description="First")
+    second_definition = SkillDefinition(id=2, name="same-skill", description="Second")
+    first_version = SkillVersion(
+        id=101,
+        skill_definition_id=1,
+        version_number=1,
+        description="First",
+        content_hash="first-hash",
+        file_manifest_hash=first_file_manifest_hash,
+        artifact_uri=first_uri,
+        definition=first_definition,
+    )
+    second_version = SkillVersion(
+        id=102,
+        skill_definition_id=2,
+        version_number=1,
+        description="Second",
+        content_hash="second-hash",
+        file_manifest_hash=second_file_manifest_hash,
+        artifact_uri=second_uri,
+        definition=second_definition,
+    )
+    first_install = SkillInstall(
+        id=201,
+        user_id=22,
+        skill_definition_id=1,
+        installed_version_id=101,
+        current_version_id=101,
+        definition=first_definition,
+        current_version=first_version,
+    )
+    second_install = SkillInstall(
+        id=202,
+        user_id=22,
+        skill_definition_id=2,
+        installed_version_id=102,
+        current_version_id=102,
+        definition=second_definition,
+        current_version=second_version,
+    )
+    agent = Agent(id=10, user_id=22, name="same-name-agent", soul="probe")
+    agent.agent_skills = [
+        AgentSkill(id=501, agent_id=10, skill_install_id=201, display_order=0, enabled=True, skill_install=first_install),
+        AgentSkill(id=502, agent_id=10, skill_install_id=202, display_order=1, enabled=True, skill_install=second_install),
+    ]
+
+    descriptors = AgentRepository._active_runtime_skills(agent)
+    manifest = asyncio.run(
+        AgentRepository._create_runtime_manifest(
+            _FakeManifestSession(),
+            user_id=22,
+            agent=agent,
+            skills=descriptors,
+        )
+    )
+    runtime = _runtime_for_manifest(tmp_path, manifest)
+    first_entry, second_entry = manifest.manifest_json["skills"]
+
+    assert first_entry["name"] == second_entry["name"] == "same-skill"
+    assert first_entry["virtual_path"] == "/mnt/skills/same-skill--install-201/SKILL.md"
+    assert second_entry["virtual_path"] == "/mnt/skills/same-skill--install-202/SKILL.md"
+    assert first_entry["virtual_path"] != second_entry["virtual_path"]
+    assert _load_skill(runtime, skills_root, first_entry["virtual_path"]) == "FIRST_SOURCE"
+    assert _load_skill(runtime, skills_root, second_entry["virtual_path"]) == "SECOND_SOURCE"
+
+
 def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts(tmp_path, monkeypatch):
     """Max-flow backend truth at the current repository/runtime/tool boundary.
 
@@ -882,7 +967,8 @@ def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts
     )
 
     before_update_runtime = _runtime_for_manifest(tmp_path, before_update_manifest)
-    before_update_load = _load_skill(before_update_runtime, skills_root, "/mnt/skills/probe-skill/SKILL.md")
+    before_virtual_path = before_update_manifest.manifest_json["skills"][0]["virtual_path"]
+    before_update_load = _load_skill(before_update_runtime, skills_root, before_virtual_path)
     public_latest_denied = _load_skill(before_update_runtime, skills_root, "/mnt/skills/public/probe-skill/SKILL.md")
     legacy_custom_denied = _load_skill(before_update_runtime, skills_root, "/mnt/skills/22/probe-skill/SKILL.md")
 
@@ -908,7 +994,7 @@ def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts
                 "name": "probe-skill",
                 "description": "Probe v1",
                 "file_path": v1_uri,
-                "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
+                "virtual_path": "/mnt/skills/probe-skill--install-201/SKILL.md",
                 "skill_definition_id": definition.id,
                 "skill_version_id": v1.id,
                 "skill_install_id": install.id,
@@ -934,7 +1020,7 @@ def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts
     assert release_v2.skill_version_id == v2.id
     assert install.current_version_id == v1.id
     assert after_publish_skills[0].skill_version_id == v1.id
-    assert _load_skill(before_update_runtime, skills_root, "/mnt/skills/probe-skill/SKILL.md") == "SKILL_RUNTIME_OK_V1"
+    assert _load_skill(before_update_runtime, skills_root, before_virtual_path) == "SKILL_RUNTIME_OK_V1"
 
     install.current_version_id = v2.id
     install.current_version = v2
@@ -949,6 +1035,7 @@ def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts
         )
     )
     after_update_runtime = _runtime_for_manifest(tmp_path, after_update_manifest)
+    after_virtual_path = after_update_manifest.manifest_json["skills"][0]["virtual_path"]
 
     assert install.current_version_id == v2.id
     assert after_update_skills[0].skill_version_id == v2.id
@@ -957,7 +1044,8 @@ def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts
     assert after_update_manifest.manifest_json["skills"][0]["skill_install_id"] == install.id
     assert after_update_manifest.manifest_json["skills"][0]["file_manifest_hash"] == v2_file_manifest_hash
     assert after_update_manifest.manifest_hash == build_runtime_manifest_hash(after_update_manifest.manifest_json)
-    assert _load_skill(after_update_runtime, skills_root, "/mnt/skills/probe-skill/SKILL.md") == "SKILL_RUNTIME_OK_V2"
+    assert after_virtual_path == "/mnt/skills/probe-skill--install-201/SKILL.md"
+    assert _load_skill(after_update_runtime, skills_root, after_virtual_path) == "SKILL_RUNTIME_OK_V2"
 
 
 def test_runtime_manifest_rejects_legacy_skill_binding_without_install(tmp_path, monkeypatch):

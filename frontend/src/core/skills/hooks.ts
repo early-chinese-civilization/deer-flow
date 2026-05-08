@@ -71,18 +71,22 @@ export function useInstallSkillHubSkill() {
     mutationFn: async ({
       skillName,
       ownerUserId,
+      skillDefinitionId,
       overwrite,
     }: {
       skillName: string;
       ownerUserId?: number | null;
+      skillDefinitionId?: number | null;
       overwrite?: boolean;
     }) =>
       installSkillHubSkill(skillName, {
         owner_user_id: ownerUserId,
+        skill_definition_id: skillDefinitionId,
         overwrite,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["skills"] });
+      void queryClient.invalidateQueries({ queryKey: ["agents"] });
     },
   });
 }
@@ -107,10 +111,13 @@ export function useDownloadSkillForkPackage() {
   });
 }
 
-export function usePreviewSkillInstallUpdate(skillName: string | null) {
+export function usePreviewSkillInstallUpdate(
+  skillName: string | null,
+  skillInstallId?: number | null,
+) {
   return useQuery({
-    queryKey: ["skills", "update-preview", skillName],
-    queryFn: () => previewSkillInstallUpdate(skillName!),
+    queryKey: ["skills", "update-preview", skillName, skillInstallId ?? null],
+    queryFn: () => previewSkillInstallUpdate(skillName!, skillInstallId),
     enabled: skillName !== null,
     staleTime: 0,
   });
@@ -121,16 +128,20 @@ export function useConfirmSkillInstallUpdate() {
   return useMutation({
     mutationFn: async ({
       skillName,
+      skillInstallId,
       skillVersionId,
     }: {
       skillName: string;
+      skillInstallId?: number | null;
       skillVersionId?: number | null;
     }) =>
       confirmSkillInstallUpdate(skillName, {
+        skill_install_id: skillInstallId,
         skill_version_id: skillVersionId,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["skills"] });
+      void queryClient.invalidateQueries({ queryKey: ["agents"] });
     },
   });
 }

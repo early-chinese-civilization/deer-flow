@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from app.gateway.db.models import PendingSkillForkClaim, RuntimeManifest, SkillDefinition, SkillInstall, SkillRelease, SkillVersion
-from app.gateway.db.repository import SkillReleaseRepository
+from app.gateway.db.repository import SkillReleaseRepository, SkillRepository
 
 
 class FakeAsyncSession:
@@ -239,6 +239,9 @@ def test_skill_versions_installs_manifest_migration_exists():
     assert "skill_installs" in migration
     assert "skill_version_id" in migration
     assert "runtime_manifests" in migration
+    assert "legacy-skill-" in migration
+    assert "UPDATE agents_skills" in migration
+    assert "skill_install_id = si.id" in migration
 
 
 def test_runtime_manifest_hash_migration_exists():
@@ -259,6 +262,44 @@ def test_skill_definition_namespace_migration_exists():
     assert "source_identifier" in migration
     assert "uq_skill_definitions_source_name_active" in migration
     assert "skill_definition_id" in migration
+    assert "INSERT INTO skill_definitions" in migration
+    assert "COALESCE(s.owner_user_id, s.user_id)" in migration
+    assert "UPDATE skill_versions AS sv" in migration
+    assert "UPDATE agents_skills AS ask" in migration
+    assert "OR ask.skill_install_id <> resolved.skill_install_id" in migration
+
+
+def test_install_bound_agent_lookup_includes_disabled_active_bindings():
+    class FakeScalars:
+        def all(self):
+            return []
+
+    class FakeResult:
+        def scalars(self):
+            return FakeScalars()
+
+    class CaptureSession:
+        def __init__(self):
+            self.statement = None
+
+        async def execute(self, stmt):
+            self.statement = stmt
+            return FakeResult()
+
+    async def run():
+        session = CaptureSession()
+        await SkillRepository.list_bound_agents_for_install(
+            session,
+            user_id=7,
+            skill_install_id=20,
+        )
+        return str(session.statement.compile(compile_kwargs={"literal_binds": True}))
+
+    import asyncio
+
+    sql = asyncio.run(run())
+    assert "agents_skills.skill_install_id = 20" in sql
+    assert "agents_skills.enabled" not in sql
 
 
 def test_pending_skill_fork_claims_migration_exists():
