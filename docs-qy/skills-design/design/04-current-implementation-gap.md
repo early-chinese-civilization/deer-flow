@@ -108,7 +108,7 @@
 | 用户发布自己的 Skill 到 SkillHub | custom Skill 被复制成 public latest，并创建 release 记录 | release 是发布事件，不是可安装版本；public 语义混杂 | publish 应发布某个不可变平台版本到 SkillHub |
 | 用户上传新内容成为版本 2 | 同名不同 `package_version` 时更新当前 custom Skill 行和文件 | 旧版本内容丢失或只能靠 release 追踪；未发布版本无历史 | 更新必须创建新的 SkillVersion，不原地覆盖旧版本 |
 | 用户 B 安装 v1，发布者发布 v2 后手动更新 | 用户 B 下载 public latest 为 custom copy；后续无法知道源版本更新关系 | 缺少 SkillInstall/源版本关系，无法可靠提示更新 | 必须引入安装态，记录 installed version 与 available version |
-| 用户基于官方/社区 Skill 魔改 | 现在只有 download/overwrite，下载后就是同名 custom Skill | 无来源关系，无 fork/remix 语义 | 需要“基于此创建我的版本”，生成新 Skill 身份 |
+| 用户基于社区 Skill 魔改 | 现在只有 download/overwrite，下载后就是同名 custom Skill | 无来源关系，无 fork/remix 语义 | 需要“下载”可编辑包并上传，生成新 Skill 身份；系统 Skill 本轮不提供下载 |
 | 官方 Skill 与社区 Skill 区分 | 都可能表现为 public Skill | 来源、可信度、维护者和发布权限不清 | public 需要拆成官方来源与社区来源 |
 | 用户看到易懂版本 | 前端展示 package/release 字段和英文内部文案 | 普通用户需要理解 package/release | 展示“版本 1/2/3”，高级字段只留后台 |
 | 更新不自动影响 Agent | 目前 custom Skill 更新后 Agent 会跟随当前文件内容 | 缺少更新确认和受影响 Agent 预览 | 用户手动更新安装态后，才影响绑定该安装态的 Agent |

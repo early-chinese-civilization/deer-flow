@@ -127,20 +127,20 @@
 
 1. SkillHub 清晰区分官方与社区。
 2. 用户不能覆盖官方 Skill。
-3. 用户可以基于官方或社区 Skill 创建自己的版本。
+3. 用户可以基于符合条件的社区 Skill 下载可编辑包并创建自己的版本；系统 Skill 本轮不提供下载。
 
 建议动作：
 
 1. 给 Skill 身份增加来源类型。
 2. 官方 Skill 由平台流程导入，不走普通用户 publish。
 3. 社区 Skill 由用户 publish 生成。
-4. “基于此创建”生成新的用户 Skill 身份，版本从 1 开始。
+4. “下载”生成可编辑包，用户上传后形成新的用户 Skill 身份，版本从 1 开始。
 
 完成标准：
 
-1. SkillHub 可以过滤官方和社区。
+1. Skills UI 可以区分系统、社区和我的 Skills。
 2. 普通用户不能发布官方 Skill 的新版。
-3. 基于官方/社区创建后，得到独立的我的 Skill。
+3. 社区 Skill 下载后上传，得到独立的我的 Skill。
 
 ## 接口演进建议
 
@@ -160,7 +160,7 @@
 4. `POST /skills/{skill_id}/versions/{version_id}/publish`：发布指定版本。
 5. `POST /skillhub/{skill_id}/install`：安装 SkillHub 当前版本。
 6. `POST /installs/{install_id}/update`：更新已安装 Skill 到指定版本。
-7. `POST /skillhub/{skill_id}/fork`：基于此创建我的版本。
+7. `POST /skillhub/{skill_id}/fork-package`：下载可编辑包，用于后续上传成我的版本。
 8. `GET /installs/{install_id}/affected-agents`：更新或删除前查看受影响 Agent。
 
 接口命名可以后续再细化，但动作语义必须从“复制文件”升级为“安装、发布版本、更新安装态”。
@@ -175,7 +175,7 @@
 4. 第四小步是安装态和不可变 Artifact Store。
 5. 第五小步是 Agent 绑定 install，并引入 Runtime Manifest。
 6. 第六小步是按 Manifest 改造 `skill_load` 和 sandbox allowlist。
-7. 第七小步再做官方/社区 UI 分区和“基于此创建”。
+7. 第七小步再做系统/社区/我的 Skills UI 分区和“下载”。
 
 这样做的好处：
 
