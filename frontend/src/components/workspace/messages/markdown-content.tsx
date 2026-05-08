@@ -63,9 +63,9 @@ export function MarkdownContent({
         }
         const { className, target, rel, ...rest } = props;
         const resolvedHref =
-          typeof props.href === "string"
-            ? (resolvedOssUrlMap[props.href] ?? props.href)
-            : undefined;
+          (typeof props.href === "string"
+            ? resolvedOssUrlMap[props.href]
+            : undefined) ?? props.href;
         const external = isExternalUrl(resolvedHref);
         return (
           <a
