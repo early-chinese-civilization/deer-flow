@@ -1,9 +1,10 @@
+import type { Element, ElementContent, Root } from "hast";
+import type { Root as MdastRoot, Text, Parent } from "mdast";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import type { StreamdownProps } from "streamdown";
-import type { Element, ElementContent, Root } from "hast";
 import { visit } from "unist-util-visit";
 import type { BuildVisitor } from "unist-util-visit";
 
@@ -24,11 +25,11 @@ const CJK_TEXT_RE =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 
 export function remarkLinkifyOssUris() {
-  return (tree: unknown) => {
+  return (tree: MdastRoot) => {
     visit(
-      tree as any,
+      tree,
       "text",
-      (node: any, index: number | undefined, parent: any) => {
+      (node: Text, index: number | undefined, parent: Parent | undefined) => {
         if (
           !parent ||
           typeof index !== "number" ||
@@ -79,7 +80,11 @@ export function remarkLinkifyOssUris() {
         }
 
         if (nextChildren.length > 0 && Array.isArray(parent.children)) {
-          parent.children.splice(index, 1, ...nextChildren);
+          parent.children.splice(
+            index,
+            1,
+            ...(nextChildren as unknown as typeof parent.children),
+          );
           return index + nextChildren.length;
         }
       },

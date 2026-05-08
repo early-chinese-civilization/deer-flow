@@ -40,9 +40,8 @@ export function MarkdownContent({
   remarkPlugins = streamdownPlugins.remarkPlugins,
   components: componentsFromProps,
 }: MarkdownContentProps) {
-  const effectiveRemarkPlugins = (remarkPlugins ??
-    streamdownPlugins.remarkPlugins ??
-    []) as NonNullable<MessageResponseProps["remarkPlugins"]>;
+  const effectiveRemarkPlugins =
+    remarkPlugins ?? streamdownPlugins.remarkPlugins ?? [];
   const resolvedOssUrlMap = useResolvedOssUrlMap(
     workspaceId,
     isLoading ? "" : content,
@@ -64,8 +63,9 @@ export function MarkdownContent({
         }
         const { className, target, rel, ...rest } = props;
         const resolvedHref =
-          (typeof props.href === "string" && resolvedOssUrlMap[props.href]) ||
-          props.href;
+          typeof props.href === "string"
+            ? (resolvedOssUrlMap[props.href] ?? props.href)
+            : undefined;
         const external = isExternalUrl(resolvedHref);
         return (
           <a

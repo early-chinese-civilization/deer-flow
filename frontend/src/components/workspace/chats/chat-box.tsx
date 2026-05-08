@@ -50,8 +50,10 @@ const ChatBox: React.FC<{ children: React.ReactNode; threadId: string }> = ({
   } = useArtifacts();
 
   const [autoSelectFirstArtifact, setAutoSelectFirstArtifact] = useState(true);
-  const threadArtifacts =
-    (thread.values.artifacts as Record<string, string>) ?? {};
+  const threadArtifacts = useMemo(
+    () => thread.values.artifacts ?? {},
+    [thread.values.artifacts],
+  );
   useEffect(() => {
     const hasThreadChanged = threadIdRef.current !== threadId;
 
@@ -87,6 +89,7 @@ const ChatBox: React.FC<{ children: React.ReactNode; threadId: string }> = ({
     }
   }, [
     threadId,
+    threadArtifacts,
     autoSelectFirstArtifact,
     deselect,
     selectArtifact,

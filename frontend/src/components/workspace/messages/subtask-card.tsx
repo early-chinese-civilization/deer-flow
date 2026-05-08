@@ -26,8 +26,8 @@ import { cn } from "@/lib/utils";
 
 import { CitationLink } from "../citations/citation-link";
 import { FlipDisplay } from "../flip-display";
-import { useThread } from "./context";
 
+import { useThread } from "./context";
 import { MarkdownContent } from "./markdown-content";
 
 export function SubtaskCard({
