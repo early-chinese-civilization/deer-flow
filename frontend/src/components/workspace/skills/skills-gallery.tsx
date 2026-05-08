@@ -670,13 +670,15 @@ export function SkillsGallery() {
                   <ItemContent>
                     <div className="flex flex-wrap items-center gap-2">
                       <ItemTitle>{skill.name}</ItemTitle>
-                      <Badge
-                        variant={
-                          platformVersion != null ? "secondary" : "outline"
-                        }
-                      >
-                        {getVersionText(platformVersion)}
-                      </Badge>
+                      {display.space !== "system" ? (
+                        <Badge
+                          variant={
+                            platformVersion != null ? "secondary" : "outline"
+                          }
+                        >
+                          {getVersionText(platformVersion)}
+                        </Badge>
+                      ) : null}
                       {display.space === "personal" ? (
                         <Badge
                           variant={
@@ -692,22 +694,17 @@ export function SkillsGallery() {
                           )}
                         </Badge>
                       ) : null}
-                      {display.space === "system" ? (
-                        <Badge variant="outline">
-                          {t.settings.skills.systemDirectUse}
-                        </Badge>
-                      ) : null}
                     </div>
-                    <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                      <span>
-                        {display.space === "system"
-                          ? getMySkillVersionDetail(skill)
-                          : display.space === "community"
+                    {display.space !== "system" ? (
+                      <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                        <span>
+                          {display.space === "community"
                             ? getSkillHubVersionDetail(skill)
                             : getMySkillVersionDetail(skill)}
-                      </span>
-                      <span>{getSkillSourceText(skill)}</span>
-                    </div>
+                        </span>
+                        <span>{getSkillSourceText(skill)}</span>
+                      </div>
+                    ) : null}
                     <ItemDescription className="line-clamp-4">
                       {skill.description}
                     </ItemDescription>
