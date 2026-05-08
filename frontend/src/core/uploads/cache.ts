@@ -1,3 +1,5 @@
+import { withBasePath } from "../config/index.ts";
+
 import type { FileTreeNode, ListFilesResponse, UploadedFileInfo } from "./api";
 
 function getDeletedObjectKeys(file: UploadedFileInfo) {
@@ -147,7 +149,9 @@ function buildWorkspaceContentUrl(
   objectKey: string,
 ): string {
   const query = new URLSearchParams({ object_key: objectKey }).toString();
-  return `/api/workspaces/${encodeURIComponent(workspaceId)}/uploads/content?${query}`;
+  return withBasePath(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/uploads/content?${query}`,
+  );
 }
 
 function buildObservedWorkspaceFile(

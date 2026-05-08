@@ -1,3 +1,5 @@
+import { withBasePath } from "../config/index.ts";
+
 import type { AgentDraftTab } from "./agent-draft-lifecycle";
 
 const AGENT_DRAFT_TAB_QUERY_KEY = "tab";
@@ -36,5 +38,7 @@ export function pathOfCreateAgentDraft(options?: {
   currentSearch?: string | null;
   tab?: AgentDraftTab;
 }): string {
-  return `/workspace/agents/new${withDraftTab(options?.currentSearch, options?.tab)}`;
+  return withBasePath(
+    `/workspace/agents/new${withDraftTab(options?.currentSearch, options?.tab)}`,
+  );
 }

@@ -1,5 +1,7 @@
 import type { Message } from "@langchain/langgraph-sdk";
 
+import { withBasePath, withoutBasePath } from "../config/index.ts";
+
 import type { AgentThread } from "./types";
 
 type ThreadRouteRef = {
@@ -25,14 +27,16 @@ function toSearchParams(search: SearchParamsInput): URLSearchParams {
     return new URLSearchParams(search);
   }
   if (typeof search === "string") {
-    return new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+    return new URLSearchParams(
+      search.startsWith("?") ? search.slice(1) : search,
+    );
   }
   return new URLSearchParams();
 }
 
 function buildRoute(pathname: string, searchParams: URLSearchParams): string {
   const query = searchParams.toString();
-  return query ? `${pathname}?${query}` : pathname;
+  return withBasePath(query ? `${pathname}?${query}` : pathname);
 }
 
 function getAgentNameFromLegacyThreadPath(
@@ -43,9 +47,8 @@ function getAgentNameFromLegacyThreadPath(
     return undefined;
   }
 
-  const match = /^\/workspace\/agents\/([^/]+)\/chats\/([^/]+)$/.exec(
-    currentPath,
-  );
+  const pathname = withoutBasePath(currentPath);
+  const match = /^\/workspace\/agents\/([^/]+)\/chats\/([^/]+)$/.exec(pathname);
   if (match?.[2] !== threadId) {
     return undefined;
   }
@@ -62,12 +65,15 @@ function getAgentNameFromCurrentChatRoute(
     return undefined;
   }
 
-  const match = /^\/workspace\/chats\/([^/]+)$/.exec(currentPath);
+  const pathname = withoutBasePath(currentPath);
+  const match = /^\/workspace\/chats\/([^/]+)$/.exec(pathname);
   if (match?.[1] !== threadId) {
     return undefined;
   }
 
-  return normalizeAgentName(toSearchParams(currentSearch).get(CHAT_AGENT_QUERY_KEY));
+  return normalizeAgentName(
+    toSearchParams(currentSearch).get(CHAT_AGENT_QUERY_KEY),
+  );
 }
 
 export function getThreadAgentName(
@@ -120,7 +126,7 @@ export function currentRouteOf(
   pathname: string,
   currentSearch?: SearchParamsInput,
 ): string {
-  return buildRoute(pathname, toSearchParams(currentSearch));
+  return buildRoute(withoutBasePath(pathname), toSearchParams(currentSearch));
 }
 
 export function pathOfThread(
@@ -144,7 +150,7 @@ export function pathOfThread(
     );
   const resolvedAgentName = hasExplicitAgentName
     ? normalizeAgentName(options?.agentName)
-    : inferredAgentName ?? fallbackAgentName;
+    : (inferredAgentName ?? fallbackAgentName);
 
   const searchParams = buildChatSearchParams(options?.currentSearch, {
     agentName: resolvedAgentName ?? null,

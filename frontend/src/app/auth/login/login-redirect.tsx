@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo } from "react";
 
+import { withBasePath } from "@/core/config";
+
 type LoginRedirectProps = {
   returnTo: string;
 };
@@ -9,7 +11,7 @@ type LoginRedirectProps = {
 export function LoginRedirect({ returnTo }: LoginRedirectProps) {
   const loginUrl = useMemo(() => {
     const params = new URLSearchParams({ return_to: returnTo });
-    return `/api/auth/login?${params.toString()}`;
+    return withBasePath(`/api/auth/login?${params.toString()}`);
   }, [returnTo]);
 
   useEffect(() => {

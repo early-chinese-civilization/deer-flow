@@ -1,11 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 
+import { withBasePath } from "../config/index.ts";
+
 import { resolveWorkspaceDownloadUrl } from "./api";
-import type { BrowserOssSource } from "./source";
 import {
   getResolvedOssUrlQueryKey,
   isResolvedOssUrlQueryEnabled,
 } from "./query";
+import type { BrowserOssSource } from "./source";
 
 export function useResolvedOssUrl(
   workspaceId: string | null | undefined,
@@ -16,12 +18,12 @@ export function useResolvedOssUrl(
     enabled: isResolvedOssUrlQueryEnabled(workspaceId, source),
     queryFn: async () => {
       if (source?.httpUri) {
-        return source.httpUri;
+        return withBasePath(source.httpUri);
       }
 
       const result = await resolveWorkspaceDownloadUrl(
-        workspaceId as string,
-        source?.objectKey as string,
+        workspaceId!,
+        source!.objectKey,
       );
 
       return result.download_url;

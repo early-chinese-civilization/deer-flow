@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+import {
+  normalizeBasePath,
+  withBasePathFor,
+  withoutBasePathFor,
+} from "./core/config/base-path.ts";
+
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const DEV_SYNTHETIC_MODES = new Set(["dev", "development", "local", "test"]);
 
@@ -24,22 +30,29 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  const basePath = normalizeBasePath(process.env.NEXT_PUBLIC_BASE_PATH);
+  const appPathname = withoutBasePathFor(basePath, request.nextUrl.pathname);
   const accessTokenCookie = request.cookies.get("kc_access_token");
   const refreshTokenCookie = request.cookies.get("kc_refresh_token");
   const logoutMarkerCookie = request.cookies.get("kc_logout_marker");
 
   // 保护 /workspace 路由
-  if (request.nextUrl.pathname.startsWith("/workspace")) {
+  if (appPathname.startsWith("/workspace")) {
     if (logoutMarkerCookie) {
-      return NextResponse.redirect(new URL("/signed-out", request.url));
+      return NextResponse.redirect(
+        new URL(withBasePathFor(basePath, "/signed-out"), request.url),
+      );
     }
 
     if (!accessTokenCookie && !refreshTokenCookie) {
       // 未登录，先进入同源登录启动页；由浏览器顶层跳转启动 OIDC。
-      const loginUrl = new URL("/auth/login", request.url);
+      const loginUrl = new URL(
+        withBasePathFor(basePath, "/auth/login"),
+        request.url,
+      );
       loginUrl.searchParams.set(
         "return_to",
-        `${request.nextUrl.pathname}${request.nextUrl.search}`,
+        withBasePathFor(basePath, `${appPathname}${request.nextUrl.search}`),
       );
       return NextResponse.redirect(loginUrl);
     }
@@ -49,5 +62,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/workspace/:path*"],
+  matcher: ["/workspace/:path*", "/deer-flow/workspace/:path*"],
 };

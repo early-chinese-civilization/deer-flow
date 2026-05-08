@@ -4,6 +4,8 @@
  * 提供与后端认证接口交互的方法
  */
 
+import { withBasePath } from "../config/index.ts";
+
 export interface User {
   id: number;
   externalAuthId: string;
@@ -28,20 +30,20 @@ type AuthErrorPayload = {
 };
 
 const EXPECTED_UNAUTHENTICATED_DETAILS = new Set([
-  'Not authenticated',
-  'Session expired',
-  'Logged out',
+  "Not authenticated",
+  "Session expired",
+  "Logged out",
 ]);
 
 async function readAuthErrorDetail(response: Response): Promise<string> {
   const body = await response.text();
   if (!body) {
-    return response.statusText || 'Unknown auth error';
+    return response.statusText || "Unknown auth error";
   }
 
   try {
     const payload = JSON.parse(body) as AuthErrorPayload;
-    if (typeof payload.detail === 'string') {
+    if (typeof payload.detail === "string") {
       return payload.detail;
     }
     if (payload.detail != null) {
@@ -61,7 +63,11 @@ function shouldLogAuthFailure(status: number, detail: string): boolean {
   return !EXPECTED_UNAUTHENTICATED_DETAILS.has(detail);
 }
 
-function formatAuthError(action: string, status: number, detail: string): string {
+function formatAuthError(
+  action: string,
+  status: number,
+  detail: string,
+): string {
   return `${action} failed (${status}): ${detail}`;
 }
 
@@ -72,15 +78,15 @@ function formatAuthError(action: string, status: number, detail: string): string
  */
 export async function getCurrentUser(): Promise<User | null> {
   try {
-    const res = await fetch('/api/auth/me', {
-      credentials: 'include', // 重要：携带 cookie
+    const res = await fetch(withBasePath("/api/auth/me"), {
+      credentials: "include", // 重要：携带 cookie
     });
 
     if (!res.ok) {
       const detail = await readAuthErrorDetail(res);
       if (shouldLogAuthFailure(res.status, detail)) {
         console.error(
-          formatAuthError('Current user lookup', res.status, detail),
+          formatAuthError("Current user lookup", res.status, detail),
         );
       }
       return null;
@@ -89,7 +95,7 @@ export async function getCurrentUser(): Promise<User | null> {
     const data: MeResponse = await res.json();
     return data.user;
   } catch (error) {
-    console.error('Failed to get current user:', error);
+    console.error("Failed to get current user:", error);
     return null;
   }
 }
@@ -101,22 +107,22 @@ export async function getCurrentUser(): Promise<User | null> {
  */
 export async function logout(): Promise<string> {
   try {
-    const res = await fetch('/api/auth/logout', {
-      method: 'POST',
-      credentials: 'include',
+    const res = await fetch(withBasePath("/api/auth/logout"), {
+      method: "POST",
+      credentials: "include",
     });
 
     if (!res.ok) {
       const detail = await readAuthErrorDetail(res);
-      throw new Error(formatAuthError('Logout', res.status, detail));
+      throw new Error(formatAuthError("Logout", res.status, detail));
     }
 
     const data: LogoutResponse = await res.json();
-    return data.logoutUrl;
+    return withBasePath(data.logoutUrl);
   } catch (error) {
-    console.error('Logout failed:', error);
+    console.error("Logout failed:", error);
     // 返回默认登出 URL
-    return '/';
+    return withBasePath("/");
   }
 }
 
@@ -127,22 +133,22 @@ export async function logout(): Promise<string> {
  */
 export async function refreshToken(): Promise<boolean> {
   try {
-    const res = await fetch('/api/auth/refresh', {
-      method: 'POST',
-      credentials: 'include',
+    const res = await fetch(withBasePath("/api/auth/refresh"), {
+      method: "POST",
+      credentials: "include",
     });
 
     if (!res.ok) {
       const detail = await readAuthErrorDetail(res);
       if (shouldLogAuthFailure(res.status, detail)) {
-        console.error(formatAuthError('Token refresh', res.status, detail));
+        console.error(formatAuthError("Token refresh", res.status, detail));
       }
       return false;
     }
 
     return true;
   } catch (error) {
-    console.error('Token refresh failed:', error);
+    console.error("Token refresh failed:", error);
     return false;
   }
 }
@@ -155,9 +161,11 @@ export async function refreshToken(): Promise<boolean> {
 export function login(returnTo?: string) {
   const params = new URLSearchParams();
   if (returnTo) {
-    params.set('return_to', returnTo);
+    params.set("return_to", returnTo);
   }
 
-  const url = `/api/auth/login${params.toString() ? '?' + params.toString() : ''}`;
+  const url = withBasePath(
+    `/api/auth/login${params.toString() ? "?" + params.toString() : ""}`,
+  );
   window.location.href = url;
 }

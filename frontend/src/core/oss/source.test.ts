@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+process.env.NEXT_PUBLIC_BASE_PATH = "/deer-flow";
+
 const { getBrowserOssSource } = await import(
   new URL("./source.ts", import.meta.url).href
 );
@@ -20,7 +22,7 @@ void test("maps a file-like object to a browser oss source only when complete", 
       ossUri: "oss://demo-bucket/workspaces/ws-123/uploads/report.md",
       objectKey: "uploads/report.md",
       httpUri:
-        "/api/workspaces/ws-123/uploads/content?object_key=uploads%2Freport.md",
+        "/deer-flow/api/workspaces/ws-123/uploads/content?object_key=uploads%2Freport.md",
     },
   );
 
@@ -52,7 +54,21 @@ void test("uses backend proxy url when a file has no OSS URI yet", () => {
       ossUri: null,
       objectKey: "workspaces/ws-123/outputs/report.md",
       httpUri:
-        "/api/workspaces/ws-123/uploads/content?object_key=workspaces%2Fws-123%2Foutputs%2Freport.md",
+        "/deer-flow/api/workspaces/ws-123/uploads/content?object_key=workspaces%2Fws-123%2Foutputs%2Freport.md",
+    },
+  );
+});
+
+void test("leaves full http source urls unchanged", () => {
+  assert.deepEqual(
+    getBrowserOssSource({
+      object_key: "workspaces/ws-123/outputs/report.md",
+      http_uri: "https://files.example.test/result.md",
+    }),
+    {
+      ossUri: null,
+      objectKey: "workspaces/ws-123/outputs/report.md",
+      httpUri: "https://files.example.test/result.md",
     },
   );
 });

@@ -12,6 +12,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
+import { withBasePath, withoutBasePath } from "@/core/config";
 import { useI18n } from "@/core/i18n/hooks";
 import { cn } from "@/lib/utils";
 
@@ -38,7 +39,7 @@ export function WorkspaceHeader({
   const { t } = useI18n();
   const pathname = usePathname();
   const segments = useMemo(() => {
-    const parts = pathname?.split("/") || [];
+    const parts = withoutBasePath(pathname ?? "/").split("/");
     if (parts.length > 0) {
       return parts.slice(1, 3);
     }
@@ -57,7 +58,7 @@ export function WorkspaceHeader({
             {segments?.[0] && (
               <BreadcrumbItem className="hidden md:block">
                 <BreadcrumbLink asChild>
-                  <Link href={`/${segments[0]}`}>
+                  <Link href={withBasePath(`/${segments[0]}`)}>
                     {nameOfSegment(segments[0], t)}
                   </Link>
                 </BreadcrumbLink>
@@ -69,7 +70,9 @@ export function WorkspaceHeader({
                 <BreadcrumbItem>
                   {segments.length >= 2 ? (
                     <BreadcrumbLink asChild>
-                      <Link href={`/${segments[0]}/${segments[1]}`}>
+                      <Link
+                        href={withBasePath(`/${segments[0]}/${segments[1]}`)}
+                      >
                         {nameOfSegment(segments[1], t)}
                       </Link>
                     </BreadcrumbLink>

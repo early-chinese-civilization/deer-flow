@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { useDeleteAgent } from "@/core/agents";
 import type { Agent } from "@/core/agents";
+import { withBasePath } from "@/core/config";
 import { useI18n } from "@/core/i18n/hooks";
 import { pathOfNewThread } from "@/core/threads/utils";
 import { uuid } from "@/core/utils/uuid";
@@ -50,7 +51,9 @@ export function AgentCard({ agent }: AgentCardProps) {
   }
 
   function handleEdit() {
-    router.push(`/workspace/agents/${agent.name}/edit`);
+    router.push(
+      withBasePath(`/workspace/agents/${encodeURIComponent(agent.name)}/edit`),
+    );
   }
 
   async function handleDelete() {
