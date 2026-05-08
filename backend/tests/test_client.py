@@ -649,14 +649,14 @@ class TestSkillsManagement:
                 zf.write(skill_dir / "SKILL.md", "my-skill/SKILL.md")
 
             skills_root = tmp_path / "skills"
-            (skills_root / "custom").mkdir(parents=True)
 
             with patch("deerflow.skills.installer.get_skills_root_path", return_value=skills_root):
                 result = client.install_skill(archive_path)
 
             assert result["success"] is True
             assert result["skill_name"] == "my-skill"
-            assert (skills_root / "custom" / "my-skill").exists()
+            assert (skills_root / "local" / "my-skill").exists()
+            assert not (skills_root / "custom" / "my-skill").exists()
 
     def test_install_skill_not_found(self, client):
         with pytest.raises(FileNotFoundError):
@@ -1469,13 +1469,13 @@ class TestScenarioSkillInstallAndUse:
                 zf.write(skill_src / "SKILL.md", "my-analyzer/SKILL.md")
 
             skills_root = tmp_path / "skills"
-            (skills_root / "custom").mkdir(parents=True)
 
             # Step 1: Install
             with patch("deerflow.skills.installer.get_skills_root_path", return_value=skills_root):
                 result = client.install_skill(archive)
             assert result["success"] is True
-            assert (skills_root / "custom" / "my-analyzer" / "SKILL.md").exists()
+            assert (skills_root / "local" / "my-analyzer" / "SKILL.md").exists()
+            assert not (skills_root / "custom" / "my-analyzer").exists()
 
             # Step 2: List and find it
             installed_skill = MagicMock()
@@ -1857,7 +1857,6 @@ class TestInstallSkillSecurity:
                 zf.writestr("big.bin", data)
 
             skills_root = Path(tmp) / "skills"
-            (skills_root / "custom").mkdir(parents=True)
 
             # Patch max_total_size to a small value to trigger the bomb check.
             from deerflow.skills import installer as _installer
@@ -1882,7 +1881,6 @@ class TestInstallSkillSecurity:
                 zf.writestr("/etc/passwd", "root:x:0:0")
 
             skills_root = Path(tmp) / "skills"
-            (skills_root / "custom").mkdir(parents=True)
 
             with patch("deerflow.skills.installer.get_skills_root_path", return_value=skills_root):
                 with pytest.raises(ValueError, match="unsafe"):
@@ -1896,7 +1894,6 @@ class TestInstallSkillSecurity:
                 zf.writestr("skill/../../../etc/shadow", "bad")
 
             skills_root = Path(tmp) / "skills"
-            (skills_root / "custom").mkdir(parents=True)
 
             with patch("deerflow.skills.installer.get_skills_root_path", return_value=skills_root):
                 with pytest.raises(ValueError, match="unsafe"):
@@ -1918,13 +1915,12 @@ class TestInstallSkillSecurity:
                 zf.writestr(link_info, "/etc/passwd")
 
             skills_root = tmp_path / "skills"
-            (skills_root / "custom").mkdir(parents=True)
 
             with patch("deerflow.skills.installer.get_skills_root_path", return_value=skills_root):
                 result = client.install_skill(archive)
 
             assert result["success"] is True
-            installed = skills_root / "custom" / "sym-skill"
+            installed = skills_root / "local" / "sym-skill"
             assert (installed / "SKILL.md").exists()
             assert not (installed / "sneaky_link").exists()
 
@@ -1942,7 +1938,6 @@ class TestInstallSkillSecurity:
                 zf.write(skill_dir / "SKILL.md", "bad-name/SKILL.md")
 
             skills_root = tmp_path / "skills"
-            (skills_root / "custom").mkdir(parents=True)
 
             with (
                 patch("deerflow.skills.installer.get_skills_root_path", return_value=skills_root),
@@ -1965,7 +1960,7 @@ class TestInstallSkillSecurity:
                 zf.write(skill_dir / "SKILL.md", "dupe-skill/SKILL.md")
 
             skills_root = tmp_path / "skills"
-            (skills_root / "custom" / "dupe-skill").mkdir(parents=True)
+            (skills_root / "local" / "dupe-skill").mkdir(parents=True)
 
             with (
                 patch("deerflow.skills.installer.get_skills_root_path", return_value=skills_root),
@@ -1982,7 +1977,6 @@ class TestInstallSkillSecurity:
                 pass  # empty archive
 
             skills_root = Path(tmp) / "skills"
-            (skills_root / "custom").mkdir(parents=True)
 
             with patch("deerflow.skills.installer.get_skills_root_path", return_value=skills_root):
                 with pytest.raises(ValueError, match="empty"):
@@ -2001,7 +1995,6 @@ class TestInstallSkillSecurity:
                 zf.write(skill_dir / "SKILL.md", "bad-meta/SKILL.md")
 
             skills_root = tmp_path / "skills"
-            (skills_root / "custom").mkdir(parents=True)
 
             with (
                 patch("deerflow.skills.installer.get_skills_root_path", return_value=skills_root),

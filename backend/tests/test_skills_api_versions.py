@@ -114,10 +114,17 @@ def test_skill_response_relation_matrix():
     official_public.definition = official_definition
 
     official_response = skills_router._skill_to_response(official_public, skill_version=_version(1, definition=official_definition), current_user_id=current_user.id)
-    assert official_response.space == "community"
+    assert official_response.space == "system"
     assert official_response.source_kind == "official"
-    assert official_response.viewer_relation == "official_available"
+    assert official_response.viewer_relation == "system_available"
     assert official_response.owner_display_name == "official"
+    assert official_response.skill_install_id is None
+
+    legacy_official_install = _install(_version(1, definition=official_definition))
+    legacy_official_response = skills_router._skill_to_response(official_public, skill_version=_version(1, definition=official_definition), skill_install=legacy_official_install, current_user_id=current_user.id)
+    assert legacy_official_response.space == "system"
+    assert legacy_official_response.skill_install_id is None
+    assert legacy_official_response.current_platform_version is None
 
     community_definition = _definition(definition_id=102, owner_user_id=8, source_type="user", source_identifier="8", owner_user=other_user)
     community_public = _public_skill(102, "community-skill")
@@ -220,9 +227,9 @@ def test_skill_response_legacy_public_fallback_is_official():
     legacy_public.owner_user_id = None
     response = skills_router._skill_to_response(legacy_public, current_user_id=_user().id)
 
-    assert response.space == "community"
+    assert response.space == "system"
     assert response.source_kind == "official"
-    assert response.viewer_relation == "official_available"
+    assert response.viewer_relation == "system_available"
     assert response.owner_display_name == "official"
 
 
@@ -408,6 +415,101 @@ def test_install_public_skill_records_install_without_copying_public_latest(monk
     assert response.platform_version == 1
     assert response.skill_install_id == 300
     assert response.version == "1"
+
+
+def test_system_skill_install_actions_are_rejected_before_user_install(monkeypatch):
+    db = FakeDb()
+    official_definition = _definition(definition_id=501, owner_user_id=None, source_type="legacy", source_identifier="legacy")
+    public = _public_skill(12, "system-skill")
+    public.owner_user_id = None
+    public.definition = official_definition
+    version = _version(1, definition=official_definition)
+
+    async def get_download_source_skill(db_arg, *, skill_name, owner_user_id, skill_definition_id=None):
+        assert skill_name == "system-skill"
+        return public
+
+    async def get_latest_release_for_public_skill(db_arg, *, published_skill_id):
+        return _release(published_skill_id, version)
+
+    async def upsert_install(*args, **kwargs):
+        raise AssertionError("system skill install must not create SkillInstall rows")
+
+    async def create_skill(*args, **kwargs):
+        raise AssertionError("system skill install must not create per-user Skill rows")
+
+    monkeypatch.setattr(skills_router, "_get_download_source_skill", get_download_source_skill)
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_release_for_public_skill", get_latest_release_for_public_skill)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "upsert_install", upsert_install)
+    monkeypatch.setattr(skills_router.SkillRepository, "create_skill", create_skill)
+
+    async def run_check():
+        with pytest.raises(HTTPException) as exc_info:
+            await skills_router.check_skill_download(
+                "system-skill",
+                skills_router.SkillDownloadCheckRequest(skill_definition_id=official_definition.id),
+                current_user=_user(),
+                db=db,
+            )
+        return exc_info.value
+
+    async def run_install():
+        with pytest.raises(HTTPException) as exc_info:
+            await skills_router.download_skill(
+                "system-skill",
+                skills_router.SkillDownloadRequest(skill_definition_id=official_definition.id),
+                current_user=_user(),
+                db=db,
+            )
+        return exc_info.value
+
+    check_exc = asyncio.run(run_check())
+    install_exc = asyncio.run(run_install())
+
+    assert check_exc.status_code == 400
+    assert "directly usable" in check_exc.detail
+    assert install_exc.status_code == 400
+    assert "directly usable" in install_exc.detail
+    assert db.rollbacks == 1
+
+
+def test_system_skill_fork_package_is_rejected_before_claim(monkeypatch):
+    db = FakeDb()
+    official_definition = _definition(definition_id=502, owner_user_id=None, source_type="legacy", source_identifier="legacy")
+    public = _public_skill(12, "system-skill")
+    public.owner_user_id = None
+    public.definition = official_definition
+    version = _version(1, definition=official_definition)
+
+    async def get_download_source_skill(db_arg, *, skill_name, owner_user_id, skill_definition_id=None):
+        assert skill_name == "system-skill"
+        return public
+
+    async def get_latest_release_for_public_skill(db_arg, *, published_skill_id):
+        return _release(published_skill_id, version)
+
+    async def create_claim(*args, **kwargs):
+        raise AssertionError("system skill fork export must not create pending fork claims")
+
+    monkeypatch.setattr(skills_router, "_get_download_source_skill", get_download_source_skill)
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_release_for_public_skill", get_latest_release_for_public_skill)
+    monkeypatch.setattr(skills_router.PendingSkillForkClaimRepository, "create_claim", create_claim)
+
+    async def run():
+        with pytest.raises(HTTPException) as exc_info:
+            await skills_router.download_skill_fork_package(
+                "system-skill",
+                skills_router.SkillForkPackageRequest(skill_definition_id=official_definition.id),
+                current_user=_user(),
+                db=db,
+            )
+        return exc_info.value
+
+    exc = asyncio.run(run())
+
+    assert exc.status_code == 400
+    assert "cannot be downloaded" in exc.detail
+    assert db.rollbacks == 1
 
 
 def test_check_install_public_skill_uses_selected_definition_id(monkeypatch):

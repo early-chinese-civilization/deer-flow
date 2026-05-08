@@ -14,7 +14,7 @@ class Skill:
     skill_dir: Path
     skill_file: Path
     relative_path: Path  # Relative path from the shared skills root to this skill directory
-    category: str  # 'public' or 'custom'
+    category: str  # Compatibility display category: 'public' or private/legacy 'custom'
     enabled: bool = False  # Whether this skill is enabled
     package_version: str | None = None  # User-facing package version from SKILL.md frontmatter
     author: str | None = None  # Optional author metadata from SKILL.md frontmatter

@@ -17,6 +17,7 @@ const {
   getSkillWorkspaceCardState,
   isAgentSkillBindingUnavailable,
   isSelfAuthoredCommunitySkill,
+  isSystemSkill,
   skillMatchesCommunitySearch,
   skillMatchesWorkspaceSegment,
 } = await import(new URL("./display.ts", import.meta.url).href);
@@ -60,6 +61,9 @@ void test("prefers platform version fields over source package metadata", () => 
 void test("derives SkillHub installed state from matching My Skills row", () => {
   const publicSkill = skill({
     category: "public",
+    space: "community",
+    source_kind: "community",
+    viewer_relation: "community_available",
     skill_definition_id: 10,
     platform_version: 2,
   });
@@ -86,17 +90,17 @@ void test("classifies explicit Skills viewer relation matrix", () => {
     expected: ReturnType<typeof getSkillDisplayContract>;
   }> = [
     {
-      name: "official community",
+      name: "system skill",
       skill: skill({
-        space: "community",
+        space: "system",
         source_kind: "official",
-        viewer_relation: "official_available",
+        viewer_relation: "system_available",
         skill_definition_id: 10,
       }),
       expected: {
-        space: "community",
+        space: "system",
         sourceKind: "official",
-        viewerRelation: "official_available",
+        viewerRelation: "system_available",
         identityKey: "definition:10",
       },
     },
@@ -243,10 +247,10 @@ void test("keeps legacy relation fallback centralized", () => {
       }),
     ),
     {
-      space: "community",
+      space: "system",
       sourceKind: "official",
-      viewerRelation: "official_available",
-      identityKey: "legacy:community:official:system:demo-skill",
+      viewerRelation: "system_available",
+      identityKey: "legacy:system:official:system:demo-skill",
     },
   );
 
@@ -263,6 +267,32 @@ void test("keeps legacy relation fallback centralized", () => {
       viewerRelation: "downloaded",
       identityKey: "install:20",
     },
+  );
+});
+
+void test("normalizes official Community compatibility rows into System surface", () => {
+  const officialCompatibilityRow = skill({
+    space: "community",
+    source_kind: "official",
+    viewer_relation: "official_available",
+    skill_definition_id: 40,
+    platform_version: 1,
+  });
+
+  assert.deepEqual(getSkillDisplayContract(officialCompatibilityRow), {
+    space: "system",
+    sourceKind: "official",
+    viewerRelation: "official_available",
+    identityKey: "definition:40",
+  });
+  assert.deepEqual(getSkillWorkspaceCardState(officialCompatibilityRow), {
+    role: "system",
+    primaryAction: "none",
+    segments: ["all"],
+  });
+  assert.equal(
+    canCreateMyVersionFromSkillHubItem(officialCompatibilityRow),
+    false,
   );
 });
 
@@ -387,7 +417,7 @@ void test("classifies authored Personal Space upload with version and publish st
     segments: ["all", "authored"],
   });
   assert.equal(skillMatchesWorkspaceSegment(authored, "authored"), true);
-  assert.equal(skillMatchesWorkspaceSegment(authored, "downloaded"), false);
+  assert.equal(skillMatchesWorkspaceSegment(authored, "installed"), false);
 });
 
 void test("published authored Personal Space rows have no no-op manage action", () => {
@@ -431,11 +461,11 @@ void test("treats publisher's own Community listing as discovery-only", () => {
   assert.equal(canCreateMyVersionFromSkillHubItem(ownPublishedListing), false);
 });
 
-void test("uses install action and System segment for Community discovery rows", () => {
-  const officialCommunity = skill({
-    space: "community",
+void test("separates System Skills from Community install rows", () => {
+  const systemSkill = skill({
+    space: "system",
     source_kind: "official",
-    viewer_relation: "official_available",
+    viewer_relation: "system_available",
     owner_display_name: "official",
     skill_definition_id: 801,
     platform_version: 2,
@@ -449,18 +479,19 @@ void test("uses install action and System segment for Community discovery rows",
     platform_version: 3,
   });
 
-  assert.deepEqual(getSkillWorkspaceCardState(officialCommunity), {
-    role: "official-community",
-    primaryAction: "add-to-personal",
-    segments: ["all", "system"],
+  assert.deepEqual(getSkillWorkspaceCardState(systemSkill), {
+    role: "system",
+    primaryAction: "none",
+    segments: ["all"],
   });
   assert.deepEqual(getSkillWorkspaceCardState(userCommunity), {
     role: "community",
     primaryAction: "add-to-personal",
     segments: ["all"],
   });
-  assert.equal(skillMatchesWorkspaceSegment(officialCommunity, "system"), true);
-  assert.equal(skillMatchesWorkspaceSegment(userCommunity, "system"), false);
+  assert.equal(isSystemSkill(systemSkill), true);
+  assert.equal(skillMatchesCommunitySearch(systemSkill, "official"), false);
+  assert.equal(canCreateMyVersionFromSkillHubItem(systemSkill), false);
   assert.equal(getSkillHubLatestPlatformVersion(userCommunity), 3);
 });
 
@@ -485,8 +516,8 @@ void test("Create my version stays available for installed Community rows", () =
   assert.equal(getSkillInstallState(community, installed), "installed");
 });
 
-void test("shows downloaded Personal Space rows with version and update state", () => {
-  const currentDownloaded = skill({
+void test("renders legacy downloaded relation as installed Community state", () => {
+  const currentInstalled = skill({
     category: "custom",
     space: "personal",
     source_kind: "community",
@@ -498,7 +529,7 @@ void test("shows downloaded Personal Space rows with version and update state", 
     latest_platform_version: 2,
     update_available: false,
   });
-  const downloaded = skill({
+  const updateAvailable = skill({
     category: "custom",
     space: "personal",
     source_kind: "community",
@@ -511,23 +542,26 @@ void test("shows downloaded Personal Space rows with version and update state", 
     update_available: true,
   });
 
-  assert.equal(getSkillPlatformVersion(currentDownloaded), 2);
-  assert.deepEqual(getSkillWorkspaceCardState(currentDownloaded), {
-    role: "downloaded",
+  assert.equal(getSkillPlatformVersion(currentInstalled), 2);
+  assert.deepEqual(getSkillWorkspaceCardState(currentInstalled), {
+    role: "installed",
     primaryAction: "none",
-    segments: ["all", "downloaded"],
+    segments: ["all", "installed"],
   });
-  assert.equal(getSkillPlatformVersion(downloaded), 1);
-  assert.deepEqual(getSkillWorkspaceCardState(downloaded), {
-    role: "downloaded",
+  assert.equal(getSkillPlatformVersion(updateAvailable), 1);
+  assert.deepEqual(getSkillWorkspaceCardState(updateAvailable), {
+    role: "installed",
     primaryAction: "view-update",
-    segments: ["all", "downloaded", "updates"],
+    segments: ["all", "installed", "updates"],
   });
-  assert.equal(skillMatchesWorkspaceSegment(downloaded, "downloaded"), true);
-  assert.equal(skillMatchesWorkspaceSegment(downloaded, "updates"), true);
+  assert.equal(
+    skillMatchesWorkspaceSegment(updateAvailable, "installed"),
+    true,
+  );
+  assert.equal(skillMatchesWorkspaceSegment(updateAvailable, "updates"), true);
 });
 
-void test("separates forked Personal Space rows from downloaded rows", () => {
+void test("separates forked Personal Space rows from installed rows", () => {
   const forked = skill({
     category: "custom",
     space: "personal",
@@ -545,7 +579,7 @@ void test("separates forked Personal Space rows from downloaded rows", () => {
     segments: ["all", "authored"],
   });
   assert.equal(skillMatchesWorkspaceSegment(forked, "authored"), true);
-  assert.equal(skillMatchesWorkspaceSegment(forked, "downloaded"), false);
+  assert.equal(skillMatchesWorkspaceSegment(forked, "installed"), false);
 });
 
 void test("keeps same-name Community cards distinguishable without user-facing IDs", () => {
@@ -574,11 +608,11 @@ void test("keeps same-name Community cards distinguishable without user-facing I
 });
 
 void test("filters Community Space by first-class Skill name and author fields", () => {
-  const official = skill({
+  const system = skill({
     name: "deep-research",
-    space: "community",
+    space: "system",
     source_kind: "official",
-    viewer_relation: "official_available",
+    viewer_relation: "system_available",
     owner_display_name: "official",
     skill_definition_id: 1100,
   });
@@ -638,7 +672,7 @@ void test("filters Community Space by first-class Skill name and author fields",
     skill_install_id: 2101,
   });
   const rows = [
-    official,
+    system,
     community,
     downloaded,
     updateAvailable,
@@ -649,7 +683,7 @@ void test("filters Community Space by first-class Skill name and author fields",
 
   assert.deepEqual(
     rows.filter((row) => skillMatchesCommunitySearch(row, "official")),
-    [official],
+    [],
   );
   assert.deepEqual(
     rows.filter((row) => skillMatchesCommunitySearch(row, "avery")),
@@ -677,7 +711,7 @@ void test("filters Community Space by first-class Skill name and author fields",
   );
   assert.deepEqual(
     [
-      official,
+      system,
       community,
       downloaded,
       updateAvailable,
@@ -691,9 +725,9 @@ void test("filters Community Space by first-class Skill name and author fields",
       {
         key: "definition:1100",
         state: {
-          role: "official-community",
-          primaryAction: "add-to-personal",
-          segments: ["all", "system"],
+          role: "system",
+          primaryAction: "none",
+          segments: ["all"],
         },
       },
       {

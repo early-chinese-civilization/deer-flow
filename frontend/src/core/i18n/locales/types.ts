@@ -427,12 +427,13 @@ export interface Translations {
       publishedBy: (ownerDisplayName: string) => string;
       skillHubTab: string;
       mySkillsTab: string;
+      systemSpaceTab: string;
       communitySpaceTab: string;
       personalSpaceTab: string;
       communitySearchPlaceholder: string;
       allSegment: string;
       systemSegment: string;
-      downloadedSegment: string;
+      installedSegment: string;
       authoredSegment: string;
       publishedSegment: string;
       updatesSegment: string;
@@ -449,17 +450,18 @@ export interface Translations {
       notInstalled: string;
       updateAvailable: string;
       availableInCommunity: string;
-      downloadedToPersonal: string;
+      installedToPersonal: string;
       published: string;
       unpublished: string;
       unpublishedChanges: string;
       mySkill: string;
+      systemDirectUse: string;
       publishedByYou: string;
       forkedSkill: string;
       officialSource: string;
       communitySpaceSource: string;
       communitySource: (ownerDisplayName: string) => string;
-      downloadedSource: (ownerDisplayName: string) => string;
+      installedFromSource: (ownerDisplayName: string) => string;
       forkedSource: (ownerDisplayName: string) => string;
       forkedSourceDetail: (
         sourceName: string,

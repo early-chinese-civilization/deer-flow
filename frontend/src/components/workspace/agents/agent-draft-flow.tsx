@@ -53,10 +53,13 @@ import {
 } from "@/core/agents/agent-draft-storage";
 import { AgentNameCheckError, checkAgentName } from "@/core/agents/api";
 import {
+  getAgentSkillSelectionGroups,
   getMetadataDisplaySummary,
   getMetadataSelectionKey,
   getSelectionInstallIds as getSelectionInstallIdsFromForm,
   getSelectionSkillNames as getSelectionSkillNamesFromForm,
+  getSelectionSystemSkillDefinitionIds as getSelectionSystemSkillDefinitionIdsFromForm,
+  getSelectionSystemSkillVersionIds as getSelectionSystemSkillVersionIdsFromForm,
   getSkillDisplaySummary,
   getSkillSelectionKey,
   type AgentSkillDisplaySummary,
@@ -118,20 +121,16 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
     unavailableVersion: t.agents.skillVersionUnavailable,
   };
 
-  const visibleSkills = useMemo(
-    () =>
-      skills
-        .filter(
-          (skill) =>
-            skill.category === "custom" && skill.skill_install_id != null,
-        )
-        .sort((left, right) => {
-          if (left.name !== right.name) {
-            return left.name.localeCompare(right.name);
-          }
-          return (left.skill_install_id ?? 0) - (right.skill_install_id ?? 0);
-        }),
+  const visibleSkillGroups = useMemo(
+    () => getAgentSkillSelectionGroups(skills),
     [skills],
+  );
+  const visibleSkills = useMemo(
+    () => [
+      ...visibleSkillGroups.mySkills,
+      ...visibleSkillGroups.systemSkills,
+    ],
+    [visibleSkillGroups],
   );
   const visibleSkillByKey = useMemo(
     () =>
@@ -157,6 +156,14 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
 
   function getSelectionSkillNames(): string[] {
     return getSelectionSkillNamesFromForm(form.skills);
+  }
+
+  function getSelectionSystemSkillVersionIds(): number[] {
+    return getSelectionSystemSkillVersionIdsFromForm(form.skills);
+  }
+
+  function getSelectionSystemSkillDefinitionIds(): number[] {
+    return getSelectionSystemSkillDefinitionIdsFromForm(form.skills);
   }
 
   function getSkillSummary(skill: (typeof visibleSkills)[number]) {
@@ -404,23 +411,35 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
       if (mode === "create") {
         const skillInstallIds = getSelectionInstallIds();
         const skillNames = getSelectionSkillNames();
+        const systemSkillVersionIds = getSelectionSystemSkillVersionIds();
+        const systemSkillDefinitionIds = getSelectionSystemSkillDefinitionIds();
         await createAgentMutation.mutateAsync({
           name: normalizedName,
           description: form.description.trim(),
           soul: form.soul.trim(),
           skill_install_ids:
             skillInstallIds.length > 0 ? skillInstallIds : null,
+          system_skill_version_ids:
+            systemSkillVersionIds.length > 0 ? systemSkillVersionIds : null,
+          system_skill_definition_ids:
+            systemSkillDefinitionIds.length > 0
+              ? systemSkillDefinitionIds
+              : null,
           skills: skillNames.length > 0 ? skillNames : null,
         });
       } else {
         const skillInstallIds = getSelectionInstallIds();
         const skillNames = getSelectionSkillNames();
+        const systemSkillVersionIds = getSelectionSystemSkillVersionIds();
+        const systemSkillDefinitionIds = getSelectionSystemSkillDefinitionIds();
         await updateAgentMutation.mutateAsync({
           name: agentName!,
           request: {
             description: form.description.trim(),
             soul: form.soul.trim(),
             skill_install_ids: skillInstallIds,
+            system_skill_version_ids: systemSkillVersionIds,
+            system_skill_definition_ids: systemSkillDefinitionIds,
             skills: skillNames.length > 0 ? skillNames : null,
           },
         });
@@ -523,6 +542,61 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
   }
 
   function renderSkillsSection() {
+    const renderSkillRows = (skillsToRender: typeof visibleSkills) =>
+      skillsToRender.map((skill) => {
+        const skillKey = getSkillSelectionKey(skill);
+        const checked = form.skills.includes(skillKey);
+        const summary = getSkillSummary(skill);
+        const cannotAdd = summary.unavailable && !checked;
+        return (
+          <button
+            key={skillKey}
+            type="button"
+            aria-pressed={checked}
+            disabled={cannotAdd}
+            onClick={() =>
+              toggleSkill(skillKey, { canAdd: !summary.unavailable })
+            }
+            className="block w-full text-left"
+          >
+            <Item
+              variant="outline"
+              className={cn(
+                checked && "border-primary bg-primary/5",
+                cannotAdd && "opacity-60",
+              )}
+            >
+              <ItemContent>
+                <ItemTitle className="flex flex-wrap items-center gap-2">
+                  <span>{skill.name}</span>
+                  {summary.unavailable && (
+                    <span className="text-destructive inline-flex items-center gap-1 text-xs font-normal">
+                      <AlertTriangleIcon className="h-3.5 w-3.5" />
+                      {t.agents.skillMetadataUnavailable}
+                    </span>
+                  )}
+                </ItemTitle>
+                <ItemDescription>
+                  {skill.description || t.agents.createSkillsHint}
+                </ItemDescription>
+                <div className="text-muted-foreground mt-2 flex flex-wrap gap-2 text-xs">
+                  <span>{summary.versionLabel}</span>
+                  <span>{summary.sourceLabel}</span>
+                  {summary.updateAvailable && (
+                    <span className="text-primary">
+                      {t.agents.skillUpdateAvailable}
+                    </span>
+                  )}
+                </div>
+              </ItemContent>
+              <ItemActions>
+                {checked && <CheckIcon className="text-primary h-4 w-4" />}
+              </ItemActions>
+            </Item>
+          </button>
+        );
+      });
+
     return (
       <div className="space-y-4">
         <div className="space-y-2">
@@ -543,61 +617,36 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
               {t.agents.createSkillsEmpty}
             </div>
           ) : (
-            visibleSkills.map((skill) => {
-              const skillKey = getSkillSelectionKey(skill);
-              const checked = form.skills.includes(skillKey);
-              const summary = getSkillSummary(skill);
-              const cannotAdd = summary.unavailable && !checked;
-              return (
-                <button
-                  key={skillKey}
-                  type="button"
-                  aria-pressed={checked}
-                  disabled={cannotAdd}
-                  onClick={() =>
-                    toggleSkill(skillKey, { canAdd: !summary.unavailable })
-                  }
-                  className="block w-full text-left"
-                >
-                  <Item
-                    variant="outline"
-                    className={cn(
-                      checked && "border-primary bg-primary/5",
-                      cannotAdd && "opacity-60",
-                    )}
-                  >
-                    <ItemContent>
-                      <ItemTitle className="flex flex-wrap items-center gap-2">
-                        <span>{skill.name}</span>
-                        {summary.unavailable && (
-                          <span className="text-destructive inline-flex items-center gap-1 text-xs font-normal">
-                            <AlertTriangleIcon className="h-3.5 w-3.5" />
-                            {t.agents.skillMetadataUnavailable}
-                          </span>
-                        )}
-                      </ItemTitle>
-                      <ItemDescription>
-                        {skill.description || t.agents.createSkillsHint}
-                      </ItemDescription>
-                      <div className="text-muted-foreground mt-2 flex flex-wrap gap-2 text-xs">
-                        <span>{summary.versionLabel}</span>
-                        <span>{summary.sourceLabel}</span>
-                        {summary.updateAvailable && (
-                          <span className="text-primary">
-                            {t.agents.skillUpdateAvailable}
-                          </span>
-                        )}
-                      </div>
-                    </ItemContent>
-                    <ItemActions>
-                      {checked && (
-                        <CheckIcon className="text-primary h-4 w-4" />
-                      )}
-                    </ItemActions>
-                  </Item>
-                </button>
-              );
-            })
+            <div className="grid gap-4 lg:grid-cols-2">
+              <section className="space-y-2">
+                <h3 className="text-sm font-medium">
+                  {t.settings.skills.mySkillsTab}
+                </h3>
+                <div className="space-y-3">
+                  {visibleSkillGroups.mySkills.length === 0 ? (
+                    <div className="text-muted-foreground rounded-md border border-dashed p-3 text-sm">
+                      {t.agents.createSkillsEmpty}
+                    </div>
+                  ) : (
+                    renderSkillRows(visibleSkillGroups.mySkills)
+                  )}
+                </div>
+              </section>
+              <section className="space-y-2">
+                <h3 className="text-sm font-medium">
+                  {t.settings.skills.systemSpaceTab}
+                </h3>
+                <div className="space-y-3">
+                  {visibleSkillGroups.systemSkills.length === 0 ? (
+                    <div className="text-muted-foreground rounded-md border border-dashed p-3 text-sm">
+                      {t.agents.createSkillsEmpty}
+                    </div>
+                  ) : (
+                    renderSkillRows(visibleSkillGroups.systemSkills)
+                  )}
+                </div>
+              </section>
+            </div>
           )}
         </div>
       </div>

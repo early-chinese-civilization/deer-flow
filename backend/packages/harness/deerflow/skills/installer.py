@@ -13,7 +13,7 @@ import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from deerflow.skills.loader import get_skills_root_path
-from deerflow.skills.path_utils import LEGACY_CUSTOM_SKILLS_DIR, build_private_skill_file_path
+from deerflow.skills.path_utils import LEGACY_CUSTOM_SKILLS_DIR, LOCAL_CLIENT_SKILLS_DIR, build_private_skill_file_path
 from deerflow.skills.validation import _validate_skill_frontmatter
 
 logger = logging.getLogger(__name__)
@@ -129,8 +129,9 @@ def install_skill_from_archive(
             the default from config.
         user_id: Optional user ID. When provided, install into the
             shared-filesystem private directory ``<user_id>/<skill_name>``.
-            When omitted, falls back to the legacy ``custom/<skill_name>``
-            location for standalone/local client compatibility.
+            When omitted, install into the local-client private directory
+            ``local/<skill_name>``. The legacy ``custom/<skill_name>`` path
+            is never used for new writes.
 
     Returns:
         Dict with success, skill_name, message.
@@ -174,7 +175,13 @@ def install_skill_from_archive(
             raise ValueError(f"Invalid skill name: {skill_name}")
 
         if user_id is None:
-            target = skills_root / LEGACY_CUSTOM_SKILLS_DIR / skill_name
+            legacy_target = skills_root / LEGACY_CUSTOM_SKILLS_DIR / skill_name
+            if legacy_target.exists():
+                raise SkillAlreadyExistsError(
+                    f"Legacy custom skill '{skill_name}' already exists at {LEGACY_CUSTOM_SKILLS_DIR}/{skill_name}; "
+                    f"move it to {LOCAL_CLIENT_SKILLS_DIR}/{skill_name} or remove the legacy copy before installing."
+                )
+            target = skills_root / build_private_skill_file_path(LOCAL_CLIENT_SKILLS_DIR, skill_name)
         else:
             target = skills_root / build_private_skill_file_path(user_id, skill_name)
         target.parent.mkdir(parents=True, exist_ok=True)

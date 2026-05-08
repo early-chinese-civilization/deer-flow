@@ -402,8 +402,9 @@ class _ApiFlowStore:
     async def get_agent_by_id(self, db, agent_id):
         return next((agent for agent in self.agents if agent.id == agent_id and agent.deleted_at is None), None)
 
-    async def replace_agent_skills(self, db, *, agent, skill_ids, skill_install_ids, commit=True):
+    async def replace_agent_skills(self, db, *, agent, skill_ids, skill_install_ids, system_skill_version_ids=None, commit=True):
         del skill_ids
+        del system_skill_version_ids
         agent.agent_skills = [
             AgentSkill(
                 id=self.next_agent_skill_id + display_order,
@@ -867,6 +868,70 @@ def test_runtime_manifest_uses_install_identity_for_same_name_virtual_roots(tmp_
     assert _load_skill(runtime, skills_root, second_entry["virtual_path"]) == "SECOND_SOURCE"
 
 
+def test_runtime_manifest_resolves_direct_system_skill_without_install(tmp_path, monkeypatch):
+    skills_root = tmp_path / "skills"
+    system_uri = "artifacts/skills/9/v1-system/system-skill"
+    system_file_manifest_hash = _write_artifact(skills_root, system_uri, "SYSTEM_SOURCE")
+    monkeypatch.setattr("deerflow.config.get_app_config", lambda: _runtime_config(skills_root))
+
+    definition = SkillDefinition(
+        id=9,
+        name="system-skill",
+        description="System skill",
+        source_type="legacy",
+        source_identifier="legacy",
+        owner_user_id=None,
+    )
+    version = SkillVersion(
+        id=901,
+        skill_definition_id=definition.id,
+        version_number=1,
+        description="System skill",
+        content_hash="system-hash",
+        file_manifest_hash=system_file_manifest_hash,
+        artifact_uri=system_uri,
+        source_package_version=None,
+        definition=definition,
+    )
+    agent = Agent(id=10, user_id=22, name="system-agent", soul="probe")
+    agent.agent_skills = [
+        AgentSkill(
+            id=501,
+            agent_id=10,
+            system_skill_definition_id=definition.id,
+            system_skill_version_id=version.id,
+            system_skill_definition=definition,
+            system_skill_version=version,
+            display_order=0,
+            enabled=True,
+        )
+    ]
+
+    descriptors = AgentRepository._active_runtime_skills(agent)
+    manifest = asyncio.run(
+        AgentRepository._create_runtime_manifest(
+            _FakeManifestSession(),
+            user_id=22,
+            agent=agent,
+            skills=descriptors,
+        )
+    )
+    entry = manifest.manifest_json["skills"][0]
+    runtime = _runtime_for_manifest(tmp_path, manifest)
+
+    assert entry["skill_definition_id"] == definition.id
+    assert entry["skill_version_id"] == version.id
+    assert entry["skill_install_id"] is None
+    assert entry["system_skill_definition_id"] == definition.id
+    assert entry["system_skill_version_id"] == version.id
+    assert entry["source_kind"] == "system"
+    assert entry["binding_kind"] == "system"
+    assert entry["virtual_path"] == "/mnt/skills/system-skill--system-9-version-901/SKILL.md"
+    assert entry["artifact_uri"] == system_uri
+    assert manifest.manifest_hash == build_runtime_manifest_hash(manifest.manifest_json)
+    assert _load_skill(runtime, skills_root, entry["virtual_path"]) == "SYSTEM_SOURCE"
+
+
 def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts(tmp_path, monkeypatch):
     """Max-flow backend truth at the current repository/runtime/tool boundary.
 
@@ -998,6 +1063,10 @@ def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts
                 "skill_definition_id": definition.id,
                 "skill_version_id": v1.id,
                 "skill_install_id": install.id,
+                "system_skill_definition_id": None,
+                "system_skill_version_id": None,
+                "source_kind": "install",
+                "binding_kind": "install",
                 "version_number": 1,
                 "content_hash": "hash-v1",
                 "file_manifest_hash": v1_file_manifest_hash,

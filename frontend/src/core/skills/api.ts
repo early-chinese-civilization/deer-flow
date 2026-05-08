@@ -248,9 +248,6 @@ export async function installSkillHubSkill(
   return response.json() as Promise<Skill>;
 }
 
-export const checkSkillDownload = checkSkillHubInstall;
-export const downloadSkill = installSkillHubSkill;
-
 function filenameFromContentDisposition(disposition: string | null) {
   if (!disposition) {
     return null;
@@ -283,8 +280,9 @@ export async function downloadSkillForkPackage(
 
   const blob = await response.blob();
   const filename =
-    filenameFromContentDisposition(response.headers.get("Content-Disposition")) ??
-    `${skillName}-editable-copy.zip`;
+    filenameFromContentDisposition(
+      response.headers.get("Content-Disposition"),
+    ) ?? `${skillName}-editable-copy.zip`;
   const objectUrl = window.URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = objectUrl;

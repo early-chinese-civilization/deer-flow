@@ -24,7 +24,7 @@ async function getMockSkills(): Promise<MockSkill[]> {
   return body.skills;
 }
 
-void test("mock Skills payload covers Community and Personal Space states", async () => {
+void test("mock Skills payload covers System, Community, and Personal states", async () => {
   const skills = await getMockSkills();
 
   assert.ok(
@@ -39,9 +39,9 @@ void test("mock Skills payload covers Community and Personal Space states", asyn
   assert.ok(
     skills.some(
       (skill) =>
-        skill.space === "community" &&
+        skill.space === "system" &&
         skill.source_kind === "official" &&
-        skill.viewer_relation === "official_available",
+        skill.viewer_relation === "system_available",
     ),
   );
   assert.ok(

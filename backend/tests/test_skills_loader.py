@@ -82,13 +82,16 @@ def test_load_skills_skips_hidden_directories(tmp_path: Path):
     assert "secret-skill" not in names
 
 
-def test_load_skills_keeps_legacy_custom_directory_compatibility(tmp_path: Path):
-    """Legacy `custom/` skills should still load for standalone/local callers."""
+def test_load_skills_keeps_legacy_custom_directory_compatibility_with_warning(tmp_path: Path, caplog):
+    """Legacy `custom/` skills should load only as explicit compatibility."""
     skills_root = tmp_path / "skills"
     _write_skill(skills_root / "custom" / "legacy-tool", "legacy-tool", "Legacy custom skill")
 
-    skills = load_skills(skills_path=skills_root, use_config=False, enabled_only=False)
+    with caplog.at_level("WARNING", logger="deerflow.skills.loader"):
+        skills = load_skills(skills_path=skills_root, use_config=False, enabled_only=False)
 
     assert [skill.name for skill in skills] == ["legacy-tool"]
     assert skills[0].category == "custom"
     assert skills[0].skill_path == "custom/legacy-tool"
+    assert "legacy custom/" in caplog.text
+    assert "compatibility only" in caplog.text

@@ -204,3 +204,38 @@ async def test_assert_gateway_schema_ready_requires_agent_skill_install_column()
 
     with pytest.raises(RuntimeError, match="Missing columns: agents_skills.skill_install_id"):
         await assert_gateway_schema_ready(engine)
+
+
+@pytest.mark.anyio
+async def test_assert_gateway_schema_ready_requires_agent_system_skill_columns():
+    from app.gateway.db.schema_preflight import assert_gateway_schema_ready
+
+    tables = [
+        "alembic_version",
+        "users",
+        "workspaces",
+        "threads",
+        "agents",
+        "agents_skills",
+        "skills",
+        "skill_definitions",
+        "skill_versions",
+        "skill_installs",
+        "skill_releases",
+        "pending_skill_fork_claims",
+        "runtime_manifests",
+    ]
+    columns = _complete_columns(*(table for table in tables if table != "alembic_version"))
+    columns["agents_skills"] = tuple(column for column in columns["agents_skills"] if column != "system_skill_version_id")
+    engine = SimpleNamespace(
+        connect=lambda: _FakeConnectContext(
+            _FakeConnection(
+                tables=tables,
+                revisions=["7d3a2b1c0e9f"],
+                columns=columns,
+            )
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="Missing columns: agents_skills.system_skill_version_id"):
+        await assert_gateway_schema_ready(engine)

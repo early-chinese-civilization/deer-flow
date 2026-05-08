@@ -578,6 +578,18 @@ class AgentSkill(Base):
         nullable=True,
         comment="Install ID resolved by runtime manifest",
     )
+    system_skill_definition_id = Column(
+        BigInteger,
+        ForeignKey("skill_definitions.id", ondelete="RESTRICT"),
+        nullable=True,
+        comment="Direct system SkillDefinition binding for platform-provided skills",
+    )
+    system_skill_version_id = Column(
+        BigInteger,
+        ForeignKey("skill_versions.id", ondelete="RESTRICT"),
+        nullable=True,
+        comment="Direct system SkillVersion binding resolved by runtime manifest",
+    )
     display_order = Column(Integer, nullable=False, default=0, comment="Display order")
     enabled = Column(Boolean, nullable=False, default=True, comment="Enabled flag")
     created_at = Column(
@@ -591,11 +603,17 @@ class AgentSkill(Base):
     agent = relationship("Agent", back_populates="agent_skills")
     skill = relationship("Skill", back_populates="agent_skills")
     skill_install = relationship("SkillInstall", back_populates="agent_skills")
+    system_skill_definition = relationship("SkillDefinition", foreign_keys=[system_skill_definition_id])
+    system_skill_version = relationship("SkillVersion", foreign_keys=[system_skill_version_id])
 
     __table_args__ = (
         CheckConstraint(
-            "skill_id IS NOT NULL OR skill_install_id IS NOT NULL",
+            "skill_id IS NOT NULL OR skill_install_id IS NOT NULL OR system_skill_version_id IS NOT NULL",
             name="ck_agents_skills_has_skill_or_install",
+        ),
+        CheckConstraint(
+            "system_skill_version_id IS NULL OR system_skill_definition_id IS NOT NULL",
+            name="ck_agents_skills_system_version_has_definition",
         ),
         Index(
             "uq_agents_skills_active",
@@ -611,9 +629,17 @@ class AgentSkill(Base):
             unique=True,
             postgresql_where=text("deleted_at IS NULL AND skill_install_id IS NOT NULL"),
         ),
+        Index(
+            "uq_agents_system_skill_versions_active",
+            "agent_id",
+            "system_skill_version_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND system_skill_version_id IS NOT NULL"),
+        ),
         Index("ix_agents_skills_agent_id", "agent_id"),
         Index("ix_agents_skills_skill_id", "skill_id"),
         Index("ix_agents_skills_skill_install_id", "skill_install_id"),
+        Index("ix_agents_skills_system_skill_version_id", "system_skill_version_id"),
         Index("ix_agents_skills_deleted_at", "deleted_at"),
     )
 

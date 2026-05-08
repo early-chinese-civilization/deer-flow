@@ -71,7 +71,7 @@ import {
   getSkillWorkspaceCardState,
   isCommunitySkill,
   isPersonalSkill,
-  isSelfAuthoredCommunitySkill,
+  isSystemSkill,
   skillMatchesCommunitySearch,
   skillMatchesWorkspaceSegment,
   type SkillInstallState,
@@ -80,7 +80,7 @@ import {
 } from "@/core/skills/display";
 import type { Skill } from "@/core/skills/type";
 
-type SkillsSurface = "community" | "personal";
+type SkillsSurface = "system" | "community" | "personal";
 
 type SkillGalleryEmptyContent = {
   title: string;
@@ -90,8 +90,9 @@ type SkillGalleryEmptyContent = {
 };
 
 const SKILL_SURFACE_SEGMENTS: Record<SkillsSurface, SkillWorkspaceSegment[]> = {
-  community: ["all", "system"],
-  personal: ["all", "authored", "downloaded", "updates"],
+  system: ["all"],
+  community: ["all"],
+  personal: ["all", "authored", "installed", "updates"],
 };
 
 export function SkillsGallery() {
@@ -104,7 +105,7 @@ export function SkillsGallery() {
   const publishSkill = usePublishSkill();
   const uploadSkills = useUploadSkills();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [surface, setSurface] = useState<SkillsSurface>("community");
+  const [surface, setSurface] = useState<SkillsSurface>("system");
   const [segment, setSegment] = useState<SkillWorkspaceSegment>("all");
   const [communitySearch, setCommunitySearch] = useState("");
   const [publishCandidate, setPublishCandidate] = useState<Skill | null>(null);
@@ -130,10 +131,16 @@ export function SkillsGallery() {
 
   const filteredSkills = skills.filter((skill) => {
     const installedSkill = findInstalledSkillForSkillHubItem(skill, skills);
-    const inSurface =
-      surface === "community"
-        ? isCommunitySkill(skill)
-        : isPersonalSkill(skill);
+    const inSurface = (() => {
+      switch (surface) {
+        case "system":
+          return isSystemSkill(skill);
+        case "community":
+          return isCommunitySkill(skill);
+        case "personal":
+          return isPersonalSkill(skill);
+      }
+    })();
     const matchesSearch =
       surface !== "community" ||
       skillMatchesCommunitySearch(skill, communitySearch);
@@ -191,7 +198,7 @@ export function SkillsGallery() {
       display.viewerRelation === "downloaded" ||
       display.viewerRelation === "update_available"
     ) {
-      return t.settings.skills.downloadedSource(
+      return t.settings.skills.installedFromSource(
         skill.owner_display_name ?? t.settings.skills.communitySpaceSource,
       );
     }
@@ -213,10 +220,8 @@ export function SkillsGallery() {
 
   function getSegmentText(value: SkillWorkspaceSegment) {
     switch (value) {
-      case "system":
-        return t.settings.skills.systemSegment;
-      case "downloaded":
-        return t.settings.skills.downloadedSegment;
+      case "installed":
+        return t.settings.skills.installedSegment;
       case "authored":
         return t.settings.skills.authoredSegment;
       case "updates":
@@ -251,7 +256,7 @@ export function SkillsGallery() {
       return t.settings.skills.updateAvailable;
     }
     if (action === "view-personal" || display.viewerRelation === "downloaded") {
-      return t.settings.skills.downloadedToPersonal;
+      return t.settings.skills.installedToPersonal;
     }
     return t.settings.skills.availableInCommunity;
   }
@@ -281,6 +286,15 @@ export function SkillsGallery() {
   }
 
   function getEmptyStateContent(): SkillGalleryEmptyContent {
+    if (surface === "system") {
+      return {
+        title: t.settings.skills.noSystemSkills,
+        description: t.settings.skills.noSystemSkillsDescription,
+        icon: "package" as const,
+        action: null,
+      };
+    }
+
     if (surface === "community") {
       if (communitySearch.trim()) {
         return {
@@ -288,15 +302,6 @@ export function SkillsGallery() {
           description: t.settings.skills.noCommunitySearchResultsDescription,
           icon: "search" as const,
           action: "clear-search" as const,
-        };
-      }
-
-      if (segment === "system") {
-        return {
-          title: t.settings.skills.noSystemSkills,
-          description: t.settings.skills.noSystemSkillsDescription,
-          icon: "package" as const,
-          action: null,
         };
       }
 
@@ -316,7 +321,7 @@ export function SkillsGallery() {
           icon: "package" as const,
           action: "upload" as const,
         };
-      case "downloaded":
+      case "installed":
         return {
           title: t.settings.skills.noInstalledSkills,
           description: t.settings.skills.noInstalledSkillsDescription,
@@ -331,7 +336,6 @@ export function SkillsGallery() {
           action: null,
         };
       case "all":
-      case "system":
         return {
           title: t.settings.skills.noMySkills,
           description: t.settings.skills.noMySkillsDescription,
@@ -561,6 +565,9 @@ export function SkillsGallery() {
             }}
           >
             <TabsList variant="line">
+              <TabsTrigger value="system">
+                {t.settings.skills.systemSpaceTab}
+              </TabsTrigger>
               <TabsTrigger value="community">
                 {t.settings.skills.communitySpaceTab}
               </TabsTrigger>
@@ -570,22 +577,24 @@ export function SkillsGallery() {
             </TabsList>
           </Tabs>
         </div>
-        <div className="mb-5 flex gap-2">
-          <Tabs
-            value={segment}
-            onValueChange={(value) =>
-              setSegment(value as SkillWorkspaceSegment)
-            }
-          >
-            <TabsList variant="line">
-              {SKILL_SURFACE_SEGMENTS[surface].map((value) => (
-                <TabsTrigger key={value} value={value}>
-                  {getSegmentText(value)}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-        </div>
+        {SKILL_SURFACE_SEGMENTS[surface].length > 1 ? (
+          <div className="mb-5 flex gap-2">
+            <Tabs
+              value={segment}
+              onValueChange={(value) =>
+                setSegment(value as SkillWorkspaceSegment)
+              }
+            >
+              <TabsList variant="line">
+                {SKILL_SURFACE_SEGMENTS[surface].map((value) => (
+                  <TabsTrigger key={value} value={value}>
+                    {getSegmentText(value)}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          </div>
+        ) : null}
         {surface === "community" ? (
           <div className="mb-5 max-w-xl">
             <InputGroup>
@@ -634,13 +643,14 @@ export function SkillsGallery() {
                 skill,
                 installedSkill,
               );
-              const communityActionInstalled =
-                isSelfAuthoredCommunitySkill(skill) ||
-                installState !== "not-installed";
+              const communityActionInstalled = installState !== "not-installed";
+              const shouldShowCommunityInstallAction =
+                cardState.primaryAction === "add-to-personal" ||
+                communityActionInstalled;
               const canCreateMyVersion =
                 canCreateMyVersionFromSkillHubItem(skill);
               const platformVersion =
-                display.space === "community"
+                display.space === "community" || display.space === "system"
                   ? getSkillHubLatestPlatformVersion(skill)
                   : getSkillPlatformVersion(skill);
               const isInstallingSkill =
@@ -682,12 +692,19 @@ export function SkillsGallery() {
                           )}
                         </Badge>
                       ) : null}
+                      {display.space === "system" ? (
+                        <Badge variant="outline">
+                          {t.settings.skills.systemDirectUse}
+                        </Badge>
+                      ) : null}
                     </div>
                     <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                       <span>
-                        {display.space === "community"
-                          ? getSkillHubVersionDetail(skill)
-                          : getMySkillVersionDetail(skill)}
+                        {display.space === "system"
+                          ? getMySkillVersionDetail(skill)
+                          : display.space === "community"
+                            ? getSkillHubVersionDetail(skill)
+                            : getMySkillVersionDetail(skill)}
                       </span>
                       <span>{getSkillSourceText(skill)}</span>
                     </div>
@@ -696,30 +713,33 @@ export function SkillsGallery() {
                     </ItemDescription>
                   </ItemContent>
                   <ItemActions>
-                    {display.space === "community" ? (
+                    {display.space === "system" ? null : display.space ===
+                      "community" ? (
                       <div className="flex items-center gap-2">
-                        <Button
-                          size="sm"
-                          variant={
-                            communityActionInstalled ? "outline" : "default"
-                          }
-                          disabled={
-                            communityActionInstalled ||
-                            installingSkillKey !== null
-                          }
-                          onClick={() => {
-                            if (!communityActionInstalled) {
-                              void handleInstall(skill, display.identityKey);
+                        {shouldShowCommunityInstallAction ? (
+                          <Button
+                            size="sm"
+                            variant={
+                              communityActionInstalled ? "outline" : "default"
                             }
-                          }}
-                        >
-                          <PackageIcon className="size-4" />
-                          {isInstallingSkill && !communityActionInstalled
-                            ? t.settings.skills.installPending
-                            : communityActionInstalled
-                              ? t.settings.skills.installed
-                              : t.settings.skills.installSkill}
-                        </Button>
+                            disabled={
+                              communityActionInstalled ||
+                              installingSkillKey !== null
+                            }
+                            onClick={() => {
+                              if (!communityActionInstalled) {
+                                void handleInstall(skill, display.identityKey);
+                              }
+                            }}
+                          >
+                            <PackageIcon className="size-4" />
+                            {isInstallingSkill && !communityActionInstalled
+                              ? t.settings.skills.installPending
+                              : communityActionInstalled
+                                ? t.settings.skills.installed
+                                : t.settings.skills.installSkill}
+                          </Button>
+                        ) : null}
                         {canCreateMyVersion ? (
                           <Button
                             size="sm"
