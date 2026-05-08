@@ -8,6 +8,7 @@ const {
   canSubmitComposerMessage,
   filterComposerUploadFilesBySizeLimit,
   isComposerUploadFileWithinLimit,
+  resolveDraftComposerWorkspaceId,
 } = await import(new URL("./composer-core.ts", import.meta.url).href);
 
 const { assertCanSubmitComposerMessage } = await import(
@@ -151,5 +152,35 @@ void test("rejects uploaded files without an oss uri", () => {
         },
       ]),
     /oss uri/i,
+  );
+});
+
+void test("keeps the draft workspace only when the draft key matches", () => {
+  assert.equal(
+    resolveDraftComposerWorkspaceId(
+      { draftKey: "draft-a", workspaceId: "workspace-a" },
+      "draft-a",
+    ),
+    "workspace-a",
+  );
+});
+
+void test("does not reuse a draft workspace for a different draft key", () => {
+  assert.equal(
+    resolveDraftComposerWorkspaceId(
+      { draftKey: "draft-a", workspaceId: "workspace-a" },
+      "draft-b",
+    ),
+    null,
+  );
+});
+
+void test("does not reuse a draft workspace when the current draft key is empty", () => {
+  assert.equal(
+    resolveDraftComposerWorkspaceId(
+      { draftKey: "draft-a", workspaceId: "workspace-a" },
+      null,
+    ),
+    null,
   );
 });

@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const {
-  getThreadAgentName,
-  pathOfNewThread,
-  pathOfThread,
-} = await import(new URL("./utils.ts", import.meta.url).href);
+const { getThreadAgentName, pathOfNewThread, pathOfThread } = await import(
+  new URL("./utils.ts", import.meta.url).href
+);
 
 void test("builds draft routes with an agent query", () => {
   assert.equal(
@@ -23,6 +21,17 @@ void test("preserves unrelated draft query params while updating the agent", () 
       agentName: "hudi",
     }),
     "/workspace/chats/new?mode=skill&mock=true&agent=hudi",
+  );
+});
+
+void test("replaces the draft nonce while preserving unrelated new-chat query params", () => {
+  assert.equal(
+    pathOfNewThread({
+      currentSearch: "mode=skill&draft=old-draft&agent=old-agent",
+      agentName: null,
+      draftNonce: "new-draft",
+    }),
+    "/workspace/chats/new?mode=skill&draft=new-draft",
   );
 });
 

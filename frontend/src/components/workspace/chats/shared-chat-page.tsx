@@ -46,6 +46,7 @@ import { textOfMessage } from "@/core/threads/utils";
 import {
   currentRouteOf,
   getThreadAgentName,
+  pathOfNewThread,
   pathOfThread,
 } from "@/core/threads/utils";
 import { useComposerAttachmentUploads } from "@/core/uploads/composer";
@@ -142,6 +143,7 @@ export function SharedChatPage({
 
   const persistedWorkspaceId = threadDetailQuery.data?.workspace_id ?? null;
   const { composerWorkspaceId } = useComposerAttachmentUploads({
+    draftKey: isNewThread ? threadId : null,
     persistedWorkspaceId,
   });
 
@@ -311,7 +313,11 @@ export function SharedChatPage({
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <Button onClick={() => router.replace("/workspace/chats/new")}>
+            <Button
+              onClick={() =>
+                router.replace(pathOfNewThread({ draftNonce: uuid() }))
+              }
+            >
               <PlusIcon />
               {t.conversation.startNewConversation}
             </Button>

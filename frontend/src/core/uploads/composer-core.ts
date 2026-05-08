@@ -17,6 +17,11 @@ export type RetryableComposerUploadAttachment = ComposerUploadAttachment & {
   uploadError?: string | null;
 };
 
+export type DraftComposerWorkspace = {
+  draftKey: string;
+  workspaceId: string;
+};
+
 export const MAX_COMPOSER_UPLOAD_FILE_SIZE_BYTES = 100 * 1024 * 1024;
 export const MAX_COMPOSER_UPLOAD_FILE_SIZE_LABEL = "100MB";
 
@@ -58,6 +63,17 @@ export function getCanonicalUploadedFilePath(file: UploadedFileInfo): string {
   }
 
   return file.oss_uri;
+}
+
+export function resolveDraftComposerWorkspaceId(
+  draftWorkspace: DraftComposerWorkspace | null,
+  draftKey?: string | null,
+): string | null {
+  if (!draftKey || draftWorkspace?.draftKey !== draftKey) {
+    return null;
+  }
+
+  return draftWorkspace.workspaceId;
 }
 
 export function hasBlockingAttachmentUploads(
