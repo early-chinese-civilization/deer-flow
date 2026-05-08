@@ -21,10 +21,6 @@ import {
   type PendingUploadedFiles,
 } from "./message-attachments";
 import { getRunReconnectStorage } from "./reconnect-storage";
-import {
-  shouldNotifyThreadStartBeforeEnsureThread,
-  shouldShowOptimisticMessageBeforeEnsureThread,
-} from "./send-lifecycle";
 import { shouldSuppressPassiveStreamError } from "./stream-error";
 import { resolveNextStreamThreadId } from "./stream-thread-id";
 import {
@@ -369,14 +365,10 @@ export function useThreadStream({
             optimisticFiles.length > 0 ? { files: optimisticFiles } : {},
         },
       ];
+      setOptimisticMessages(newOptimistic);
 
       const shouldEnsureThread = !threadIdRef.current;
-      if (shouldShowOptimisticMessageBeforeEnsureThread(!shouldEnsureThread)) {
-        setOptimisticMessages(newOptimistic);
-      }
-      if (shouldNotifyThreadStartBeforeEnsureThread(!shouldEnsureThread)) {
-        _handleOnStart(threadId);
-      }
+      _handleOnStart(threadId);
       let ensuredThread: Awaited<ReturnType<typeof ensureThread>> | undefined =
         undefined;
 
@@ -389,8 +381,6 @@ export function useThreadStream({
             ["threads", "detail", threadId],
             ensuredThread,
           );
-          _handleOnStart(threadId);
-          setOptimisticMessages(newOptimistic);
         }
 
         const filesForSubmit: FileInMessage[] = uploadedFileInfo.map(

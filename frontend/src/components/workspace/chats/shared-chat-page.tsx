@@ -118,11 +118,6 @@ export function SharedChatPage({
     enabled: !isNewThread,
     refetchOnWindowFocus: false,
   });
-  const isThreadNotFound =
-    !isNewThread &&
-    isThreadApiError(threadDetailQuery.error) &&
-    threadDetailQuery.error.status === 404;
-
   const persistedAgentName = useMemo(() => {
     if (isNewThread || !threadDetailQuery.data) {
       return undefined;
@@ -151,19 +146,19 @@ export function SharedChatPage({
   });
 
   const [thread, sendMessage, isSendingMessage] = useThreadStream({
-    threadId:
-      !isNewThread && threadDetailQuery.isSuccess ? threadId : undefined,
+    threadId: isNewThread ? undefined : threadId,
     context: submitContext,
     isMock,
     onStart: (resolvedThreadId) => {
       commitThreadId(resolvedThreadId);
-      router.replace(
+      history.replaceState(
+        null,
+        "",
         pathOfThread(resolvedThreadId, {
           currentPath: pathname,
           currentSearch: searchParamsString,
           agentName: effectiveAgentName ?? null,
         }),
-        { scroll: false },
       );
     },
     onFinish: (state) => {
@@ -183,6 +178,11 @@ export function SharedChatPage({
       }
     },
   });
+  const isThreadNotFound =
+    !isNewThread &&
+    !isSendingMessage &&
+    isThreadApiError(threadDetailQuery.error) &&
+    threadDetailQuery.error.status === 404;
 
   useEffect(() => {
     if (isNewThread || !threadDetailQuery.data) {
@@ -196,15 +196,9 @@ export function SharedChatPage({
     const currentRoute = currentRouteOf(pathname, searchParamsString);
 
     if (canonicalRoute !== currentRoute) {
-      router.replace(canonicalRoute, { scroll: false });
+      history.replaceState(null, "", canonicalRoute);
     }
-  }, [
-    isNewThread,
-    pathname,
-    router,
-    searchParamsString,
-    threadDetailQuery.data,
-  ]);
+  }, [isNewThread, pathname, searchParamsString, threadDetailQuery.data]);
 
   const handleDraftAgentChange = useCallback(
     (nextAgentName: string | null) => {
@@ -253,8 +247,11 @@ export function SharedChatPage({
     await thread.stop();
   }, [thread]);
 
+  const showNewThreadLayout =
+    isNewThread && !isSendingMessage && thread.messages.length === 0;
+
   const agentControl = useMemo(() => {
-    if (isNewThread) {
+    if (showNewThreadLayout) {
       return (
         <DraftAgentControl
           agentName={draftAgentName}
@@ -282,12 +279,12 @@ export function SharedChatPage({
     draftAgentName,
     effectiveAgentName,
     handleDraftAgentChange,
-    isNewThread,
+    showNewThreadLayout,
     thread.isLoading,
     threadDetailQuery.isPending,
   ]);
 
-  const inputHeader = isNewThread ? (
+  const inputHeader = showNewThreadLayout ? (
     draftAgentName ? (
       <AgentWelcome agent={agent} agentName={draftAgentName} />
     ) : (
@@ -335,7 +332,7 @@ export function SharedChatPage({
               <header
                 className={cn(
                   "absolute top-0 right-0 left-0 z-30 flex h-12 shrink-0 items-center px-4",
-                  isNewThread
+                  showNewThreadLayout
                     ? "bg-background/0 backdrop-blur-none"
                     : "bg-background/80 shadow-xs backdrop-blur",
                 )}
@@ -344,7 +341,7 @@ export function SharedChatPage({
                   <ThreadTitle
                     threadId={threadId}
                     thread={thread}
-                    isNewThread={isNewThread}
+                    isNewThread={showNewThreadLayout}
                   />
                 </div>
                 <div className="flex items-center gap-2">
@@ -359,7 +356,7 @@ export function SharedChatPage({
               <main className="flex min-h-0 max-w-full grow flex-col">
                 <div className="flex size-full justify-center">
                   <MessageList
-                    className={cn("size-full", !isNewThread && "pt-10")}
+                    className={cn("size-full", !showNewThreadLayout && "pt-10")}
                     threadId={threadId}
                     thread={thread}
                   />
@@ -368,8 +365,8 @@ export function SharedChatPage({
                   <div
                     className={cn(
                       "relative w-full",
-                      isNewThread && "-translate-y-[calc(50vh-96px)]",
-                      isNewThread
+                      showNewThreadLayout && "-translate-y-[calc(50vh-96px)]",
+                      showNewThreadLayout
                         ? "max-w-(--container-width-sm)"
                         : "max-w-(--container-width-md)",
                     )}
@@ -389,9 +386,9 @@ export function SharedChatPage({
                     <InputBox
                       key={threadId}
                       className={cn("bg-background/5 w-full -translate-y-4")}
-                      isNewThread={isNewThread}
+                      isNewThread={showNewThreadLayout}
                       threadId={threadId}
-                      autoFocus={isNewThread}
+                      autoFocus={showNewThreadLayout}
                       status={
                         thread.error
                           ? "error"
