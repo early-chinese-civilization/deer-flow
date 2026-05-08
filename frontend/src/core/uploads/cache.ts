@@ -179,7 +179,7 @@ function buildObservedWorkspaceFile(
 
 function normalizeWorkspaceFileUrl(url: string | null | undefined) {
   if (!url) {
-    return url;
+    return null;
   }
 
   return withBasePathForSameOriginUrl(url);
