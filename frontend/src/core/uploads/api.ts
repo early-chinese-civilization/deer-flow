@@ -2,6 +2,9 @@
  * API functions for file uploads
  */
 
+import { withBasePath } from "../auth/base-path";
+import { normalizeUploadedFilesList } from "./cache";
+
 function getBaseOrigin(): string {
   if (typeof window !== "undefined") {
     return window.location.origin;
@@ -136,7 +139,9 @@ function buildUploadsUrl(
   workspaceId: string,
   suffix = "",
 ): string {
-  return `${getBackendBaseURL()}/api/workspaces/${encodeURIComponent(workspaceId)}/uploads${suffix}`;
+  const path = `/api/workspaces/${encodeURIComponent(workspaceId)}/uploads${suffix}`;
+  const backendBaseURL = getBackendBaseURL();
+  return backendBaseURL ? `${backendBaseURL}${path}` : withBasePath(path);
 }
 
 function buildDownloadUrlUrl(workspaceId: string, objectKey: string): string {
@@ -289,7 +294,7 @@ export async function listUploadedFiles(
     );
   }
 
-  return response.json();
+  return normalizeUploadedFilesList(await response.json());
 }
 
 export async function getWorkspaceDownloadUrl(

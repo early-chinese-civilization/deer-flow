@@ -1,3 +1,5 @@
+import { withBasePathForSameOriginUrl } from "../auth/base-path";
+
 export interface BrowserOssSource {
   ossUri: string;
   objectKey: string;
@@ -44,7 +46,7 @@ export function getBrowserOssSource(
   return {
     ossUri: file.oss_uri,
     objectKey: file.object_key,
-    httpUri: file.http_uri ?? file.artifact_url ?? null,
+    httpUri: normalizeBrowserHttpUri(file.http_uri ?? file.artifact_url ?? null),
   };
 }
 
@@ -56,4 +58,12 @@ export function getBrowserOssSourceFromOssUri(
   }
 
   return splitOssUri(ossUri);
+}
+
+function normalizeBrowserHttpUri(httpUri: string | null | undefined) {
+  if (!httpUri) {
+    return null;
+  }
+
+  return withBasePathForSameOriginUrl(httpUri);
 }

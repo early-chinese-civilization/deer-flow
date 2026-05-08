@@ -1,3 +1,5 @@
+import { withBasePath } from "../auth/base-path";
+
 function getBaseOrigin(): string {
   if (typeof window !== "undefined") {
     return window.location.origin;
@@ -18,7 +20,9 @@ function getBackendBaseURL(): string {
 
 function buildDownloadUrlUrl(workspaceId: string, objectKey: string): string {
   const query = new URLSearchParams({ object_key: objectKey }).toString();
-  return `${getBackendBaseURL()}/api/workspaces/${encodeURIComponent(workspaceId)}/uploads/download-url?${query}`;
+  const path = `/api/workspaces/${encodeURIComponent(workspaceId)}/uploads/download-url?${query}`;
+  const backendBaseURL = getBackendBaseURL();
+  return backendBaseURL ? `${backendBaseURL}${path}` : withBasePath(path);
 }
 
 async function readErrorDetail(

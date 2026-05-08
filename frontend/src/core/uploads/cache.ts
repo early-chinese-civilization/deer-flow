@@ -1,4 +1,5 @@
 import type { FileTreeNode, ListFilesResponse, UploadedFileInfo } from "./api";
+import { withBasePathForSameOriginUrl } from "../auth/base-path";
 
 function getDeletedObjectKeys(file: UploadedFileInfo) {
   return new Set<string>([file.object_key]);
@@ -176,6 +177,24 @@ function buildObservedWorkspaceFile(
   };
 }
 
+function normalizeWorkspaceFileUrl(url: string | null | undefined) {
+  if (!url) {
+    return url;
+  }
+
+  return withBasePathForSameOriginUrl(url);
+}
+
+function normalizeUploadedFile(file: UploadedFileInfo): UploadedFileInfo {
+  return {
+    ...file,
+    artifact_url: normalizeWorkspaceFileUrl(file.artifact_url),
+    http_uri: normalizeWorkspaceFileUrl(file.http_uri),
+    markdown_artifact_url: normalizeWorkspaceFileUrl(file.markdown_artifact_url),
+    markdown_http_uri: normalizeWorkspaceFileUrl(file.markdown_http_uri),
+  };
+}
+
 function buildFileTree(files: UploadedFileInfo[]): FileTreeNode[] {
   const rootNodes: FileTreeNode[] = [];
   const directoryNodes = new Map<string, FileTreeNode>();
@@ -271,6 +290,19 @@ function buildFileTree(files: UploadedFileInfo[]): FileTreeNode[] {
   return rootNodes;
 }
 
+export function normalizeUploadedFilesList(
+  response: ListFilesResponse,
+): ListFilesResponse {
+  const files = response.files.map(normalizeUploadedFile);
+
+  return {
+    ...response,
+    files,
+    tree: buildFileTree(files),
+    count: files.length,
+  };
+}
+
 /**
  * Add uploaded files to the existing list
  * Uses optimistic update before background reconcile
@@ -283,9 +315,13 @@ export function addUploadedFilesToList(
     return current;
   }
 
-  const updatedFiles = mergeFilesByRelativePath(current.files, uploadedFiles, {
-    overwriteExisting: true,
-  });
+  const updatedFiles = mergeFilesByRelativePath(
+    current.files.map(normalizeUploadedFile),
+    uploadedFiles.map(normalizeUploadedFile),
+    {
+      overwriteExisting: true,
+    },
+  );
   const updatedTree = buildFileTree(updatedFiles);
 
   return {
@@ -312,9 +348,13 @@ export function addObservedWorkspaceFilesToList(
     return current;
   }
 
-  const updatedFiles = mergeFilesByRelativePath(current.files, observedFiles, {
-    overwriteExisting: false,
-  });
+  const updatedFiles = mergeFilesByRelativePath(
+    current.files.map(normalizeUploadedFile),
+    observedFiles,
+    {
+      overwriteExisting: false,
+    },
+  );
   const updatedTree = buildFileTree(updatedFiles);
 
   return {

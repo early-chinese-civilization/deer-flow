@@ -2,6 +2,8 @@ import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { visit } from "unist-util-visit";
 
+import { withBasePath } from "../auth/base-path";
+
 function normalizeOssUriCandidate(value: string) {
   let text = value;
   while (text && ",.;:!?)]}*".includes(text[text.length - 1] ?? "")) {
@@ -30,7 +32,9 @@ function getBackendBaseURL(): string {
 
 function buildDownloadUrlUrl(workspaceId: string, objectKey: string): string {
   const query = new URLSearchParams({ object_key: objectKey }).toString();
-  return `${getBackendBaseURL()}/api/workspaces/${encodeURIComponent(workspaceId)}/uploads/download-url?${query}`;
+  const path = `/api/workspaces/${encodeURIComponent(workspaceId)}/uploads/download-url?${query}`;
+  const backendBaseURL = getBackendBaseURL();
+  return backendBaseURL ? `${backendBaseURL}${path}` : withBasePath(path);
 }
 
 async function resolveWorkspaceDownloadUrl(
