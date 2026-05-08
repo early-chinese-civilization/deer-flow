@@ -9,8 +9,8 @@ import {
 } from "react";
 
 import { useSidebar } from "@/components/ui/sidebar";
-import { env } from "@/env";
 import type { BrowserOssSource } from "@/core/oss";
+import { env } from "@/env";
 
 export interface ArtifactSource {
   filepath: string;
@@ -37,6 +37,8 @@ export interface ArtifactsContextType {
   open: boolean;
   autoOpen: boolean;
   setOpen: (open: boolean) => void;
+  hasTransientArtifactAutoOpened: (artifactId: string) => boolean;
+  markTransientArtifactAutoOpened: (artifactId: string) => void;
 }
 
 const ArtifactsContext = createContext<ArtifactsContextType | undefined>(
@@ -58,6 +60,8 @@ export function ArtifactsProvider({ children }: ArtifactsProviderProps) {
     env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true",
   );
   const [autoOpen, setAutoOpen] = useState(true);
+  const [autoOpenedTransientArtifacts, setAutoOpenedTransientArtifacts] =
+    useState<Set<string>>(() => new Set());
   const { setOpen: setSidebarOpen } = useSidebar();
 
   const select = useCallback(
@@ -123,6 +127,23 @@ export function ArtifactsProvider({ children }: ArtifactsProviderProps) {
     [artifactSourcesByThread],
   );
 
+  const hasTransientArtifactAutoOpened = useCallback(
+    (artifactId: string) => autoOpenedTransientArtifacts.has(artifactId),
+    [autoOpenedTransientArtifacts],
+  );
+
+  const markTransientArtifactAutoOpened = useCallback((artifactId: string) => {
+    setAutoOpenedTransientArtifacts((currentArtifacts) => {
+      if (currentArtifacts.has(artifactId)) {
+        return currentArtifacts;
+      }
+
+      const nextArtifacts = new Set(currentArtifacts);
+      nextArtifacts.add(artifactId);
+      return nextArtifacts;
+    });
+  }, []);
+
   const value: ArtifactsContextType = {
     artifacts,
     setArtifacts,
@@ -139,6 +160,8 @@ export function ArtifactsProvider({ children }: ArtifactsProviderProps) {
       }
       setOpen(isOpen);
     },
+    hasTransientArtifactAutoOpened,
+    markTransientArtifactAutoOpened,
 
     selectedArtifact,
     select,
