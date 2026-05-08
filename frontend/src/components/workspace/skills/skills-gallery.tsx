@@ -1,6 +1,11 @@
 "use client";
 
-import { MoreVerticalIcon, SearchIcon, UploadIcon } from "lucide-react";
+import {
+  GitForkIcon,
+  MoreVerticalIcon,
+  SearchIcon,
+  UploadIcon,
+} from "lucide-react";
 import { type ChangeEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -40,6 +45,7 @@ import {
   getSkillInstallUpdateDialogState,
   useConfirmSkillInstallUpdate,
   useDeleteSkill,
+  useDownloadSkillForkPackage,
   useInstallSkillHubSkill,
   usePublishSkill,
   usePreviewSkillInstallUpdate,
@@ -48,6 +54,7 @@ import {
 } from "@/core/skills";
 import {
   findInstalledSkillForSkillHubItem,
+  canCreateMyVersionFromSkillHubItem,
   getSkillDisplayContract,
   getSkillHubLatestPlatformVersion,
   getSkillInstallState,
@@ -77,6 +84,7 @@ export function SkillsGallery() {
   const { skills, isLoading, error } = useSkills();
   const deleteSkill = useDeleteSkill();
   const installSkillHubSkill = useInstallSkillHubSkill();
+  const downloadForkPackage = useDownloadSkillForkPackage();
   const confirmSkillUpdate = useConfirmSkillInstallUpdate();
   const publishSkill = usePublishSkill();
   const uploadSkills = useUploadSkills();
@@ -89,6 +97,7 @@ export function SkillsGallery() {
   const [releaseNotes, setReleaseNotes] = useState("");
   const updatePreview = usePreviewSkillInstallUpdate(
     updateCandidate?.name ?? null,
+    updateCandidate?.skill_install_id ?? null,
   );
   const updateDialogState = getSkillInstallUpdateDialogState(
     updatePreview.data ?? null,
@@ -285,6 +294,7 @@ export function SkillsGallery() {
     try {
       const result = await checkSkillHubInstall(skill.name, {
         owner_user_id: skill.owner_user_id ?? null,
+        skill_definition_id: skill.skill_definition_id ?? null,
       });
       const overwrite = result.exists
         ? window.confirm(t.settings.skills.conflictConfirm(result.skill_name))
@@ -297,6 +307,7 @@ export function SkillsGallery() {
       await installSkillHubSkill.mutateAsync({
         skillName: skill.name,
         ownerUserId: skill.owner_user_id ?? null,
+        skillDefinitionId: skill.skill_definition_id ?? null,
         overwrite,
       });
       toast.success(t.settings.skills.installSuccess(skill.name));
@@ -315,6 +326,7 @@ export function SkillsGallery() {
     try {
       await confirmSkillUpdate.mutateAsync({
         skillName: updateCandidate.name,
+        skillInstallId: updateCandidate.skill_install_id ?? null,
         skillVersionId: updatePreview.data.target_skill_version_id,
       });
       toast.success(t.settings.skills.updateSuccess(updateCandidate.name));
@@ -322,6 +334,23 @@ export function SkillsGallery() {
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t.settings.skills.updateError,
+      );
+    }
+  }
+
+  async function handleDownloadForkPackage(skill: Skill) {
+    try {
+      await downloadForkPackage.mutateAsync({
+        skillName: skill.name,
+        ownerUserId: skill.owner_user_id ?? null,
+        skillDefinitionId: skill.skill_definition_id ?? null,
+      });
+      toast.success(t.settings.skills.forkDownloadSuccess);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t.settings.skills.forkDownloadError,
       );
     }
   }
@@ -516,6 +545,8 @@ export function SkillsGallery() {
               const communityActionInstalled =
                 isSelfAuthoredCommunitySkill(skill) ||
                 installState !== "not-installed";
+              const canCreateMyVersion =
+                canCreateMyVersionFromSkillHubItem(skill);
               const platformVersion =
                 display.space === "community"
                   ? getSkillHubLatestPlatformVersion(skill)
@@ -570,26 +601,45 @@ export function SkillsGallery() {
                   </ItemContent>
                   <ItemActions>
                     {display.space === "community" ? (
-                      <Button
-                        size="sm"
-                        variant={communityActionInstalled ? "outline" : "default"}
-                        disabled={
-                          communityActionInstalled ||
-                          installSkillHubSkill.isPending
-                        }
-                        onClick={() => {
-                          if (!communityActionInstalled) {
-                            void handleInstall(skill);
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant={
+                            communityActionInstalled ? "outline" : "default"
                           }
-                        }}
-                      >
-                        {installSkillHubSkill.isPending &&
-                        !communityActionInstalled
-                          ? t.settings.skills.installPending
-                          : communityActionInstalled
-                            ? t.settings.skills.installed
-                            : t.settings.skills.installSkill}
-                      </Button>
+                          disabled={
+                            communityActionInstalled ||
+                            installSkillHubSkill.isPending
+                          }
+                          onClick={() => {
+                            if (!communityActionInstalled) {
+                              void handleInstall(skill);
+                            }
+                          }}
+                        >
+                          {installSkillHubSkill.isPending &&
+                          !communityActionInstalled
+                            ? t.settings.skills.installPending
+                            : communityActionInstalled
+                              ? t.settings.skills.installed
+                              : t.settings.skills.installSkill}
+                        </Button>
+                        {canCreateMyVersion ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={downloadForkPackage.isPending}
+                            onClick={() =>
+                              void handleDownloadForkPackage(skill)
+                            }
+                          >
+                            <GitForkIcon className="mr-1.5 h-4 w-4" />
+                            {downloadForkPackage.isPending
+                              ? t.settings.skills.forkDownloadPending
+                              : t.settings.skills.createMyVersion}
+                          </Button>
+                        ) : null}
+                      </div>
                     ) : (
                       <div className="flex items-center gap-1">
                         {primaryActionText ? (

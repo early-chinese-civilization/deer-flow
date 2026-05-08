@@ -291,6 +291,10 @@ class SkillDownloadCheckRequest(BaseModel):
         default=None,
         description="Deprecated compatibility field. Public skill lookup now uses only skill_name.",
     )
+    skill_definition_id: int | None = Field(
+        default=None,
+        description="Selected public SkillDefinition ID used to disambiguate same-name Community Skills.",
+    )
 
 
 class SkillDownloadCheckResponse(BaseModel):
@@ -307,6 +311,10 @@ class SkillDownloadRequest(BaseModel):
     owner_user_id: int | None = Field(
         default=None,
         description="Deprecated compatibility field. Public skill lookup now uses only skill_name.",
+    )
+    skill_definition_id: int | None = Field(
+        default=None,
+        description="Selected public SkillDefinition ID used to disambiguate same-name Community Skills.",
     )
     overwrite: bool = Field(default=False, description="Whether to overwrite an existing same-name custom skill")
 
@@ -327,6 +335,7 @@ class SkillForkPackageRequest(BaseModel):
 class SkillInstallUpdateRequest(BaseModel):
     """Request body for explicitly updating an installed skill."""
 
+    skill_install_id: int | None = Field(default=None, description="Selected SkillInstall ID used to disambiguate same-name installs")
     skill_version_id: int | None = Field(default=None, description="Specific platform SkillVersion ID; latest published version is used when omitted")
 
 
@@ -737,6 +746,28 @@ async def _get_single_install_by_name(
     return install
 
 
+async def _get_update_install(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    skill_name: str,
+    skill_install_id: int | None,
+) -> SkillInstall:
+    """Resolve an installed Skill for update, preferring stable install identity."""
+    if skill_install_id is None:
+        return await _get_single_install_by_name(db, user_id=user_id, skill_name=skill_name)
+
+    install = await SkillInstallRepository.get_by_id_for_user(db, user_id=user_id, skill_install_id=skill_install_id)
+    if install is None:
+        raise HTTPException(status_code=404, detail=f"Skill install '{skill_install_id}' not found")
+    definition = install.definition or (install.current_version.definition if install.current_version is not None else None)
+    if definition is None or definition.name != skill_name:
+        raise HTTPException(status_code=404, detail=f"Skill install '{skill_install_id}' not found for '{skill_name}'")
+    if install.current_version is None:
+        raise HTTPException(status_code=409, detail=f"Skill install '{skill_name}' has no current version")
+    return install
+
+
 def _definition_is_publishable_by_user(definition: SkillDefinition, *, user_id: int) -> bool:
     """Return whether a definition represents a current-user authored publish target."""
     if definition.owner_user_id != user_id:
@@ -843,11 +874,14 @@ async def _build_skill_update_preview(
     *,
     skill_name: str,
     current_user: User,
+    skill_install_id: int | None = None,
+    install: SkillInstall | None = None,
     target_version: SkillVersion | None = None,
     target_release: SkillRelease | None = None,
 ) -> SkillInstallUpdatePreviewResponse:
     """Build a read-only update preview for the current user's install."""
-    install = await _get_single_install_by_name(db, user_id=current_user.id, skill_name=skill_name)
+    if install is None:
+        install = await _get_update_install(db, user_id=current_user.id, skill_name=skill_name, skill_install_id=skill_install_id)
 
     release = target_release
     if target_version is None:
@@ -1630,6 +1664,7 @@ async def check_skill_download(
             db,
             skill_name=skill_name,
             owner_user_id=request.owner_user_id,
+            skill_definition_id=request.skill_definition_id,
         )
         if source_skill is None:
             raise HTTPException(status_code=404, detail=f"SkillHub skill '{skill_name}' not found")
@@ -1684,6 +1719,7 @@ async def download_skill(
             db,
             skill_name=skill_name,
             owner_user_id=request.owner_user_id,
+            skill_definition_id=request.skill_definition_id,
         )
         if source_skill is None:
             raise HTTPException(status_code=404, detail=f"SkillHub skill '{skill_name}' not found")
@@ -1709,6 +1745,8 @@ async def download_skill(
         already_exists = existing_install is not None or existing_skill is not None
         if already_exists and not request.overwrite:
             raise HTTPException(status_code=409, detail=f"Skill '{skill_name}' already exists")
+        if existing_install is not None and existing_install.current_version_id != version.id:
+            raise HTTPException(status_code=409, detail=f"Skill '{skill_name}' has an installed version change available; use update preview and confirmation before switching versions")
 
         if existing_skill is not None:
             await SkillRepository.soft_delete_skill(db, skill=existing_skill, commit=False)
@@ -1763,7 +1801,8 @@ async def update_skill_install(
     db: AsyncSession = Depends(get_db),
 ) -> SkillInstallUpdatePreviewResponse:
     try:
-        install = await _get_single_install_by_name(db, user_id=current_user.id, skill_name=skill_name)
+        requested_install_id = request.skill_install_id if request is not None else None
+        install = await _get_update_install(db, user_id=current_user.id, skill_name=skill_name, skill_install_id=requested_install_id)
 
         release: SkillRelease | None = None
         if request is not None and request.skill_version_id is not None:
@@ -1787,6 +1826,7 @@ async def update_skill_install(
             db,
             skill_name=skill_name,
             current_user=current_user,
+            install=install,
             target_version=version,
             target_release=release,
         )
@@ -1818,11 +1858,12 @@ async def update_skill_install(
 )
 async def preview_skill_install_update(
     skill_name: str,
+    skill_install_id: int | None = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SkillInstallUpdatePreviewResponse:
     try:
-        return await _build_skill_update_preview(db, skill_name=skill_name, current_user=current_user)
+        return await _build_skill_update_preview(db, skill_name=skill_name, current_user=current_user, skill_install_id=skill_install_id)
     except HTTPException:
         raise
     except Exception as exc:
@@ -2042,6 +2083,21 @@ async def delete_skill(
                 user_id=current_user.id,
                 skill_id=user_skill.id,
             )
+            if user_skill.skill_definition_id is not None:
+                install = await SkillInstallRepository.get_by_user_and_definition(
+                    db,
+                    user_id=current_user.id,
+                    skill_definition_id=user_skill.skill_definition_id,
+                )
+                if install is not None:
+                    bound_agent_names.extend(
+                        agent.name
+                        for agent in await SkillRepository.list_bound_agents_for_install(
+                            db,
+                            user_id=current_user.id,
+                            skill_install_id=install.id,
+                        )
+                    )
             if bound_agent_names:
                 raise HTTPException(
                     status_code=409,

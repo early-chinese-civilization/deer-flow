@@ -66,9 +66,17 @@ export function buildSkillForkPackageRequest(
 export function buildSkillInstallUpdatePreviewRequest(
   baseUrl: string,
   skillName: string,
+  skillInstallId?: number | null,
 ): [string, RequestInit] {
+  const url = new URL(buildSkillRoute(baseUrl, skillName, "update-install/preview"), "http://placeholder.local");
+  if (skillInstallId != null) {
+    url.searchParams.set("skill_install_id", String(skillInstallId));
+  }
+  const pathnameWithQuery = baseUrl
+    ? url.toString().replace("http://placeholder.local", "")
+    : `${url.pathname}${url.search}`;
   return [
-    buildSkillRoute(baseUrl, skillName, "update-install/preview"),
+    pathnameWithQuery,
     {
       method: "GET",
       credentials: "include",

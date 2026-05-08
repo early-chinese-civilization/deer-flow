@@ -4,6 +4,7 @@ import test from "node:test";
 import type { Skill } from "./type";
 
 const {
+  canCreateMyVersionFromSkillHubItem,
   findInstalledSkillForSkillHubItem,
   formatPlatformVersion,
   getAgentSkillBindingPlatformVersion,
@@ -440,6 +441,27 @@ void test("uses install action and System segment for Community discovery rows",
   assert.equal(skillMatchesWorkspaceSegment(officialCommunity, "system"), true);
   assert.equal(skillMatchesWorkspaceSegment(userCommunity, "system"), false);
   assert.equal(getSkillHubLatestPlatformVersion(userCommunity), 3);
+});
+
+void test("Create my version stays available for installed Community rows", () => {
+  const community = skill({
+    category: "public",
+    space: "community",
+    source_kind: "community",
+    viewer_relation: "community_available",
+    skill_definition_id: 10,
+  });
+  const installed = skill({
+    category: "custom",
+    space: "personal",
+    source_kind: "community",
+    viewer_relation: "downloaded",
+    skill_definition_id: 10,
+    skill_install_id: 20,
+  });
+
+  assert.equal(canCreateMyVersionFromSkillHubItem(community), true);
+  assert.equal(getSkillInstallState(community, installed), "installed");
 });
 
 void test("shows downloaded Personal Space rows with version and update state", () => {

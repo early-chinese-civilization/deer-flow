@@ -471,7 +471,7 @@ class AgentRepository:
             name=definition.name,
             description=version.description or definition.description or "",
             file_path=file_path,
-            virtual_path=build_skill_virtual_path(definition.name, container_base_path=_get_skills_container_path()),
+            virtual_path=build_skill_virtual_path(definition.name, container_base_path=_get_skills_container_path(), identity_suffix=f"install-{install.id}"),
             skill_definition_id=definition.id,
             skill_version_id=version.id,
             skill_install_id=install.id,
@@ -1483,7 +1483,6 @@ class SkillRepository:
                 Agent.deleted_at.is_(None),
                 AgentSkill.skill_install_id == skill_install_id,
                 AgentSkill.deleted_at.is_(None),
-                AgentSkill.enabled.is_(True),
             )
             .order_by(Agent.name.asc())
         )

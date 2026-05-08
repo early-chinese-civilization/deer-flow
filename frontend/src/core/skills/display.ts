@@ -193,6 +193,10 @@ export function isSelfAuthoredCommunitySkill(skill: Skill): boolean {
   );
 }
 
+export function canCreateMyVersionFromSkillHubItem(skill: Skill): boolean {
+  return getSkillDisplayContract(skill).space === "community";
+}
+
 export function isDownloadedSkillRelation(skill: Skill): boolean {
   const display = getSkillDisplayContract(skill);
   return (
