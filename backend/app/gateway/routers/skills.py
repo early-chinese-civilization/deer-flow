@@ -731,11 +731,7 @@ async def _get_public_skill_by_name_compat(
     owner_user_id: int | None = None,
 ) -> Skill | None:
     """Resolve a legacy public name lookup only when it selects one candidate."""
-    candidates = (
-        await SkillRepository.list_public_skills_by_name_and_owner(db, name=skill_name, owner_user_id=owner_user_id)
-        if owner_user_id is not None
-        else await SkillRepository.list_public_skills_by_name(db, name=skill_name)
-    )
+    candidates = await SkillRepository.list_public_skills_by_name_and_owner(db, name=skill_name, owner_user_id=owner_user_id) if owner_user_id is not None else await SkillRepository.list_public_skills_by_name(db, name=skill_name)
     candidates = _dedupe_public_candidates(candidates)
     if not candidates:
         return None

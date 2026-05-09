@@ -122,7 +122,7 @@ FastAPI application providing REST endpoints for frontend integration:
 
 | Route | Purpose |
 |-------|---------|
-| `GET/POST /api/auth/*` | Shared Keycloak auth flow via `ecc-auth` (`/login`, `/callback`, `/me`, `/refresh`, `/logout`); the router is built after config/.env loading, `/me` and request auth use JWKS-first verification, explicit logout sets `kc_logout_marker` so refresh does not silently restore the session, the backend workspace resolves `ecc-auth` from the sibling checkout for local auth integration work, and the old handwritten Keycloak/PCKE cookie helpers have been removed from the runtime path |
+| `GET/POST /api/auth/*` | Shared Keycloak auth flow via published `ecc-auth>=0.1.3` (`/login`, `/callback`, `/me`, `/refresh`, `/logout`); the router is built after config/.env loading, `/callback` builds identity through Keycloak `/userinfo` so freshly issued tokens are not rejected by backend clock skew, `/me` and request auth still use JWKS-first verification, explicit logout sets `kc_logout_marker` so refresh does not silently restore the session, and the old handwritten Keycloak/PKCE cookie helpers have been removed from the runtime path |
 | `GET /api/models` | List available LLM models |
 | `GET/PUT /api/mcp/config` | Manage MCP server configurations |
 | `GET/PUT /api/skills` | List and manage skills |

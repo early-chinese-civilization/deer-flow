@@ -148,6 +148,7 @@ services:
     working_dir: /app
     environment:
       - CI=true
+      - DEER_FLOW_SERVER_MODE=dev
       - DATABASE_URL=${DOCKER_DATABASE_URL:-postgresql://deerflow:123456@host.docker.internal:5432/flow}
       - DEER_FLOW_CHECKPOINTER_DATABASE_URL=${DOCKER_CHECKPOINTER_DATABASE_URL:-postgresql://deerflow:123456@host.docker.internal:5432/check_point}
       - DEER_FLOW_HOME=/app/backend/.deer-flow
@@ -209,6 +210,7 @@ services:
     working_dir: /app
     environment:
       - CI=true
+      - DEER_FLOW_SERVER_MODE=dev
       - DATABASE_URL=${DOCKER_DATABASE_URL:-postgresql://deerflow:123456@host.docker.internal:5432/flow}
       - DEER_FLOW_CHECKPOINTER_DATABASE_URL=${DOCKER_CHECKPOINTER_DATABASE_URL:-postgresql://deerflow:123456@host.docker.internal:5432/check_point}
       - DEER_FLOW_HOME=/app/backend/.deer-flow

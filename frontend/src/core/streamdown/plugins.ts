@@ -66,7 +66,10 @@ function linkifyOssUrisInNode(node: MarkdownNode) {
       const raw = match[0] ?? "";
       const start = match.index ?? 0;
       if (start > lastIndex) {
-        nextChildren.push({ type: "text", value: value.slice(lastIndex, start) });
+        nextChildren.push({
+          type: "text",
+          value: value.slice(lastIndex, start),
+        });
       }
 
       const { text, suffix } = stripTrailingMarkdownPunctuation(raw);

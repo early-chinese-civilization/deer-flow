@@ -883,11 +883,7 @@ class SkillVersionRepository:
         skill_definition_id: int,
     ) -> SkillVersion | None:
         result = await db.execute(
-            select(SkillVersion)
-            .options(selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user))
-            .where(SkillVersion.skill_definition_id == skill_definition_id)
-            .order_by(SkillVersion.version_number.desc())
-            .limit(1)
+            select(SkillVersion).options(selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user)).where(SkillVersion.skill_definition_id == skill_definition_id).order_by(SkillVersion.version_number.desc()).limit(1)
         )
         return result.scalar_one_or_none()
 

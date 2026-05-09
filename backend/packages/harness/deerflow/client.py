@@ -517,12 +517,7 @@ class DeerFlowClient:
         """
         from deerflow.skills.loader import load_skills
 
-        return {
-            "skills": [
-                _legacy_loader_skill_response(s)
-                for s in load_skills(enabled_only=enabled_only)
-            ]
-        }
+        return {"skills": [_legacy_loader_skill_response(s) for s in load_skills(enabled_only=enabled_only)]}
 
     def get_memory(self) -> dict:
         """Get current memory data.

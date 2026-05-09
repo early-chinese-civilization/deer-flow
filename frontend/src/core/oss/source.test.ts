@@ -13,12 +13,14 @@ void test("maps a file-like object to a browser oss source only when complete", 
     getBrowserOssSource({
       oss_uri: "oss://demo-bucket/workspaces/ws-123/uploads/report.md",
       object_key: "uploads/report.md",
-      artifact_url: "/api/workspaces/ws-123/uploads/content?object_key=uploads%2Freport.md",
+      artifact_url:
+        "/api/workspaces/ws-123/uploads/content?object_key=uploads%2Freport.md",
     }),
     {
       ossUri: "oss://demo-bucket/workspaces/ws-123/uploads/report.md",
       objectKey: "uploads/report.md",
-      httpUri: "/api/workspaces/ws-123/uploads/content?object_key=uploads%2Freport.md",
+      httpUri:
+        "/api/workspaces/ws-123/uploads/content?object_key=uploads%2Freport.md",
     },
   );
 

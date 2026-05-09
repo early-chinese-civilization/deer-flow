@@ -217,11 +217,7 @@ def test_ensure_skill_version_keeps_same_name_different_owners_distinct(tmp_path
         source_type = source_type or "user"
         source_identifier = source_identifier or str(owner_user_id)
         existing = next(
-            (
-                definition
-                for definition in definitions
-                if definition.name == name and definition.source_type == source_type and definition.source_identifier == source_identifier
-            ),
+            (definition for definition in definitions if definition.name == name and definition.source_type == source_type and definition.source_identifier == source_identifier),
             None,
         )
         if existing is not None:

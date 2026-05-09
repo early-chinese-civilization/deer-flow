@@ -82,10 +82,14 @@ export function SharedChatPage({
   }, []);
 
   const draftAgentName = normalizeQueryValue(
-    hasMounted ? draftAgentQuery : draftAgentQuery ?? initialAgentName ?? null,
+    hasMounted
+      ? draftAgentQuery
+      : (draftAgentQuery ?? initialAgentName ?? null),
   );
   const draftNonce = normalizeQueryValue(
-    hasMounted ? draftNonceQuery : draftNonceQuery ?? initialDraftNonce ?? null,
+    hasMounted
+      ? draftNonceQuery
+      : (draftNonceQuery ?? initialDraftNonce ?? null),
   );
 
   const { threadId, isNewThread, commitThreadId, isMock } = useThreadChat({
@@ -113,7 +117,7 @@ export function SharedChatPage({
   }, [isNewThread, threadDetailQuery.data]);
 
   const effectiveAgentName = isNewThread
-    ? draftAgentName ?? undefined
+    ? (draftAgentName ?? undefined)
     : persistedAgentName;
   const { agent } = useAgent(effectiveAgentName);
 

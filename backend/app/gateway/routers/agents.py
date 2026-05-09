@@ -95,9 +95,7 @@ def _normalize_agent_name(name: str) -> str:
 def _active_skill_names(agent: Agent) -> list[str] | None:
     """Return ordered active skill names for an agent, or None when unrestricted."""
     active_associations = [
-        association
-        for association in agent.agent_skills
-        if association.deleted_at is None and association.enabled and (association.skill_install is not None or association.skill is not None or association.system_skill_version is not None)
+        association for association in agent.agent_skills if association.deleted_at is None and association.enabled and (association.skill_install is not None or association.skill is not None or association.system_skill_version is not None)
     ]
     if not active_associations:
         return None
@@ -133,9 +131,7 @@ def _skill_source_for_agent(agent: Agent, definition: SkillDefinition | None) ->
 def _active_skill_metadata(agent: Agent, *, latest_versions_by_definition_id: Mapping[int, int] | None = None) -> list[AgentSkillMetadataResponse] | None:
     """Return ordered display metadata for active agent skill bindings."""
     active_associations = [
-        association
-        for association in agent.agent_skills
-        if association.deleted_at is None and association.enabled and (association.skill_install is not None or association.skill is not None or association.system_skill_version is not None)
+        association for association in agent.agent_skills if association.deleted_at is None and association.enabled and (association.skill_install is not None or association.skill is not None or association.system_skill_version is not None)
     ]
     if not active_associations:
         return None

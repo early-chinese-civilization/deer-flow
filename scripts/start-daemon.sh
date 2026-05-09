@@ -12,6 +12,14 @@ set -e
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# ---- Load environment variables from .env ----
+if [ -f "$REPO_ROOT/.env" ]; then
+    set -a
+    source "$REPO_ROOT/.env"
+    set +a
+fi
+export DEER_FLOW_SERVER_MODE=dev
+
 # ── Stop existing services ────────────────────────────────────────────────────
 
 echo "Stopping existing services if any..."

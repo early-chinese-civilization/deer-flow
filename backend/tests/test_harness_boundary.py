@@ -33,12 +33,7 @@ def _collect_imports(filepath: Path) -> list[tuple[int, str]]:
                 results.append((node.lineno, node.module))
         elif isinstance(node, ast.Call):
             func = node.func
-            is_importlib_call = (
-                isinstance(func, ast.Attribute)
-                and func.attr == "import_module"
-                and isinstance(func.value, ast.Name)
-                and func.value.id == "importlib"
-            )
+            is_importlib_call = isinstance(func, ast.Attribute) and func.attr == "import_module" and isinstance(func.value, ast.Name) and func.value.id == "importlib"
             if is_importlib_call and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
                 results.append((node.lineno, node.args[0].value))
     return results

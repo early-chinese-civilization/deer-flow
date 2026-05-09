@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 /**
  * 认证上下文
@@ -12,10 +12,10 @@ import {
   useContext,
   useEffect,
   useState,
-} from 'react';
+} from "react";
 
-import * as authApi from './api';
-import type { AuthContextType, User } from './types';
+import * as authApi from "./api";
+import type { AuthContextType, User } from "./types";
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -30,7 +30,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const userData = await authApi.getCurrentUser();
       setUser(userData);
     } catch (error) {
-      console.error('Failed to fetch user:', error);
+      console.error("Failed to fetch user:", error);
       setUser(null);
     } finally {
       setLoading(false);
@@ -48,7 +48,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const logoutUrl = await authApi.logout();
       window.location.href = logoutUrl;
     } catch (error) {
-      console.error('Logout failed:', error);
+      console.error("Logout failed:", error);
     }
   }, []);
 
@@ -70,7 +70,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 export function useAuth() {
   const context = useContext(AuthContext);
   if (!context) {
-    throw new Error('useAuth must be used within AuthProvider');
+    throw new Error("useAuth must be used within AuthProvider");
   }
   return context;
 }

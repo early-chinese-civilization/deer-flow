@@ -81,7 +81,7 @@ export function MessageList({
             return null;
           } else if (group.type === "assistant:present-files") {
             const files: Record<string, string> = {};
-            const artifactMap = (thread.values.artifacts) ?? {};
+            const artifactMap = thread.values.artifacts ?? {};
             for (const message of group.messages) {
               if (hasPresentFiles(message)) {
                 const presentFiles = extractPresentFilesFromMessage(message);
