@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePathname, useSearchParams } from "next/navigation";
 import { parseAsString, useQueryStates } from "nuqs";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -65,6 +65,7 @@ export function SharedChatPage({
   initialDraftNonce?: string;
 }) {
   const { t } = useI18n();
+  const queryClient = useQueryClient();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const searchParamsString = searchParams.toString();
@@ -148,6 +149,13 @@ export function SharedChatPage({
       );
     },
     onFinish: (state) => {
+      const workspaceId = persistedWorkspaceId ?? composerWorkspaceId;
+      if (workspaceId) {
+        void queryClient.invalidateQueries({
+          queryKey: ["uploads", "list", workspaceId],
+        });
+      }
+
       if (document.hidden || !document.hasFocus()) {
         let body = "Conversation finished";
         const lastMessage = state.messages.at(-1);
