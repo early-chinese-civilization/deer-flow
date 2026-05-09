@@ -1,7 +1,13 @@
 import { useQueries } from "@tanstack/react-query";
 import { useMemo } from "react";
-import type { Node } from "unist";
 import { visit } from "unist-util-visit";
+
+type OssMarkdownNode = {
+  type: string;
+  url?: string;
+  children?: OssMarkdownNode[];
+  [key: string]: unknown;
+};
 
 function normalizeOssUriCandidate(value: string) {
   let text = value;
@@ -131,7 +137,7 @@ export function useResolvedOssUrlMap(
 export function remarkRewriteResolvedOssUrls(urlMap: Record<string, string>) {
   return () => {
     return (tree: unknown) => {
-      visit(tree as Node, ["image", "link"], (node) => {
+      visit(tree as OssMarkdownNode, ["image", "link"], (node) => {
         if (typeof node.url !== "string") {
           return;
         }

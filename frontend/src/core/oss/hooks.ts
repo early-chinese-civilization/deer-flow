@@ -15,12 +15,15 @@ export function useResolvedOssUrl(
     queryKey: getResolvedOssUrlQueryKey(workspaceId, source),
     enabled: isResolvedOssUrlQueryEnabled(workspaceId, source),
     queryFn: async () => {
+      if (!source || !workspaceId) {
+        throw new Error("OSS source and workspace id are required.");
+      }
       if (source?.httpUri) {
         return source.httpUri;
       }
 
       const result = await resolveWorkspaceDownloadUrl(
-        workspaceId!,
+        workspaceId,
         source.objectKey,
       );
 
