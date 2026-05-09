@@ -25,7 +25,9 @@ function toSearchParams(search: SearchParamsInput): URLSearchParams {
     return new URLSearchParams(search);
   }
   if (typeof search === "string") {
-    return new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+    return new URLSearchParams(
+      search.startsWith("?") ? search.slice(1) : search,
+    );
   }
   return new URLSearchParams();
 }
@@ -67,7 +69,9 @@ function getAgentNameFromCurrentChatRoute(
     return undefined;
   }
 
-  return normalizeAgentName(toSearchParams(currentSearch).get(CHAT_AGENT_QUERY_KEY));
+  return normalizeAgentName(
+    toSearchParams(currentSearch).get(CHAT_AGENT_QUERY_KEY),
+  );
 }
 
 export function getThreadAgentName(
@@ -144,7 +148,7 @@ export function pathOfThread(
     );
   const resolvedAgentName = hasExplicitAgentName
     ? normalizeAgentName(options?.agentName)
-    : inferredAgentName ?? fallbackAgentName;
+    : (inferredAgentName ?? fallbackAgentName);
 
   const searchParams = buildChatSearchParams(options?.currentSearch, {
     agentName: resolvedAgentName ?? null,

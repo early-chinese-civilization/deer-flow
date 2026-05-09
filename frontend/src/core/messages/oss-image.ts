@@ -22,7 +22,9 @@ function getBackendBaseURL(): string {
   const backendBaseURL = process.env.NEXT_PUBLIC_BACKEND_BASE_URL;
 
   if (backendBaseURL) {
-    return new URL(backendBaseURL, getBaseOrigin()).toString().replace(/\/+$/, "");
+    return new URL(backendBaseURL, getBaseOrigin())
+      .toString()
+      .replace(/\/+$/, "");
   }
 
   return "";
@@ -42,7 +44,9 @@ async function resolveWorkspaceDownloadUrl(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "Failed to get download URL" }));
+    const error = await response
+      .json()
+      .catch(() => ({ detail: "Failed to get download URL" }));
     throw new Error(error.detail ?? "Failed to get download URL");
   }
 
@@ -84,9 +88,7 @@ function extractOssUris(content: string): string[] {
 
   return Array.from(
     new Set(
-      matches
-        .map((match) => normalizeOssUriCandidate(match))
-        .filter(Boolean),
+      matches.map((match) => normalizeOssUriCandidate(match)).filter(Boolean),
     ),
   );
 }
