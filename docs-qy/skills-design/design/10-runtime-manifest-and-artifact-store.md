@@ -169,33 +169,79 @@ Artifact Store
 
 【关键点】无论采用哪种实现，授权单位都必须是 Manifest 中的 SkillVersion artifact，而不是 public 目录或用户目录。
 
-## Agent 更新语义
+## Agent 更新语义：待确认设计点
 
-默认语义建议是：
+这里需要重新讨论，不能只用“Runtime Manifest 是快照”来回答 Agent 是否会随 Skill 更新。
+
+当前实现更接近：
 
 ```text
 AgentSkillBinding -> SkillInstall -> current_version_id
 ```
 
-用户更新 SkillInstall 时，所有绑定该 install 的 Agent 下一次运行使用新版。
+这个模型下有三个不同时间点：
 
-发布者发布新版时：
+1. 发布者发布 v2：只产生新的 `SkillVersion` / `SkillRelease`，不应该改变安装者的 `SkillInstall.current_version_id`，所以安装者未确认更新前，Agent 新 run 仍应生成 v1 Manifest。
+2. 安装者确认更新 install 到 v2：`SkillInstall.current_version_id` 从 v1 改到 v2。因为 Agent 绑定的是同一个 `skill_install_id`，后续新 run 生成的新 Runtime Manifest 会指向 v2。
+3. 已经创建过的旧 Runtime Manifest：它是持久化快照，不会因为 install 更新被改写，历史 run 仍可审计为 v1。
 
-1. SkillHub 显示新版本。
-2. 已安装旧版的用户看到更新提示。
-3. 用户不确认更新，SkillInstall 不变。
-4. Runtime Resolver 仍输出旧 `skill_version_id`。
-5. 用户确认更新后，Runtime Resolver 才输出新 `skill_version_id`。
+因此，Runtime Manifest 解决的是“每次 run 的 prompt / `skill_load` / sandbox 授权一致且可审计”，但它不等于“Agent 绑定永远固定在 v1”。Agent 是否随 install 更新，是 AgentSkillBinding 层的产品语义。
 
-未来可以扩展高级策略：
+需要确认两个可选方向：
+
+### 方向 A：Follow install current
 
 ```text
-version_policy = follow_install_current | pinned_version
+AgentSkillBinding -> SkillInstall.current_version_id
 ```
 
-第一版不需要把每个 Agent 固定到不同历史版本作为主路径，但数据模型和 Manifest 可以预留这个能力。
+用户确认更新 My Skill / SkillInstall 后，所有绑定这个 install 的 Agent 在未来运行中使用新版。
 
-【关键点】“手动更新”必须在 Agent 层可验证：发布新版后，未确认更新的 Agent Manifest 仍然指向旧版本。
+优点：
+
+1. 模型简单，符合“我更新了已安装 Skill，后续使用新版”的直觉。
+2. 当前数据库结构和 resolver 基本匹配。
+3. 用户不需要为多个 Agent 重复升级同一个安装态。
+
+风险：
+
+1. 一个 install 更新会影响多个 Agent 的未来行为。
+2. “Agent 绑定时使用的是 v1”不能理解为长期 pin。
+3. UI 必须在更新确认页清楚展示会影响哪些 Agent。
+
+### 方向 B：Agent pinned version
+
+```text
+AgentSkillBinding -> SkillInstall
+AgentSkillBinding -> pinned_skill_version_id
+```
+
+用户更新 My Skill / SkillInstall 只改变可用版本或默认版本；已有 Agent 继续使用绑定时的 `pinned_skill_version_id`，直到用户对该 Agent 或受影响 Agent 列表确认升级。
+
+优点：
+
+1. Agent 行为最稳定，符合“已有 Agent 不被间接更新影响”的语义。
+2. 版本回溯和审计更直接。
+3. 可以支持同一个用户的不同 Agent 分别停留在 v1 / v2。
+
+风险：
+
+1. 需要新增 Agent-level version pin 字段或等价绑定表。
+2. 更新流程更复杂，需要 affected-Agent preview / confirm。
+3. UI 需要解释 My Skill 当前版本和某个 Agent 运行版本可能不同。
+
+### 当前记录结论
+
+这不是 Runtime Manifest 的冗余问题。Manifest 仍然必要，因为它冻结的是“某次 run 实际使用了哪个 SkillVersion”。真正待决的是 Agent binding 应该是可变 install 指针，还是 Agent 级版本 pin。
+
+在设计最终确认前，文档和测试必须区分：
+
+1. `publish v2`：不改变安装者 runtime。
+2. `update install to v2`：当前实现会改变绑定该 install 的 Agent 的未来 Manifest。
+3. `existing manifest`：历史快照不被改写。
+4. `agent pinned version`：如果产品选择这个方向，需要新增模型和验收，不应只靠 Manifest 名义宣称已满足。
+
+【关键点】“手动更新”必须明确手动更新的对象：是更新 `SkillInstall` 后所有绑定 Agent 跟随，还是更新某个 Agent 的 pinned version。这个设计需要产品、后端、前端和验收用例一起确认。
 
 ## 不推荐方案
 

@@ -1631,11 +1631,15 @@ async def upload_skills(
             if validated_claim is not None:
                 await PendingSkillForkClaimRepository.mark_claimed(db, claim=validated_claim.claim, now=datetime.now(UTC))
 
+            current_user_id = current_user.id
+            skill_definition_id = version.skill_definition_id
+            skill_version_id = version.id
+            platform_version = version.version_number
             await db.commit()
             refreshed_install = await SkillInstallRepository.get_by_user_and_definition(
                 db,
-                user_id=current_user.id,
-                skill_definition_id=version.skill_definition_id,
+                user_id=current_user_id,
+                skill_definition_id=skill_definition_id,
             )
             results.append(
                 SkillUploadResult(
@@ -1643,8 +1647,8 @@ async def upload_skills(
                     skill_name=skill_name,
                     package_version=package_version,
                     source_package_version=package_version,
-                    platform_version=version.version_number,
-                    skill_version_id=version.id,
+                    platform_version=platform_version,
+                    skill_version_id=skill_version_id,
                     action=action,
                     success=True,
                     message=(f"Skill installed at platform version {refreshed_install.current_version.version_number}" if refreshed_install is not None and refreshed_install.current_version is not None else "Skill uploaded successfully"),
