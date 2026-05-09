@@ -9,6 +9,8 @@ import {
   VideoIcon,
 } from "lucide-react";
 
+import { BRAND } from "@/core/brand";
+
 import type { Translations } from "./types";
 
 export const enUS: Translations = {
@@ -16,6 +18,9 @@ export const enUS: Translations = {
   locale: {
     localName: "English",
   },
+
+  // Brand
+  brand: BRAND.en,
 
   // Common
   common: {
@@ -63,11 +68,11 @@ export const enUS: Translations = {
   welcome: {
     greeting: "Hello, again!",
     description:
-      "Welcome to 🦌 DeerFlow, an open source super agent. With built-in and custom skills, DeerFlow helps you search on the web, analyze data, and generate artifacts like slides, web pages and do almost anything.",
+      "Welcome to Yanhuang Early Chinese Civilization Large Model, an intelligent workspace for early Chinese civilization research. With built-in and custom skills, Yanhuang Early Chinese Civilization Large Model helps you analyze sources, organize evidence, and generate artifacts like reports, slides, web pages, and visual materials.",
 
     createYourOwnSkill: "Create Your Own Skill",
     createYourOwnSkillDescription:
-      "Create your own skill to release the power of DeerFlow. With customized skills,\nDeerFlow can help you search on the web, analyze data, and generate\n artifacts like slides, web pages and do almost anything.",
+      "Create your own skill to extend Yanhuang Early Chinese Civilization Large Model. With customized skills,\nYanhuang Early Chinese Civilization Large Model can help you search the web, analyze data, and generate\nartifacts like slides, web pages, and research outputs.",
   },
 
   // Clipboard
@@ -269,7 +274,7 @@ export const enUS: Translations = {
 
   // Workspace
   workspace: {
-    githubTooltip: "DeerFlow on Github",
+    githubTooltip: "Project source on GitHub",
     settingsAndMore: "Settings and more",
     logout: "Log out",
   },
@@ -291,7 +296,7 @@ export const enUS: Translations = {
 
   // Page titles (document title)
   pages: {
-    appName: "DeerFlow",
+    appName: "Yanhuang Early Chinese Civilization Large Model",
     chats: "Chats",
     newChat: "New chat",
     untitled: "Untitled",
@@ -317,7 +322,8 @@ export const enUS: Translations = {
     writeFile: "Write file",
     clickToViewContent: "Click to view file content",
     writeTodos: "Update to-do list",
-    skillInstallTooltip: "Install skill and make it available to DeerFlow",
+    skillInstallTooltip:
+      "Install skill and make it available to Yanhuang Early Chinese Civilization Large Model",
   },
 
   // Subtasks
@@ -369,7 +375,7 @@ export const enUS: Translations = {
     actions: "Actions",
     keyboardShortcuts: "Keyboard Shortcuts",
     keyboardShortcutsDescription:
-      "Navigate DeerFlow faster with keyboard shortcuts.",
+      "Navigate Yanhuang Early Chinese Civilization Large Model faster with keyboard shortcuts.",
     openCommandPalette: "Open Command Palette",
     toggleSidebar: "Toggle Sidebar",
   },
@@ -377,7 +383,8 @@ export const enUS: Translations = {
   // Settings
   settings: {
     title: "Settings",
-    description: "Adjust how DeerFlow looks and behaves for you.",
+    description:
+      "Adjust how Yanhuang Early Chinese Civilization Large Model looks and behaves for you.",
     sections: {
       appearance: "Appearance",
       memory: "Memory",
@@ -389,7 +396,7 @@ export const enUS: Translations = {
     memory: {
       title: "Memory",
       description:
-        "DeerFlow automatically learns from your conversations in the background. These memories help DeerFlow understand you better and deliver a more personalized experience.",
+        "Yanhuang Early Chinese Civilization Large Model automatically learns from your conversations in the background. These memories help Yanhuang Early Chinese Civilization Large Model understand your research preferences and deliver a more personalized experience.",
       empty: "No memory data to display.",
       rawJson: "Raw JSON",
       exportButton: "Export memory",
@@ -489,7 +496,7 @@ export const enUS: Translations = {
       createSkill: "Create skill",
       emptyTitle: "No agent skill yet",
       emptyDescription:
-        "Put your agent skill folders under the `/skills/custom` folder under the root folder of DeerFlow.",
+        "Put your agent skill folders under the `/skills/custom` folder under the project root folder.",
       emptyButton: "Create Your First Skill",
       uploadSkill: "Upload skills",
       uploadPending: "Uploading...",
@@ -513,12 +520,12 @@ export const enUS: Translations = {
     notification: {
       title: "Notification",
       description:
-        "DeerFlow only sends a completion notification when the window is not active. This is especially useful for long-running tasks so you can switch to other work and get notified when done.",
+        "Yanhuang Early Chinese Civilization Large Model only sends a completion notification when the window is not active. This is especially useful for long-running tasks so you can switch to other work and get notified when done.",
       requestPermission: "Request notification permission",
       deniedHint:
         "Notification permission was denied. You can enable it in your browser's site settings to receive completion alerts.",
       testButton: "Send test notification",
-      testTitle: "DeerFlow",
+      testTitle: "Yanhuang Early Chinese Civilization Large Model",
       testBody: "This is a test notification.",
       notSupported: "Your browser does not support notifications.",
       disableNotification: "Disable notification",

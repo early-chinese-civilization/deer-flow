@@ -1,7 +1,11 @@
+import { BRAND } from "@/core/brand";
+
 export type CallbackErrorCopy = {
   title: string;
   description: string;
 };
+
+const BRAND_NAME = BRAND.en.shortName;
 
 export function normalizeCallbackError(
   value: string | string[] | undefined,
@@ -21,38 +25,32 @@ export function getCallbackErrorCopy(error: string): CallbackErrorCopy {
     case "callback_upstream_failed":
       return {
         title: "The identity provider could not be reached",
-        description:
-          "DeerFlow received the callback request, but the upstream auth request failed before the session could be created.",
+        description: `${BRAND_NAME} received the callback request, but the upstream auth request failed before the session could be created.`,
       };
     case "token_not_yet_valid":
       return {
         title: "The returned token is not valid yet",
-        description:
-          "The identity provider issued a token whose start time is later than the DeerFlow backend clock. Align the backend and identity-provider system time, then retry.",
+        description: `The identity provider issued a token whose start time is later than the ${BRAND_NAME} backend clock. Align the backend and identity-provider system time, then retry.`,
       };
     case "token_validation_failed":
       return {
         title: "The returned token could not be verified",
-        description:
-          "DeerFlow received a token from the identity provider, but it failed local JWT validation before the session could be created.",
+        description: `${BRAND_NAME} received a token from the identity provider, but it failed local JWT validation before the session could be created.`,
       };
     case "token_verification_unavailable":
       return {
         title: "Token verification is temporarily unavailable",
-        description:
-          "DeerFlow could not complete JWT verification during the callback. Retry after the backend regains access to the identity-provider signing keys.",
+        description: `${BRAND_NAME} could not complete JWT verification during the callback. Retry after the backend regains access to the identity-provider signing keys.`,
       };
     case "user_sync_failed":
       return {
-        title: "Sign-in succeeded, but DeerFlow could not finish account setup",
-        description:
-          "The callback completed with the identity provider, but DeerFlow failed while syncing the local user record. Check backend logs for the consumer callback failure.",
+        title: `Sign-in succeeded, but ${BRAND_NAME} could not finish account setup`,
+        description: `The callback completed with the identity provider, but ${BRAND_NAME} failed while syncing the local user record. Check backend logs for the consumer callback failure.`,
       };
     case "callback_failed":
       return {
         title: "Sign-in is temporarily unavailable",
-        description:
-          "DeerFlow received the callback, but the session could not be established for an uncategorized reason. Check backend logs for the exact callback exception.",
+        description: `${BRAND_NAME} received the callback, but the session could not be established for an uncategorized reason. Check backend logs for the exact callback exception.`,
       };
     case "csrf_mismatch":
     case "missing_pkce":
@@ -67,8 +65,7 @@ export function getCallbackErrorCopy(error: string): CallbackErrorCopy {
     default:
       return {
         title: "Sign-in failed",
-        description:
-          "DeerFlow could not complete the login callback. Start a fresh sign-in flow when you are ready.",
+        description: `${BRAND_NAME} could not complete the login callback. Start a fresh sign-in flow when you are ready.`,
       };
   }
 }

@@ -6,6 +6,14 @@ export interface Translations {
     localName: string;
   };
 
+  // Brand
+  brand: {
+    fullName: string;
+    shortName: string;
+    mark: string;
+    description: string;
+  };
+
   // Common
   common: {
     home: string;

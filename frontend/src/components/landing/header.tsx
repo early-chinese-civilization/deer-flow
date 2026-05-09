@@ -25,13 +25,17 @@ export async function Header({ className, homeURL, locale }: HeaderProps) {
         className,
       )}
     >
-      <div className="flex items-center gap-6">
+      <div className="flex min-w-0 items-center gap-6">
         <a
           href={homeURL ?? "https://github.com/bytedance/deer-flow"}
+          className="min-w-0"
           target={isExternalHome ? "_blank" : "_self"}
           rel={isExternalHome ? "noopener noreferrer" : undefined}
+          title={t.brand.shortName}
         >
-          <h1 className="font-serif text-xl">DeerFlow</h1>
+          <h1 className="max-w-[56vw] truncate font-serif text-xl sm:max-w-[22rem]">
+            {t.brand.shortName}
+          </h1>
         </a>
       </div>
       <nav className="mr-8 ml-auto flex items-center gap-8 text-sm font-medium">
