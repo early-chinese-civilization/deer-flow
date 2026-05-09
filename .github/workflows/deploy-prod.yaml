@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    runs-on: ecc-agent-server
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -33,6 +33,40 @@ jobs:
 
       - name: Build and push Backend
         uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          platform: linux/amd64
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/deer-flow-backend:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/deer-flow-backend:latest
+
+      - name: Build and push Frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          platform: linux/amd64
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/deer-flow-frontend:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/deer-flow-frontend:latest
+
+      - name: Build and push Provisioner
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker/provisioner
+          file: ./docker/provisioner/Dockerfile
+          push: true
+          platform: linux/amd64
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/deer-flow-provisioner:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/deer-flow-provisioner:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ecc-agent-server
         with:
           context: ./backend
           file: ./backend/Dockerfile
