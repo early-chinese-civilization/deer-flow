@@ -45,12 +45,14 @@ logging.basicConfig(
 K8S_NAMESPACE = os.environ.get("K8S_NAMESPACE", "bio-dev")
 SANDBOX_IMAGE = os.environ.get(
     "SANDBOX_IMAGE",
-    "enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest",
+    "novainspire-acr-registry.cn-wulanchabu.cr.aliyuncs.com/sais/bio/all-in-one-sandbox:latest",
 )
 SANDBOX_PORT = int(os.environ.get("SANDBOX_PORT", "8080"))
 SAFE_THREAD_ID_PATTERN = r"^[A-Za-z0-9_\-]+$"
 SAFE_WORKSPACE_ID_PATTERN = r"^[A-Za-z0-9._\-]+$"
 SAFE_SKILL_SCOPE_PATTERN = r"^(public|[0-9]+)$"
+
+SANDBOX_PVC_NAME = os.environ.get("SANDBOX_PVC_NAME", "ecc-yanhuang-data")
 
 # ── K8s client ──────────────────────────────────────────────────────────
 
@@ -130,6 +132,8 @@ def _build_pod(
     workspace_id: str,
     skill_scope: str | None = None,
 ) -> k8s_client.V1Pod:
+    workspace_data_path = f"workspaces/{workspace_id}"
+
     return k8s_client.V1Pod(
         metadata=k8s_client.V1ObjectMeta(
             name=_pod_name(sandbox_id),
@@ -142,11 +146,34 @@ def _build_pod(
             },
         ),
         spec=k8s_client.V1PodSpec(
+            init_containers=[
+                k8s_client.V1Container(
+                    name="fix-permissions",
+                    image=SANDBOX_IMAGE,
+                    command=["sh", "-c", "chmod -R o+rX /mnt/user-data 2>/dev/null || true; chmod 755 /mnt/user-data 2>/dev/null || true"],
+                    volume_mounts=[
+                        k8s_client.V1VolumeMount(
+                            name="shared-data",
+                            mount_path="/mnt/user-data",
+                            sub_path=workspace_data_path,
+                            read_only=False
+                        )
+                    ]
+                )
+            ],
+            volumes=[
+                k8s_client.V1Volume(
+                    name="shared-data",
+                    persistent_volume_claim=k8s_client.V1PersistentVolumeClaimVolumeSource(
+                        claim_name=SANDBOX_PVC_NAME
+                    )
+                )
+            ],
             containers=[
                 k8s_client.V1Container(
                     name="sandbox",
                     image=SANDBOX_IMAGE,
-                    image_pull_policy="IfNotPresent",
+                    image_pull_policy="Always",
                     ports=[
                         k8s_client.V1ContainerPort(
                             name="http",
@@ -191,6 +218,20 @@ def _build_pod(
                         allow_privilege_escalation=True,
                         run_as_user=0,
                     ),
+                    volume_mounts=[
+                        k8s_client.V1VolumeMount(
+                            name="shared-data",
+                            mount_path="/mnt/user-data",
+                            sub_path=workspace_data_path,
+                            read_only=False
+                        ),
+                        k8s_client.V1VolumeMount(
+                            name="shared-data",
+                            mount_path="/mnt/skills",
+                            sub_path="skills",
+                            read_only=True
+                        )
+                    ]
                 )
             ],
             restart_policy="Always",

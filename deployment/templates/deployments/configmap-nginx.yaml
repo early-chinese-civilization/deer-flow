@@ -14,6 +14,8 @@ data:
     pid /tmp/nginx.pid;
     http {
         sendfile on;
+        gzip off;
+        proxy_buffering off;
         tcp_nopush on;
         tcp_nodelay on;
         keepalive_timeout 65;
@@ -56,41 +58,47 @@ data:
                 return 204;
             }
 
-            location /api/langgraph/ {
-                rewrite ^/api/langgraph/(.*) /api/$1 break;
-                proxy_pass http://gateway;
-                proxy_http_version 1.1;
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
-                proxy_set_header X-Forwarded-Host $host;
-                proxy_set_header Connection '';
-                proxy_buffering off;
-                proxy_cache off;
-                proxy_set_header X-Accel-Buffering no;
-                proxy_connect_timeout 600s;
-                proxy_send_timeout 600s;
-                proxy_read_timeout 600s;
-                chunked_transfer_encoding on;
-            }
+        location /api/langgraph/ {
+            rewrite ^/api/langgraph/(.*) /api/$1 break;
+            proxy_pass http://gateway;
+            proxy_http_version 1.1;
 
-            location /api/auth { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Host $host; proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto; }
-            location /api/models { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto; }
-            location /api/memory { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto; }
-            location /api/mcp { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto; }
-            location /api/skills { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto; }
-            location /api/workspaces { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto; client_max_body_size 100M; proxy_request_buffering off; proxy_connect_timeout 600s; proxy_send_timeout 600s; proxy_read_timeout 600s; }
-            location /api/agents { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto; }
-            location ~ ^/api/threads/[^/]+/uploads { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto; client_max_body_size 100M; proxy_request_buffering off; }
-            location ~ ^/api/threads { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto; }
-            location /docs { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto; }
-            location /redoc { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto; }
-            location /openapi.json { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto; }
-            location /health { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto; }
-            {{- if .Values.provisioner.enabled }}
-            location /api/sandboxes { set $provisioner_upstream {{ .Release.Name }}-provisioner:8002; proxy_pass http://$provisioner_upstream; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto; }
-            {{- end }}
+            # Headers
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header Connection '';
+
+            # SSE/Streaming support
+            proxy_buffering off;
+            proxy_cache off;
+            proxy_set_header X-Accel-Buffering no;
+
+            # Timeouts for long-running requests
+            proxy_connect_timeout 600s;
+            proxy_send_timeout 600s;
+            proxy_read_timeout 600s;
+            chunked_transfer_encoding on;
+        }
+
+        location /api/auth { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $http_host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Proto $scheme; }
+        location /api/models { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+        location /api/memory { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+        location /api/mcp { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+        location /api/skills { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+        location /api/workspaces { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; client_max_body_size 100M; proxy_request_buffering off; proxy_connect_timeout 600s; proxy_send_timeout 600s; proxy_read_timeout 600s; }
+        location /api/agents { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+        location ~ ^/api/threads/[^/]+/uploads { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; client_max_body_size 100M; proxy_request_buffering off; }
+        location ~ ^/api/threads { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+        location /docs { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+        location /redoc { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+        location /openapi.json { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+        location /health { proxy_pass http://gateway; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+        {{- if .Values.provisioner.enabled }}
+        location /api/sandboxes { set $provisioner_upstream {{ .Release.Name }}-provisioner:8002; proxy_pass http://$provisioner_upstream; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+        {{- end }}
 
             location / {
                 proxy_pass http://frontend;

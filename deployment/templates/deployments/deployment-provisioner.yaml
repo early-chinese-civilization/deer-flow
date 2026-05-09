@@ -47,6 +47,10 @@ spec:
               value: {{ .Values.provisioner.sandboxImage | quote }}
             - name: SANDBOX_PORT
               value: {{ .Values.provisioner.sandboxPort | quote }}
+            {{- if .Values.provisioner.pvcName }}
+            - name: SANDBOX_PVC_NAME
+              value: {{ .Values.provisioner.pvcName | quote }}
+            {{- end }}
           resources:
             {{- toYaml .Values.provisioner.resources | nindent 12 }}
           livenessProbe:

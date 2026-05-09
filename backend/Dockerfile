@@ -43,7 +43,7 @@ WORKDIR /app
 COPY backend ./backend
 
 # Install dependencies
-RUN sh -c "cd backend && UV_INDEX_URL=${UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple} uv sync"
+RUN sh -c "cd backend && export UV_HTTP_TIMEOUT=300 && export UV_INDEX_URL=${UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple} && uv sync"
 
 # Expose ports (gateway: 8001, langgraph: 2024)
 EXPOSE 8001 2024
