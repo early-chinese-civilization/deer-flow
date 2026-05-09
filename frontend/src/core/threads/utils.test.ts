@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const {
-  getThreadAgentName,
-  pathOfNewThread,
-  pathOfThread,
-} = await import(new URL("./utils.ts", import.meta.url).href);
+const { getThreadAgentName, pathOfNewThread, pathOfThread } = await import(
+  new URL("./utils.ts", import.meta.url).href
+);
 
 void test("builds draft routes with an agent query", () => {
   assert.equal(

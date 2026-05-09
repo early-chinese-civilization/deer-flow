@@ -175,10 +175,7 @@ def _extract_frontmatter(skill_md_path: Path) -> dict:
 
     unexpected_keys = set(frontmatter.keys()) - ALLOWED_SKILL_FRONTMATTER_KEYS
     if unexpected_keys:
-        raise ValueError(
-            f"Unexpected key(s) in SKILL.md frontmatter: {', '.join(sorted(unexpected_keys))}. "
-            f"Allowed properties are: {', '.join(sorted(ALLOWED_SKILL_FRONTMATTER_KEYS))}"
-        )
+        raise ValueError(f"Unexpected key(s) in SKILL.md frontmatter: {', '.join(sorted(unexpected_keys))}. Allowed properties are: {', '.join(sorted(ALLOWED_SKILL_FRONTMATTER_KEYS))}")
 
     return frontmatter
 
@@ -223,9 +220,7 @@ def _validate_skill_directory(skill_dir: Path) -> tuple[str, str]:
         if not isinstance(compatibility, str):
             raise ValueError(f"Compatibility must be a string, got {type(compatibility).__name__}")
         if len(compatibility) > 500:
-            raise ValueError(
-                f"Compatibility is too long ({len(compatibility)} characters). Maximum is 500 characters."
-            )
+            raise ValueError(f"Compatibility is too long ({len(compatibility)} characters). Maximum is 500 characters.")
 
     return name, description
 

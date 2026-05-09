@@ -10,7 +10,9 @@ function getBackendBaseURL(): string {
   const backendBaseURL = process.env.NEXT_PUBLIC_BACKEND_BASE_URL;
 
   if (backendBaseURL) {
-    return new URL(backendBaseURL, getBaseOrigin()).toString().replace(/\/+$/, "");
+    return new URL(backendBaseURL, getBaseOrigin())
+      .toString()
+      .replace(/\/+$/, "");
   }
 
   return "";

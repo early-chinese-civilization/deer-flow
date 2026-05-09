@@ -11,7 +11,7 @@ def test_after_model_rewrites_virtual_paths_to_oss_uris():
     state = {
         "messages": [
             AIMessage(
-                content='![trend](/mnt/user-data/outputs/monthly_visits_chart.png)',
+                content="![trend](/mnt/user-data/outputs/monthly_visits_chart.png)",
             )
         ],
         "artifacts": {

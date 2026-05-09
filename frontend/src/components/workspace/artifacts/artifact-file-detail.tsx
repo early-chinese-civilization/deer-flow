@@ -33,8 +33,8 @@ import { getArtifactDisplayMode } from "@/core/artifacts/display";
 import { useArtifactContent } from "@/core/artifacts/hooks";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
-import { installSkill } from "@/core/skills/api";
 import { useResolvedOssUrl } from "@/core/oss";
+import { installSkill } from "@/core/skills/api";
 import { streamdownPlugins } from "@/core/streamdown";
 import {
   checkCodeFile,
@@ -256,13 +256,9 @@ export function ArtifactFileDetail({
             />
           </div>
         )}
-        {displayMode === "iframe-preview" &&
-          hasResolvedBrowserOssUrl && (
-            <iframe
-              className="size-full"
-              src={artifactViewUrl}
-            />
-          )}
+        {displayMode === "iframe-preview" && hasResolvedBrowserOssUrl && (
+          <iframe className="size-full" src={artifactViewUrl} />
+        )}
         {displayMode === "unsupported-preview" && (
           <ArtifactUnsupportedPreview
             fileType={getFileExtensionDisplayName(filepath)}
@@ -273,15 +269,11 @@ export function ArtifactFileDetail({
   );
 }
 
-function ArtifactUnsupportedPreview({
-  fileType,
-}: {
-  fileType: string;
-}) {
+function ArtifactUnsupportedPreview({ fileType }: { fileType: string }) {
   const { t } = useI18n();
 
   return (
-    <Empty className="border-0 rounded-none">
+    <Empty className="rounded-none border-0">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <AlertCircleIcon />

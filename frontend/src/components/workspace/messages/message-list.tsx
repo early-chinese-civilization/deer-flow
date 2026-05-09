@@ -23,9 +23,9 @@ import { cn } from "@/lib/utils";
 import { ArtifactFileList } from "../artifacts/artifact-file-list";
 import { StreamingIndicator } from "../streaming-indicator";
 
+import { useThread } from "./context";
 import { MarkdownContent } from "./markdown-content";
 import { MessageGroup } from "./message-group";
-import { useThread } from "./context";
 import { MessageListItem } from "./message-list-item";
 import { MessageListSkeleton } from "./skeleton";
 import { SubtaskCard } from "./subtask-card";
@@ -81,7 +81,7 @@ export function MessageList({
             return null;
           } else if (group.type === "assistant:present-files") {
             const files: Record<string, string> = {};
-            const artifactMap = (thread.values.artifacts as Record<string, string>) ?? {};
+            const artifactMap = thread.values.artifacts ?? {};
             for (const message of group.messages) {
               if (hasPresentFiles(message)) {
                 const presentFiles = extractPresentFilesFromMessage(message);

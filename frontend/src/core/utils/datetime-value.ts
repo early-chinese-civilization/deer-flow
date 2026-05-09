@@ -8,9 +8,7 @@ function fromTimestamp(value: number): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-export function normalizeDateInput(
-  value: Date | string | number,
-): Date | null {
+export function normalizeDateInput(value: Date | string | number): Date | null {
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? null : value;
   }

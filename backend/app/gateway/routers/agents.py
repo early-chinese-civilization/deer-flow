@@ -68,11 +68,7 @@ def _normalize_agent_name(name: str) -> str:
 
 def _active_skill_names(agent: Agent) -> list[str] | None:
     """Return ordered active skill names for an agent, or None when unrestricted."""
-    active_associations = [
-        association
-        for association in agent.agent_skills
-        if association.deleted_at is None and association.skill is not None
-    ]
+    active_associations = [association for association in agent.agent_skills if association.deleted_at is None and association.skill is not None]
     if not active_associations:
         return None
 

@@ -50,15 +50,8 @@ REQUIRED_GATEWAY_COLUMNS = {
     ),
 }
 
-_TABLES_SQL = text(
-    "select table_name from information_schema.tables "
-    "where table_schema=:schema order by table_name"
-)
-_COLUMNS_SQL = text(
-    "select table_name, column_name from information_schema.columns "
-    "where table_schema=:schema and table_name = any(:tables) "
-    "order by table_name, ordinal_position"
-)
+_TABLES_SQL = text("select table_name from information_schema.tables where table_schema=:schema order by table_name")
+_COLUMNS_SQL = text("select table_name, column_name from information_schema.columns where table_schema=:schema and table_name = any(:tables) order by table_name, ordinal_position")
 _ALEMBIC_VERSION_SQL = text("select version_num from alembic_version order by version_num")
 
 
@@ -93,13 +86,7 @@ async def inspect_gateway_schema(engine: AsyncEngine) -> GatewaySchemaStatus:
                     observed_columns[table_name].add(column_name)
 
     missing_tables = tuple(sorted(REQUIRED_GATEWAY_TABLES - tables))
-    missing_columns = tuple(
-        sorted(
-            f"{table}.{column}"
-            for table, required_columns in REQUIRED_GATEWAY_COLUMNS.items()
-            for column in sorted(required_columns - observed_columns.get(table, set()))
-        )
-    )
+    missing_columns = tuple(sorted(f"{table}.{column}" for table, required_columns in REQUIRED_GATEWAY_COLUMNS.items() for column in sorted(required_columns - observed_columns.get(table, set()))))
     return GatewaySchemaStatus(
         current_revision=current_revision,
         missing_tables=missing_tables,

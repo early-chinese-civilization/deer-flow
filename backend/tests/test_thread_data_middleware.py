@@ -46,9 +46,7 @@ class TestThreadDataMiddleware:
 
         assert result is not None
         assert result["thread_data"]["thread_id"] == "thread-from-config"
-        assert _as_posix(result["thread_data"]["workspace_path"]).endswith(
-            "workspaces/workspace-from-config/workspace"
-        )
+        assert _as_posix(result["thread_data"]["workspace_path"]).endswith("workspaces/workspace-from-config/workspace")
         assert runtime.context is None
 
     def test_before_agent_falls_back_to_configured_thread_id_when_workspace_missing(self, tmp_path, monkeypatch):

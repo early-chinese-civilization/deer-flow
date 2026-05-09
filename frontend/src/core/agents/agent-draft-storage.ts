@@ -42,7 +42,9 @@ export function readStoredAgentDraft(
         name: parsed.payload.name ?? "",
         description: parsed.payload.description ?? "",
         soul: parsed.payload.soul ?? "",
-        skills: Array.isArray(parsed.payload.skills) ? parsed.payload.skills : [],
+        skills: Array.isArray(parsed.payload.skills)
+          ? parsed.payload.skills
+          : [],
       },
       updatedAt: parsed.updatedAt ?? "",
     };

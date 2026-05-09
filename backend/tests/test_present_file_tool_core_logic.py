@@ -42,9 +42,7 @@ def test_present_files_normalizes_host_outputs_path(tmp_path, monkeypatch):
         tool_call_id="tc-1",
     )
 
-    assert result.update["artifacts"] == {
-        "/mnt/user-data/outputs/report.md": "oss://demo-bucket/workspaces/workspace-1/outputs/report.md"
-    }
+    assert result.update["artifacts"] == {"/mnt/user-data/outputs/report.md": "oss://demo-bucket/workspaces/workspace-1/outputs/report.md"}
     assert result.update["messages"][0].content == "Successfully presented files"
 
 
@@ -71,9 +69,7 @@ def test_present_files_returns_oss_uri_for_virtual_outputs_path(tmp_path, monkey
         tool_call_id="tc-2",
     )
 
-    assert result.update["artifacts"] == {
-        "/mnt/user-data/outputs/summary.json": "oss://demo-bucket/workspaces/workspace-1/outputs/summary.json"
-    }
+    assert result.update["artifacts"] == {"/mnt/user-data/outputs/summary.json": "oss://demo-bucket/workspaces/workspace-1/outputs/summary.json"}
 
 
 def test_present_files_returns_oss_uri_for_workspace_outputs(tmp_path, monkeypatch):
@@ -99,9 +95,7 @@ def test_present_files_returns_oss_uri_for_workspace_outputs(tmp_path, monkeypat
         tool_call_id="tc-oss",
     )
 
-    assert result.update["artifacts"] == {
-        "/mnt/user-data/outputs/chart.png": "oss://demo-bucket/workspaces/workspace-1/outputs/chart.png"
-    }
+    assert result.update["artifacts"] == {"/mnt/user-data/outputs/chart.png": "oss://demo-bucket/workspaces/workspace-1/outputs/chart.png"}
 
 
 def test_present_files_rejects_paths_outside_outputs(tmp_path):
