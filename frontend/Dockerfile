@@ -5,7 +5,6 @@
 
 ARG PNPM_STORE_PATH=/root/.local/share/pnpm/store
 ARG NPM_REGISTRY
-ARG NEXT_PUBLIC_BASE_PATH
 
 # ── Base: shared setup ────────────────────────────────────────────────────────
 FROM node:22-alpine AS base
@@ -31,8 +30,6 @@ EXPOSE 3000
 
 # ── Builder: install + compile Next.js ───────────────────────────────────────
 FROM base AS builder
-ARG NEXT_PUBLIC_BASE_PATH
-ENV NEXT_PUBLIC_BASE_PATH=${NEXT_PUBLIC_BASE_PATH}
 RUN cd /app/frontend && pnpm install --frozen-lockfile
 # Skip env validation — runtime vars are injected by nginx/container
 RUN cd /app/frontend && SKIP_ENV_VALIDATION=1 pnpm build
@@ -41,8 +38,6 @@ RUN cd /app/frontend && SKIP_ENV_VALIDATION=1 pnpm build
 FROM node:22-alpine AS prod
 ARG PNPM_STORE_PATH
 ARG NPM_REGISTRY
-ARG NEXT_PUBLIC_BASE_PATH
-ENV NEXT_PUBLIC_BASE_PATH=${NEXT_PUBLIC_BASE_PATH}
 RUN if [ -n "${NPM_REGISTRY}" ]; then \
       export COREPACK_NPM_REGISTRY="${NPM_REGISTRY}"; \
     fi && \
