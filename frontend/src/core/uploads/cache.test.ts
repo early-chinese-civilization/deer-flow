@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-process.env.NEXT_PUBLIC_BASE_PATH = "/deer-flow";
-
 const { addObservedWorkspaceFilesToList } = await import(
   new URL("./cache.ts", import.meta.url).href
 );
@@ -49,6 +47,6 @@ void test("adds stable backend download source for observed workspace outputs", 
   );
   assert.equal(
     next?.files[0]?.http_uri,
-    "/deer-flow/api/workspaces/11111111-1111-1111-1111-111111111111/uploads/content?object_key=workspaces%2F11111111-1111-1111-1111-111111111111%2Foutputs%2Fresult.md",
+    "/api/workspaces/11111111-1111-1111-1111-111111111111/uploads/content?object_key=workspaces%2F11111111-1111-1111-1111-111111111111%2Foutputs%2Fresult.md",
   );
 });

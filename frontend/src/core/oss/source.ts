@@ -1,5 +1,3 @@
-import { withBasePath } from "../config/index.ts";
-
 export interface BrowserOssSource {
   ossUri: string | null;
   objectKey: string;
@@ -49,7 +47,7 @@ export function getBrowserOssSource(
   return {
     ossUri: file.oss_uri ?? null,
     objectKey: file.object_key,
-    httpUri: httpUri ? withBasePath(httpUri) : httpUri,
+    httpUri,
   };
 }
 

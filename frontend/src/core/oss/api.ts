@@ -1,4 +1,20 @@
-import { getBackendBaseURL } from "../config/index.ts";
+function getBaseOrigin(): string {
+  if (typeof window !== "undefined") {
+    return window.location.origin;
+  }
+
+  return "http://localhost:2026";
+}
+
+function getBackendBaseURL(): string {
+  const backendBaseURL = process.env.NEXT_PUBLIC_BACKEND_BASE_URL;
+
+  if (backendBaseURL) {
+    return new URL(backendBaseURL, getBaseOrigin()).toString().replace(/\/+$/, "");
+  }
+
+  return "";
+}
 
 function buildDownloadUrlUrl(workspaceId: string, objectKey: string): string {
   const query = new URLSearchParams({ object_key: objectKey }).toString();

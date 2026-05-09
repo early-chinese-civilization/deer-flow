@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo } from "react";
 
-import { withBasePath } from "@/core/config";
 import { useI18n } from "@/core/i18n/hooks";
 
 type LoginRedirectProps = {
@@ -13,7 +12,7 @@ export function LoginRedirect({ returnTo }: LoginRedirectProps) {
   const { t } = useI18n();
   const loginUrl = useMemo(() => {
     const params = new URLSearchParams({ return_to: returnTo });
-    return withBasePath(`/api/auth/login?${params.toString()}`);
+    return `/api/auth/login?${params.toString()}`;
   }, [returnTo]);
 
   useEffect(() => {

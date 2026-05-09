@@ -1,5 +1,3 @@
-import { withBasePath } from "@/core/config";
-
 import { LoginRedirect } from "./login-redirect";
 
 type LoginPageProps = {
@@ -11,9 +9,9 @@ type LoginPageProps = {
 function normalizeReturnTo(value: string | string[] | undefined): string {
   const rawValue = Array.isArray(value) ? value[0] : value;
   if (!rawValue || !rawValue.startsWith("/") || rawValue.startsWith("//")) {
-    return withBasePath("/workspace");
+    return "/workspace";
   }
-  return withBasePath(rawValue);
+  return rawValue;
 }
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {

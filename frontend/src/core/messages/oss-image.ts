@@ -1,15 +1,6 @@
-import { useQueries } from "@tanstack/react-query";
 import { useMemo } from "react";
+import { useQueries } from "@tanstack/react-query";
 import { visit } from "unist-util-visit";
-
-import { getBackendBaseURL, withBasePath } from "../config/index.ts";
-
-type VisitNode = {
-  type: string;
-  url?: unknown;
-  children?: VisitNode[];
-  [key: string]: unknown;
-};
 
 function normalizeOssUriCandidate(value: string) {
   let text = value;
@@ -17,6 +8,24 @@ function normalizeOssUriCandidate(value: string) {
     text = text.slice(0, -1);
   }
   return text;
+}
+
+function getBaseOrigin(): string {
+  if (typeof window !== "undefined") {
+    return window.location.origin;
+  }
+
+  return "http://localhost:2026";
+}
+
+function getBackendBaseURL(): string {
+  const backendBaseURL = process.env.NEXT_PUBLIC_BACKEND_BASE_URL;
+
+  if (backendBaseURL) {
+    return new URL(backendBaseURL, getBaseOrigin()).toString().replace(/\/+$/, "");
+  }
+
+  return "";
 }
 
 function buildDownloadUrlUrl(workspaceId: string, objectKey: string): string {
@@ -33,9 +42,7 @@ async function resolveWorkspaceDownloadUrl(
   });
 
   if (!response.ok) {
-    const error = await response
-      .json()
-      .catch(() => ({ detail: "Failed to get download URL" }));
+    const error = await response.json().catch(() => ({ detail: "Failed to get download URL" }));
     throw new Error(error.detail ?? "Failed to get download URL");
   }
 
@@ -77,7 +84,9 @@ function extractOssUris(content: string): string[] {
 
   return Array.from(
     new Set(
-      matches.map((match) => normalizeOssUriCandidate(match)).filter(Boolean),
+      matches
+        .map((match) => normalizeOssUriCandidate(match))
+        .filter(Boolean),
     ),
   );
 }
@@ -95,10 +104,10 @@ export function useResolvedOssUrlMap(
         enabled: Boolean(workspaceId && objectKey),
         queryFn: async () => {
           const result = await resolveWorkspaceDownloadUrl(
-            workspaceId!,
-            objectKey!,
+            workspaceId as string,
+            objectKey as string,
           );
-          return withBasePath(result.download_url);
+          return result.download_url;
         },
       };
     }),
@@ -119,7 +128,7 @@ export function useResolvedOssUrlMap(
 export function remarkRewriteResolvedOssUrls(urlMap: Record<string, string>) {
   return () => {
     return (tree: unknown) => {
-      visit(tree as VisitNode, ["image", "link"], (node) => {
+      visit(tree as any, ["image", "link"], (node: any) => {
         if (typeof node.url !== "string") {
           return;
         }
@@ -127,7 +136,7 @@ export function remarkRewriteResolvedOssUrls(urlMap: Record<string, string>) {
         const resolved =
           urlMap[normalizeOssUriCandidate(node.url)] ?? urlMap[node.url];
         if (resolved) {
-          n.url = resolved;
+          node.url = resolved;
         }
       });
     };

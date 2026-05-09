@@ -10,21 +10,17 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { withBasePath, withoutBasePath } from "@/core/config";
 import { useI18n } from "@/core/i18n/hooks";
 
 export function WorkspaceNavChatList() {
   const { t } = useI18n();
-  const pathname = withoutBasePath(usePathname());
+  const pathname = usePathname();
   return (
     <SidebarGroup className="pt-1">
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton isActive={pathname === "/workspace/chats"} asChild>
-            <Link
-              className="text-muted-foreground"
-              href={withBasePath("/workspace/chats")}
-            >
+            <Link className="text-muted-foreground" href="/workspace/chats">
               <MessagesSquare />
               <span>{t.sidebar.chats}</span>
             </Link>
@@ -35,10 +31,7 @@ export function WorkspaceNavChatList() {
             isActive={pathname.startsWith("/workspace/agents")}
             asChild
           >
-            <Link
-              className="text-muted-foreground"
-              href={withBasePath("/workspace/agents")}
-            >
+            <Link className="text-muted-foreground" href="/workspace/agents">
               <BotIcon />
               <span>{t.sidebar.agents}</span>
             </Link>
@@ -49,10 +42,7 @@ export function WorkspaceNavChatList() {
             isActive={pathname.startsWith("/workspace/skills")}
             asChild
           >
-            <Link
-              className="text-muted-foreground"
-              href={withBasePath("/workspace/skills")}
-            >
+            <Link className="text-muted-foreground" href="/workspace/skills">
               <SparklesIcon />
               <span>{t.sidebar.skills}</span>
             </Link>

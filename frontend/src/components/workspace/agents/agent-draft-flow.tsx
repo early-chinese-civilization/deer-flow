@@ -52,7 +52,6 @@ import {
 } from "@/core/agents/agent-draft-storage";
 import { AgentNameCheckError, checkAgentName } from "@/core/agents/api";
 import type { AgentDraftMode } from "@/core/agents/types";
-import { withBasePath } from "@/core/config";
 import { useI18n } from "@/core/i18n/hooks";
 import { useSkills } from "@/core/skills/hooks";
 import { cn } from "@/lib/utils";
@@ -352,7 +351,7 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
       toast.success(
         mode === "create" ? t.agents.createSuccess : t.agents.updateSuccess,
       );
-      router.push(withBasePath("/workspace/agents"));
+      router.push("/workspace/agents");
     } catch (error) {
       const message =
         error instanceof Error && error.message
@@ -667,7 +666,7 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
         </div>
         <Button
           variant="ghost"
-          onClick={() => router.push(withBasePath("/workspace/agents"))}
+          onClick={() => router.push("/workspace/agents")}
         >
           <ArrowLeftIcon className="mr-2 h-4 w-4" />
           {t.agents.backToGallery}

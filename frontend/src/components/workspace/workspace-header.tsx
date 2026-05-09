@@ -11,7 +11,6 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { withBasePath, withoutBasePath } from "@/core/config";
 import { useI18n } from "@/core/i18n/hooks";
 import { pathOfNewThread } from "@/core/threads/utils";
 import { uuid } from "@/core/utils/uuid";
@@ -21,7 +20,7 @@ import { cn } from "@/lib/utils";
 export function WorkspaceHeader({ className }: { className?: string }) {
   const { t } = useI18n();
   const { state } = useSidebar();
-  const pathname = withoutBasePath(usePathname());
+  const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -58,7 +57,7 @@ export function WorkspaceHeader({ className }: { className?: string }) {
           <div className="flex min-w-0 items-center justify-between gap-2">
             {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ? (
               <Link
-                href={withBasePath("/")}
+                href="/"
                 className="text-primary ml-2 min-w-0 flex-1 truncate font-serif"
                 title={t.brand.shortName}
               >

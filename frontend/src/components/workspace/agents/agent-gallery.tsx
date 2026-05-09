@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { useAgents } from "@/core/agents";
-import { pathOfCreateAgentDraft } from "@/core/agents/agent-draft-routes";
 import { useI18n } from "@/core/i18n/hooks";
 
 import { AgentCard } from "./agent-card";
@@ -16,7 +15,7 @@ export function AgentGallery() {
   const router = useRouter();
 
   const handleNewAgent = () => {
-    router.push(pathOfCreateAgentDraft());
+    router.push("/workspace/agents/new");
   };
 
   return (

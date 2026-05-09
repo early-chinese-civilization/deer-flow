@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-process.env.NEXT_PUBLIC_BASE_PATH = "/deer-flow";
-
 const { getThreadAgentName, pathOfNewThread, pathOfThread } = await import(
   new URL("./utils.ts", import.meta.url).href
 );
@@ -12,7 +10,7 @@ void test("builds draft routes with an agent query", () => {
     pathOfNewThread({
       agentName: "hudi",
     }),
-    "/deer-flow/workspace/chats/new?agent=hudi",
+    "/workspace/chats/new?agent=hudi",
   );
 });
 
@@ -22,7 +20,7 @@ void test("preserves unrelated draft query params while updating the agent", () 
       currentSearch: "mode=skill&mock=true",
       agentName: "hudi",
     }),
-    "/deer-flow/workspace/chats/new?mode=skill&mock=true&agent=hudi",
+    "/workspace/chats/new?mode=skill&mock=true&agent=hudi",
   );
 });
 
@@ -33,7 +31,7 @@ void test("replaces the draft nonce while preserving unrelated new-chat query pa
       agentName: null,
       draftNonce: "new-draft",
     }),
-    "/deer-flow/workspace/chats/new?mode=skill&draft=new-draft",
+    "/workspace/chats/new?mode=skill&draft=new-draft",
   );
 });
 
@@ -46,7 +44,7 @@ void test("builds canonical existing-thread routes under the shared chats namesp
       },
       values: {},
     }),
-    "/deer-flow/workspace/chats/thread-123?agent=hudi",
+    "/workspace/chats/thread-123?agent=hudi",
   );
 });
 
@@ -61,11 +59,11 @@ void test("normalizes mismatched existing-thread agent queries while preserving 
         values: {},
       },
       {
-        currentPath: "/deer-flow/workspace/chats/thread-123",
+        currentPath: "/workspace/chats/thread-123",
         currentSearch: "agent=other&mode=skill&mock=true",
       },
     ),
-    "/deer-flow/workspace/chats/thread-123?agent=hudi&mode=skill&mock=true",
+    "/workspace/chats/thread-123?agent=hudi&mode=skill&mock=true",
   );
 });
 
@@ -76,17 +74,7 @@ void test("promotes a draft route to the persisted thread id without carrying th
       currentSearch: "draft=temp-thread-id&agent=hudi",
       agentName: "hudi",
     }),
-    "/deer-flow/workspace/chats/persisted-thread-id?agent=hudi",
-  );
-});
-
-void test("infers legacy agent routes when current path includes a base path", () => {
-  assert.equal(
-    pathOfThread("thread-123", {
-      currentPath: "/deer-flow/workspace/agents/hudi/chats/thread-123",
-      currentSearch: "mock=true",
-    }),
-    "/deer-flow/workspace/chats/thread-123?mock=true&agent=hudi",
+    "/workspace/chats/persisted-thread-id?agent=hudi",
   );
 });
 

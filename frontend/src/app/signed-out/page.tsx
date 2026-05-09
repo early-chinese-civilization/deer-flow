@@ -2,7 +2,6 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { BRAND } from "@/core/brand";
-import { withBasePath } from "@/core/config";
 
 export default function SignedOutPage() {
   return (
@@ -20,18 +19,10 @@ export default function SignedOutPage() {
         </p>
         <div className="mt-8 flex gap-3">
           <Button asChild>
-            <Link
-              href={withBasePath(
-                `/auth/login?return_to=${encodeURIComponent(
-                  withBasePath("/workspace"),
-                )}`,
-              )}
-            >
-              Sign in again
-            </Link>
+            <Link href="/auth/login?return_to=%2Fworkspace">Sign in again</Link>
           </Button>
           <Button asChild variant="outline">
-            <Link href={withBasePath("/")}>Refresh status</Link>
+            <Link href="/">Refresh status</Link>
           </Button>
         </div>
       </section>
