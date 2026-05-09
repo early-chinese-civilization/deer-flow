@@ -8,7 +8,12 @@ from ecc_auth import create_auth_router, init_dependencies
 from ecc_auth.config import KeycloakConfig
 from ecc_auth.identity import AuthIdentity
 from fastapi import APIRouter
+from fastapi.responses import RedirectResponse
 
+from app.gateway.auth.dev_synthetic_auth import (
+    get_dev_synthetic_auth_identity,
+    is_dev_synthetic_auth_enabled,
+)
 from app.gateway.auth.service import build_current_user_payload, sync_local_user_from_identity
 from app.gateway.db.engine import get_db_session
 
@@ -52,8 +57,49 @@ async def _load_current_user(identity: AuthIdentity) -> dict:
         return await build_current_user_payload(db=db, identity=identity)
 
 
+def _safe_return_to(return_to: str | None) -> str:
+    if not return_to or not return_to.startswith("/") or return_to.startswith("//"):
+        return "/workspace"
+    return return_to
+
+
+def _create_dev_synthetic_auth_router() -> APIRouter:
+    """Create development-only auth endpoints backed by a synthetic user."""
+    router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+    @router.get("/login")
+    async def dev_login(return_to: str | None = None) -> RedirectResponse:
+        return RedirectResponse(_safe_return_to(return_to))
+
+    @router.get("/callback")
+    async def dev_callback(return_to: str | None = None) -> RedirectResponse:
+        return RedirectResponse(_safe_return_to(return_to))
+
+    @router.get("/me")
+    async def dev_me() -> dict:
+        async with get_db_session() as db:
+            user = await build_current_user_payload(
+                db=db,
+                identity=get_dev_synthetic_auth_identity(),
+            )
+        return {"user": user}
+
+    @router.post("/refresh")
+    async def dev_refresh() -> dict:
+        return {"ok": True}
+
+    @router.post("/logout")
+    async def dev_logout() -> dict:
+        return {"logoutUrl": "/signed-out"}
+
+    return router
+
+
 def create_gateway_auth_router(config: KeycloakConfig | None = None) -> APIRouter:
     """Wrap the shared SDK router under DeerFlow's `/api/auth` prefix."""
+    if config is None and is_dev_synthetic_auth_enabled():
+        return _create_dev_synthetic_auth_router()
+
     resolved_config = config or _build_keycloak_config()
     init_dependencies(resolved_config)
 

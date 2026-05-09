@@ -177,10 +177,7 @@ def install_skill_from_archive(
         if user_id is None:
             legacy_target = skills_root / LEGACY_CUSTOM_SKILLS_DIR / skill_name
             if legacy_target.exists():
-                raise SkillAlreadyExistsError(
-                    f"Legacy custom skill '{skill_name}' already exists at {LEGACY_CUSTOM_SKILLS_DIR}/{skill_name}; "
-                    f"move it to {LOCAL_CLIENT_SKILLS_DIR}/{skill_name} or remove the legacy copy before installing."
-                )
+                raise SkillAlreadyExistsError(f"Legacy custom skill '{skill_name}' already exists at {LEGACY_CUSTOM_SKILLS_DIR}/{skill_name}; move it to {LOCAL_CLIENT_SKILLS_DIR}/{skill_name} or remove the legacy copy before installing.")
             target = skills_root / build_private_skill_file_path(LOCAL_CLIENT_SKILLS_DIR, skill_name)
         else:
             target = skills_root / build_private_skill_file_path(user_id, skill_name)

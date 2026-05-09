@@ -1,12 +1,7 @@
 "use client";
 
 import type { ChatStatus } from "ai";
-import {
-  PaperclipIcon,
-  PlusIcon,
-  SparklesIcon,
-  XIcon,
-} from "lucide-react";
+import { PaperclipIcon, PlusIcon, SparklesIcon, XIcon } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import {
   useCallback,
@@ -261,7 +256,8 @@ export function InputBox({
   }
 
   const showSuggestionList = isNewThread && mode !== "skill";
-  const showNewThreadFooter = isNewThread && (agentControl != null || showSuggestionList);
+  const showNewThreadFooter =
+    isNewThread && (agentControl != null || showSuggestionList);
 
   return (
     <div ref={promptRootRef} className="relative">

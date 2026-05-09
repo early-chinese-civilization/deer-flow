@@ -7,11 +7,7 @@ import { useI18n } from "@/core/i18n/hooks";
 
 import { Tooltip } from "./tooltip";
 
-export function WorkspaceFilesTrigger({
-  onClick,
-}: {
-  onClick: () => void;
-}) {
+export function WorkspaceFilesTrigger({ onClick }: { onClick: () => void }) {
   const { t } = useI18n();
 
   return (

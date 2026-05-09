@@ -13,7 +13,10 @@ import {
   type UploadedFileInfo,
   type UploadResponse,
 } from "./api";
-import { addUploadedFilesToList, removeDeletedUploadedFilesFromList } from "./cache";
+import {
+  addUploadedFilesToList,
+  removeDeletedUploadedFilesFromList,
+} from "./cache";
 
 /**
  * Hook to upload files

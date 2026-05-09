@@ -71,10 +71,7 @@ def test_baseline_uses_user_id_columns_without_legacy_owner_names():
     ):
         migration.upgrade()
 
-    table_columns = {
-        call.args[0]: {column.name for column in call.args[1:] if hasattr(column, "name")}
-        for call in create_table.call_args_list
-    }
+    table_columns = {call.args[0]: {column.name for column in call.args[1:] if hasattr(column, "name")} for call in create_table.call_args_list}
     assert "user_id" in table_columns["workspaces"]
     assert "user_id" in table_columns["threads"]
     assert "owner_user_id" not in table_columns["workspaces"]

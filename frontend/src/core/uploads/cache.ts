@@ -89,10 +89,9 @@ function mergeFilesByRelativePath(
 ) {
   const overwriteExisting = options?.overwriteExisting ?? true;
   const filesByRelativePath = new Map(
-    currentFiles.map((file) => [
-      normalizeRelativePathKey(file.relative_path),
-      file,
-    ] as const),
+    currentFiles.map(
+      (file) => [normalizeRelativePathKey(file.relative_path), file] as const,
+    ),
   );
 
   for (const file of nextFiles) {

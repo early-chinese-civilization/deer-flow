@@ -28,8 +28,10 @@ for arg in "$@"; do
 done
 
 if $DEV_MODE; then
+    export DEER_FLOW_SERVER_MODE=dev
     FRONTEND_CMD="pnpm run dev"
 else
+    export DEER_FLOW_SERVER_MODE=prod
     if command -v python3 >/dev/null 2>&1; then
         PYTHON_BIN="python3"
     elif command -v python >/dev/null 2>&1; then

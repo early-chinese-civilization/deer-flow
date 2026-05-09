@@ -195,13 +195,14 @@ void test("Agent Skill selection groups My Skills and System Skills separately",
     installed,
   ]);
 
-  assert.deepEqual(groups.mySkills.map(getSkillSelectionKey), [
-    "install:201",
-  ]);
+  assert.deepEqual(groups.mySkills.map(getSkillSelectionKey), ["install:201"]);
   assert.deepEqual(groups.systemSkills.map(getSkillSelectionKey), [
     "system-version:701",
   ]);
-  assert.notEqual(getSkillSelectionKey(installed), getSkillSelectionKey(system));
+  assert.notEqual(
+    getSkillSelectionKey(installed),
+    getSkillSelectionKey(system),
+  );
 });
 
 void test("System Skill selections submit system IDs instead of install IDs or names", () => {

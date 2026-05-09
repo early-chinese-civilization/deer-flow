@@ -68,7 +68,10 @@ export function buildSkillInstallUpdatePreviewRequest(
   skillName: string,
   skillInstallId?: number | null,
 ): [string, RequestInit] {
-  const url = new URL(buildSkillRoute(baseUrl, skillName, "update-install/preview"), "http://placeholder.local");
+  const url = new URL(
+    buildSkillRoute(baseUrl, skillName, "update-install/preview"),
+    "http://placeholder.local",
+  );
   if (skillInstallId != null) {
     url.searchParams.set("skill_install_id", String(skillInstallId));
   }

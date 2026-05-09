@@ -126,10 +126,7 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
     [skills],
   );
   const visibleSkills = useMemo(
-    () => [
-      ...visibleSkillGroups.mySkills,
-      ...visibleSkillGroups.systemSkills,
-    ],
+    () => [...visibleSkillGroups.mySkills, ...visibleSkillGroups.systemSkills],
     [visibleSkillGroups],
   );
   const visibleSkillByKey = useMemo(

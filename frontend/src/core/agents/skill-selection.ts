@@ -183,7 +183,9 @@ export function getSelectionSkillNames(selection: string[]): string[] {
     .filter(Boolean);
 }
 
-export function getSelectionSystemSkillVersionIds(selection: string[]): number[] {
+export function getSelectionSystemSkillVersionIds(
+  selection: string[],
+): number[] {
   const versionIds: number[] = [];
   for (const value of selection) {
     if (!value.startsWith("system-version:")) {

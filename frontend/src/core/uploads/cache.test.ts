@@ -20,5 +20,8 @@ void test("keeps oss identities on observed workspace file placeholders", () => 
 
   assert.equal(next?.files[0]?.oss_uri, null);
   assert.equal(next?.files[0]?.markdown_oss_uri, null);
-  assert.equal(next?.files[0]?.virtual_path, "/mnt/user-data/uploads/report.md");
+  assert.equal(
+    next?.files[0]?.virtual_path,
+    "/mnt/user-data/uploads/report.md",
+  );
 });

@@ -94,27 +94,14 @@ class _ApiFlowStore:
         return next((skill for skill in self.skills if skill.id == skill_id and skill.deleted_at is None), None)
 
     def latest_release_for_definition(self, definition_id: int) -> SkillRelease | None:
-        releases = [
-            release
-            for release in self.releases
-            if release.status == "published"
-            and release.skill_version is not None
-            and release.skill_version.skill_definition_id == definition_id
-        ]
+        releases = [release for release in self.releases if release.status == "published" and release.skill_version is not None and release.skill_version.skill_definition_id == definition_id]
         return max(releases, key=lambda release: release.skill_version.version_number, default=None)
 
     async def get_or_create_definition(self, db, *, name, display_name, description, owner_user_id, source_type=None, source_identifier=None):
         source_type = source_type or ("user" if owner_user_id is not None else "legacy")
         source_identifier = source_identifier or (str(owner_user_id) if owner_user_id is not None else "legacy")
         definition = next(
-            (
-                item
-                for item in self.definitions
-                if item.name == name
-                and item.source_type == source_type
-                and item.source_identifier == source_identifier
-                and item.deleted_at is None
-            ),
+            (item for item in self.definitions if item.name == name and item.source_type == source_type and item.source_identifier == source_identifier and item.deleted_at is None),
             None,
         )
         if definition is not None:
@@ -141,24 +128,13 @@ class _ApiFlowStore:
         source_type = "user" if owner_user_id is not None else "legacy"
         source_identifier = str(owner_user_id) if owner_user_id is not None else "legacy"
         return next(
-            (
-                item
-                for item in self.definitions
-                if item.name == name
-                and item.source_type == source_type
-                and item.source_identifier == source_identifier
-                and item.deleted_at is None
-            ),
+            (item for item in self.definitions if item.name == name and item.source_type == source_type and item.source_identifier == source_identifier and item.deleted_at is None),
             None,
         )
 
     async def get_version_by_hash(self, db, *, skill_definition_id, content_hash):
         return next(
-            (
-                version
-                for version in self.versions
-                if version.skill_definition_id == skill_definition_id and version.content_hash == content_hash
-            ),
+            (version for version in self.versions if version.skill_definition_id == skill_definition_id and version.content_hash == content_hash),
             None,
         )
 
@@ -200,13 +176,7 @@ class _ApiFlowStore:
 
     async def get_install_by_user_and_definition(self, db, *, user_id, skill_definition_id):
         return next(
-            (
-                install
-                for install in self.installs
-                if install.user_id == user_id
-                and install.skill_definition_id == skill_definition_id
-                and install.deleted_at is None
-            ),
+            (install for install in self.installs if install.user_id == user_id and install.skill_definition_id == skill_definition_id and install.deleted_at is None),
             None,
         )
 
@@ -216,13 +186,7 @@ class _ApiFlowStore:
 
     async def list_install_by_user_and_name(self, db, *, user_id, name):
         definition_ids = [definition.id for definition in self.definitions if definition.name == name and definition.deleted_at is None]
-        return [
-            install
-            for install in self.installs
-            if install.user_id == user_id
-            and install.skill_definition_id in definition_ids
-            and install.deleted_at is None
-        ]
+        return [install for install in self.installs if install.user_id == user_id and install.skill_definition_id in definition_ids and install.deleted_at is None]
 
     async def get_install_by_id_for_user(self, db, *, user_id, skill_install_id):
         return next((install for install in self.installs if install.id == skill_install_id and install.user_id == user_id and install.deleted_at is None), None)
@@ -270,24 +234,11 @@ class _ApiFlowStore:
         return max(public_skills, key=lambda skill: skill.id, default=None)
 
     async def get_public_skill_by_name_and_owner(self, db, *, name, owner_user_id):
-        public_skills = [
-            skill
-            for skill in self.skills
-            if skill.user_id is None
-            and skill.name == name
-            and (owner_user_id is None or skill.owner_user_id == owner_user_id)
-            and skill.deleted_at is None
-        ]
+        public_skills = [skill for skill in self.skills if skill.user_id is None and skill.name == name and (owner_user_id is None or skill.owner_user_id == owner_user_id) and skill.deleted_at is None]
         return max(public_skills, key=lambda skill: skill.id, default=None)
 
     async def get_public_skill_by_definition(self, db, *, skill_definition_id):
-        public_skills = [
-            skill
-            for skill in self.skills
-            if skill.user_id is None
-            and skill.skill_definition_id == skill_definition_id
-            and skill.deleted_at is None
-        ]
+        public_skills = [skill for skill in self.skills if skill.user_id is None and skill.skill_definition_id == skill_definition_id and skill.deleted_at is None]
         return max(public_skills, key=lambda skill: skill.id, default=None)
 
     async def list_public_skills_by_name(self, db, *, name):
@@ -423,17 +374,7 @@ class _ApiFlowStore:
         return agent
 
     async def list_bound_agents_for_install(self, db, *, user_id, skill_install_id):
-        return [
-            agent
-            for agent in self.agents
-            if agent.user_id == user_id
-            and any(
-                association.skill_install_id == skill_install_id
-                and association.enabled
-                and association.deleted_at is None
-                for association in agent.agent_skills
-            )
-        ]
+        return [agent for agent in self.agents if agent.user_id == user_id and any(association.skill_install_id == skill_install_id and association.enabled and association.deleted_at is None for association in agent.agent_skills)]
 
 
 def _skill_zip_bytes(
@@ -443,15 +384,7 @@ def _skill_zip_bytes(
     package_version: str,
     marker: str,
 ) -> bytes:
-    content = (
-        "---\n"
-        f"name: {name}\n"
-        f"description: {description}\n"
-        f"version: {package_version}\n"
-        "---\n\n"
-        f"# {name}\n\n"
-        f"{marker}\n"
-    )
+    content = f"---\nname: {name}\ndescription: {description}\nversion: {package_version}\n---\n\n# {name}\n\n{marker}\n"
     archive = BytesIO()
     with zipfile.ZipFile(archive, "w") as zip_file:
         zip_file.writestr(f"{name}/SKILL.md", content)
