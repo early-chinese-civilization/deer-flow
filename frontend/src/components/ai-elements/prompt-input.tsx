@@ -200,7 +200,9 @@ export function PromptInputProvider({
   const update = useCallback(
     (
       id: string,
-      updater: (current: PromptInputAttachmentFile) => PromptInputAttachmentFile,
+      updater: (
+        current: PromptInputAttachmentFile,
+      ) => PromptInputAttachmentFile,
     ) => {
       setAttachmentFiles((prev) =>
         prev.map((file) => (file.id === id ? updater(file) : file)),
@@ -662,11 +664,17 @@ export const PromptInput = ({
   const add = usingProvider ? controller.attachments.add : addLocal;
   const remove = usingProvider ? controller.attachments.remove : removeLocal;
   const clear = usingProvider ? controller.attachments.clear : clearLocal;
-  const update = usingProvider ? controller.attachments.update : (
-    id: string,
-    updater: (current: PromptInputAttachmentFile) => PromptInputAttachmentFile,
-  ) =>
-    setItems((prev) => prev.map((file) => (file.id === id ? updater(file) : file)));
+  const update = usingProvider
+    ? controller.attachments.update
+    : (
+        id: string,
+        updater: (
+          current: PromptInputAttachmentFile,
+        ) => PromptInputAttachmentFile,
+      ) =>
+        setItems((prev) =>
+          prev.map((file) => (file.id === id ? updater(file) : file)),
+        );
   const openFileDialog = usingProvider
     ? controller.attachments.openFileDialog
     : openFileDialogLocal;

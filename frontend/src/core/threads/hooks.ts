@@ -1,8 +1,4 @@
-import type {
-  AIMessage,
-  Message,
-  ThreadState,
-} from "@langchain/langgraph-sdk";
+import type { AIMessage, Message, ThreadState } from "@langchain/langgraph-sdk";
 import type { ThreadsClient } from "@langchain/langgraph-sdk/client";
 import { useStream } from "@langchain/langgraph-sdk/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -17,13 +13,13 @@ import type { FileInMessage } from "../messages/utils";
 import type { LocalSettings } from "../settings";
 import { useUpdateSubtask } from "../tasks/context";
 import type { UploadedFileInfo } from "../uploads";
+import { getCanonicalUploadedFilePath } from "../uploads/composer-core";
 
 import { ensureThread } from "./api";
 import {
   applyPendingUploadedFiles,
   type PendingUploadedFiles,
 } from "./message-attachments";
-import { getCanonicalUploadedFilePath } from "../uploads/composer-core";
 import { getRunReconnectStorage } from "./reconnect-storage";
 import { shouldSuppressPassiveStreamError } from "./stream-error";
 import {
@@ -90,7 +86,9 @@ function useManagedThreadHistory(
   const historyLimit = resolveThreadHistoryLimit(fetchStateHistory);
 
   const fetchHistory = useCallback(
-    async (targetThreadId: string): Promise<ThreadState<AgentThreadState>[]> => {
+    async (
+      targetThreadId: string,
+    ): Promise<ThreadState<AgentThreadState>[]> => {
       return fetchThreadHistory<AgentThreadState>(
         client as ThreadHistoryClient<AgentThreadState>,
         targetThreadId,
@@ -381,15 +379,17 @@ export function useThreadStream({
           );
         }
 
-        const filesForSubmit: FileInMessage[] = uploadedFileInfo.map((info) => ({
-          filename: info.filename,
-          size: info.size,
-          path: getCanonicalUploadedFilePath(info),
-          virtual_path: info.virtual_path,
-          oss_uri: info.oss_uri,
-          object_key: info.object_key,
-          status: "uploaded" as const,
-        }));
+        const filesForSubmit: FileInMessage[] = uploadedFileInfo.map(
+          (info) => ({
+            filename: info.filename,
+            size: info.size,
+            path: getCanonicalUploadedFilePath(info),
+            virtual_path: info.virtual_path,
+            oss_uri: info.oss_uri,
+            object_key: info.object_key,
+            status: "uploaded" as const,
+          }),
+        );
 
         setPendingUploadedFiles(
           filesForSubmit.length > 0

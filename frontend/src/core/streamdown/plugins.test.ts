@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { Paragraph } from "mdast";
+
 const {
   humanMessagePlugins,
   remarkLinkifyOssUris,
@@ -18,7 +20,8 @@ void test("linkifies oss uris inside text nodes", () => {
         children: [
           {
             type: "text",
-            value: "See oss://demo-bucket/workspaces/ws-1/uploads/report.md for details.",
+            value:
+              "See oss://demo-bucket/workspaces/ws-1/uploads/report.md for details.",
           },
         ],
       },
@@ -27,7 +30,7 @@ void test("linkifies oss uris inside text nodes", () => {
 
   transformer(tree);
 
-  const paragraph: any = tree.children[0];
+  const paragraph = tree.children[0] as Paragraph;
   assert.equal(paragraph.children.length, 3);
   assert.deepEqual(paragraph.children[1], {
     type: "link",
@@ -51,7 +54,8 @@ void test("strips trailing markdown punctuation from oss links", () => {
         children: [
           {
             type: "text",
-            value: "See oss://demo-bucket/workspaces/ws-1/uploads/report.md** for details.",
+            value:
+              "See oss://demo-bucket/workspaces/ws-1/uploads/report.md** for details.",
           },
         ],
       },
@@ -60,13 +64,21 @@ void test("strips trailing markdown punctuation from oss links", () => {
 
   transformer(tree);
 
-  const paragraph: any = tree.children[0];
-  assert.equal(paragraph.children[1].type, "link");
-  assert.equal(paragraph.children[1].url, "oss://demo-bucket/workspaces/ws-1/uploads/report.md");
+  const paragraph = tree.children[0] as Paragraph;
+  const link = paragraph.children[1]!;
+  assert.equal(link.type, "link");
+  assert.equal(
+    (link as { url: string }).url,
+    "oss://demo-bucket/workspaces/ws-1/uploads/report.md",
+  );
 });
 
 void test("exports oss linkifier in both message plugin sets", () => {
   assert.ok(streamdownPlugins.remarkPlugins?.includes(remarkLinkifyOssUris));
-  assert.ok(streamdownPluginsWithWordAnimation.remarkPlugins?.includes(remarkLinkifyOssUris));
+  assert.ok(
+    streamdownPluginsWithWordAnimation.remarkPlugins?.includes(
+      remarkLinkifyOssUris,
+    ),
+  );
   assert.ok(humanMessagePlugins.remarkPlugins?.includes(remarkLinkifyOssUris));
 });

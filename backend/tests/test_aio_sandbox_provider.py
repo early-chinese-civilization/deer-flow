@@ -180,9 +180,9 @@ def test_deterministic_sandbox_id_includes_skill_scope() -> None:
     public_id = aio_mod.AioSandboxProvider._deterministic_sandbox_id("thread-1", "public")
     private_id = aio_mod.AioSandboxProvider._deterministic_sandbox_id("thread-1", "7")
 
-    assert legacy_id == hashlib.sha256("thread-1".encode()).hexdigest()[:8]
-    assert public_id == hashlib.sha256("thread-1:public".encode()).hexdigest()[:8]
-    assert private_id == hashlib.sha256("thread-1:7".encode()).hexdigest()[:8]
+    assert legacy_id == hashlib.sha256(b"thread-1").hexdigest()[:8]
+    assert public_id == hashlib.sha256(b"thread-1:public").hexdigest()[:8]
+    assert private_id == hashlib.sha256(b"thread-1:7").hexdigest()[:8]
     assert legacy_id != public_id
     assert public_id != private_id
 

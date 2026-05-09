@@ -14,7 +14,10 @@ export class AgentNameCheckError extends Error {
   }
 }
 
-async function readErrorDetail(response: Response, fallback: string): Promise<never> {
+async function readErrorDetail(
+  response: Response,
+  fallback: string,
+): Promise<never> {
   const err = (await response.json().catch(() => ({}))) as { detail?: string };
   throw new Error(err.detail ?? fallback);
 }

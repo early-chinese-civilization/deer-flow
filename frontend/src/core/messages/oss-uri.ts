@@ -4,7 +4,10 @@ export function stripTrailingMarkdownPunctuation(value: string) {
   let text = value;
   let suffix = "";
 
-  while (text && TRAILING_MARKDOWN_PUNCTUATION.includes(text[text.length - 1] ?? "")) {
+  while (
+    text &&
+    TRAILING_MARKDOWN_PUNCTUATION.includes(text[text.length - 1] ?? "")
+  ) {
     suffix = `${text[text.length - 1] ?? ""}${suffix}`;
     text = text.slice(0, -1);
   }

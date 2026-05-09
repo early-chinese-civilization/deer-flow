@@ -1,12 +1,29 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
+const DEV_SYNTHETIC_MODES = new Set(["dev", "development", "local", "test"]);
+
+function isTruthy(value: string | undefined) {
+  return TRUE_VALUES.has((value ?? "").trim().toLowerCase());
+}
+
+function isDevSyntheticAuthEnabled() {
+  const enabled = isTruthy(process.env.DEER_FLOW_DEV_SYNTHETIC_AUTH);
+  const mode = process.env.DEER_FLOW_SERVER_MODE ?? process.env.NODE_ENV;
+  return enabled && DEV_SYNTHETIC_MODES.has((mode ?? "").trim().toLowerCase());
+}
+
 /**
  * Next.js Middleware - 路由保护
  *
  * 保护需要登录才能访问的路由
  */
 export function middleware(request: NextRequest) {
+  if (isDevSyntheticAuthEnabled()) {
+    return NextResponse.next();
+  }
+
   const accessTokenCookie = request.cookies.get("kc_access_token");
   const refreshTokenCookie = request.cookies.get("kc_refresh_token");
   const logoutMarkerCookie = request.cookies.get("kc_logout_marker");

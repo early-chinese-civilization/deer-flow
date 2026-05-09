@@ -14,11 +14,7 @@ def is_runtime_state_unavailable(exc: Exception) -> bool:
         return True
 
     message = str(exc).lower()
-    return (
-        "connection is closed" in message
-        or "closed connection" in message
-        or "connection closed" in message
-    )
+    return "connection is closed" in message or "closed connection" in message or "connection closed" in message
 
 
 def to_runtime_state_http_exception(exc: Exception) -> HTTPException:

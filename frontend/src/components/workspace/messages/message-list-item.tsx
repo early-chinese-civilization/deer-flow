@@ -36,8 +36,8 @@ import { cn } from "@/lib/utils";
 
 import { CopyButton } from "../copy-button";
 
-import { MarkdownContent } from "./markdown-content";
 import { useThread } from "./context";
+import { MarkdownContent } from "./markdown-content";
 
 export function MessageListItem({
   className,
@@ -89,14 +89,15 @@ function MessageImage({
 }: React.ImgHTMLAttributes<HTMLImageElement> & {
   maxWidth?: string;
 }) {
-  if (!src) return null;
-
   const { workspaceId } = useThread();
   const ossSource =
     typeof src === "string" && src.startsWith("oss://")
       ? getBrowserOssSourceFromOssUri(src)
       : null;
   const { data: ossUrl } = useResolvedOssUrl(workspaceId, ossSource);
+
+  if (!src) return null;
+
   const imgClassName = cn("overflow-hidden rounded-lg", `max-w-[${maxWidth}]`);
 
   if (typeof src !== "string") {
@@ -282,33 +283,25 @@ function formatBytes(bytes: number): string {
   return `${(kb / 1024).toFixed(1)} MB`;
 }
 
-function RichFilesList({
-  files,
-}: {
-  files: FileInMessage[];
-}) {
+function RichFilesList({ files }: { files: FileInMessage[] }) {
   if (files.length === 0) return null;
   return (
     <div className="mb-2 flex flex-wrap justify-end gap-2">
       {files.map((file, index) => (
-        <RichFileCard
-          key={`${file.filename}-${index}`}
-          file={file}
-        />
+        <RichFileCard key={`${file.filename}-${index}`} file={file} />
       ))}
     </div>
   );
 }
 
-function RichFileCard({
-  file,
-}: {
-  file: FileInMessage;
-}) {
+function RichFileCard({ file }: { file: FileInMessage }) {
   const { t } = useI18n();
   const { workspaceId } = useThread();
   const isUploading = file.status === "uploading";
   const isImage = isImageFile(file.filename);
+  const source = getBrowserOssSource(file);
+  const urlResult = useResolvedOssUrl(workspaceId, source);
+  const fileUrl = urlResult.data;
 
   if (isUploading) {
     return (
@@ -336,10 +329,6 @@ function RichFileCard({
       </div>
     );
   }
-
-  const source = getBrowserOssSource(file);
-  const urlResult = useResolvedOssUrl(workspaceId, source);
-  const fileUrl = urlResult.data;
 
   if (isImage) {
     if (fileUrl) {

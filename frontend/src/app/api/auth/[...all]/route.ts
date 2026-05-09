@@ -21,21 +21,33 @@ async function proxyRequest(
   headers.delete("content-length");
 
   const hasBody = !["GET", "HEAD"].includes(request.method);
-  const response = await fetch(
-    buildGatewayUrl(pathname, request.nextUrl.search),
-    {
-      method: request.method,
-      headers,
-      body: hasBody ? await request.arrayBuffer() : undefined,
-      // 认证接口需要把 Gateway 的 302/401 原样回给浏览器，不能让 Next 在服务端吞掉跳转。
-      redirect: "manual",
-    },
-  );
+  try {
+    const response = await fetch(
+      buildGatewayUrl(pathname, request.nextUrl.search),
+      {
+        method: request.method,
+        headers,
+        body: hasBody ? await request.arrayBuffer() : undefined,
+        // 认证接口需要把 Gateway 的 302/401 原样回给浏览器，不能让 Next 在服务端吞掉跳转。
+        redirect: "manual",
+      },
+    );
 
-  return new Response(await response.arrayBuffer(), {
-    status: response.status,
-    headers: response.headers,
-  });
+    return new Response(await response.arrayBuffer(), {
+      status: response.status,
+      headers: response.headers,
+    });
+  } catch (error) {
+    console.error("Auth gateway proxy failed", {
+      path: pathname,
+      method: request.method,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return Response.json(
+      { detail: "Authentication gateway unavailable" },
+      { status: 502 },
+    );
+  }
 }
 
 export async function GET(

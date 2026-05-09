@@ -30,6 +30,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useI18n } from "@/core/i18n/hooks";
 import { extractPresentFilesFromMessage } from "@/core/messages/utils";
+import { getBrowserOssSource, useResolvedOssUrl } from "@/core/oss";
 import type { ThreadRecord } from "@/core/threads";
 import { getThread } from "@/core/threads/api";
 import {
@@ -42,10 +43,6 @@ import {
 import { addObservedWorkspaceFilesToList } from "@/core/uploads/cache";
 import { getFileIcon } from "@/core/utils/files";
 import { cn } from "@/lib/utils";
-import {
-  getBrowserOssSource,
-  useResolvedOssUrl,
-} from "@/core/oss";
 
 import { useArtifacts } from "./artifacts/context";
 import { useThread } from "./messages/context";
@@ -307,11 +304,10 @@ export function WorkspaceFilesPanel({
 
   const workspaceArtifactSources = useMemo(() => {
     const files = filesQuery.data?.files ?? [];
-    return files
-      .map((file) => ({
-        filepath: file.virtual_path,
-        browserOssSource: getBrowserOssSource(file),
-      }));
+    return files.map((file) => ({
+      filepath: file.virtual_path,
+      browserOssSource: getBrowserOssSource(file),
+    }));
   }, [filesQuery.data?.files]);
 
   useEffect(() => {
@@ -333,7 +329,9 @@ export function WorkspaceFilesPanel({
         .map((message) => message.id)
         .filter((messageId): messageId is string => Boolean(messageId)),
     );
-    processedArtifactPathsRef.current = new Set(Object.keys(latestArtifactsRef.current));
+    processedArtifactPathsRef.current = new Set(
+      Object.keys(latestArtifactsRef.current),
+    );
   }, [threadId]);
 
   useEffect(() => {
