@@ -1,5 +1,6 @@
-import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
+import { useMemo } from "react";
+import type { Node } from "unist";
 import { visit } from "unist-util-visit";
 
 function normalizeOssUriCandidate(value: string) {
@@ -106,8 +107,8 @@ export function useResolvedOssUrlMap(
         enabled: Boolean(workspaceId && objectKey),
         queryFn: async () => {
           const result = await resolveWorkspaceDownloadUrl(
-            workspaceId as string,
-            objectKey as string,
+            workspaceId!,
+            objectKey!,
           );
           return result.download_url;
         },
@@ -130,7 +131,7 @@ export function useResolvedOssUrlMap(
 export function remarkRewriteResolvedOssUrls(urlMap: Record<string, string>) {
   return () => {
     return (tree: unknown) => {
-      visit(tree as any, ["image", "link"], (node: any) => {
+      visit(tree as Node, ["image", "link"], (node) => {
         if (typeof node.url !== "string") {
           return;
         }
