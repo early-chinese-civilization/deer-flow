@@ -265,11 +265,20 @@ tool_groups:
 # Configure available tools for the agent to use
 
 tools:
-  # Web search tool (uses DuckDuckGo, no API key required)
+  # Web search tool (uses Alibaba Cloud IQS, requires Aliyun IQS API key)
   - name: web_search
     group: web
-    use: deerflow.community.ddg_search.tools:web_search_tool
+    use: deerflow.community.aliyun_iqs.tools:web_search_tool
+    api_key: $ALIYUN_IQS_API_KEY
     max_results: 5
+    engine_type: LiteAdvanced
+    time_range: NoLimit
+
+  # Web search tool (uses DuckDuckGo, no API key required)
+  # - name: web_search
+  #   group: web
+  #   use: deerflow.community.ddg_search.tools:web_search_tool
+  #   max_results: 5
 
   # Web search tool (requires Tavily API key)
   # - name: web_search
