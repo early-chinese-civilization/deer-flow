@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { deleteSkill, downloadSkill, enableSkill, publishSkill, uploadSkills } from "./api";
+import {
+  deleteSkill,
+  downloadSkill,
+  enableSkill,
+  publishSkill,
+  uploadSkills,
+} from "./api";
 
 import { loadSkills } from ".";
 

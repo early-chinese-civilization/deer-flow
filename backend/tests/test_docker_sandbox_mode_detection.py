@@ -109,9 +109,7 @@ sandbox:
 
 def test_docker_compose_backend_services_export_dev_server_mode():
     """Backend containers read root .env, so synthetic auth also needs dev mode."""
-    compose = yaml.safe_load(
-        (REPO_ROOT / "docker" / "docker-compose-dev.yaml").read_text(encoding="utf-8")
-    )
+    compose = yaml.safe_load((REPO_ROOT / "docker" / "docker-compose-dev.yaml").read_text(encoding="utf-8"))
 
     for service_name in ("gateway", "langgraph"):
         environment = compose["services"][service_name]["environment"]

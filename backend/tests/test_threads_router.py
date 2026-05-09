@@ -390,9 +390,7 @@ async def test_create_thread_returns_existing_thread_when_db_and_store_exist():
         status="busy",
         values={"title": "Projected title"},
     )
-    checkpointer = SimpleNamespace(
-        aget_tuple=AsyncMock(side_effect=AssertionError("existing DB threads should short-circuit before runtime lookup"))
-    )
+    checkpointer = SimpleNamespace(aget_tuple=AsyncMock(side_effect=AssertionError("existing DB threads should short-circuit before runtime lookup")))
 
     with patch(
         "app.gateway.routers.threads.ThreadRepository.get_thread_by_id",

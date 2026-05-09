@@ -205,13 +205,7 @@ def build_run_config(
         else:
             configurable = {"thread_id": thread_id}
             client_configurable = request_config.get("configurable", {})
-            configurable.update(
-                {
-                    key: value
-                    for key, value in client_configurable.items()
-                    if key not in _REQUEST_CONFIGURABLE_BLOCKLIST
-                }
-            )
+            configurable.update({key: value for key, value in client_configurable.items() if key not in _REQUEST_CONFIGURABLE_BLOCKLIST})
             config["configurable"] = configurable
         for key, value in request_config.items():
             if key not in ("configurable", "context"):
@@ -455,12 +449,7 @@ async def start_run(
         try:
             async with get_db_session() as db:
                 resolved_agent_id: int | None = None
-                if (
-                    isinstance(resolved_agent_name, str)
-                    and resolved_agent_name.strip()
-                    and current_user is not None
-                    and getattr(current_user, "id", None) is not None
-                ):
+                if isinstance(resolved_agent_name, str) and resolved_agent_name.strip() and current_user is not None and getattr(current_user, "id", None) is not None:
                     agent = await AgentRepository.get_agent_by_name(
                         db,
                         user_id=current_user.id,

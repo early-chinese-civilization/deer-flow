@@ -329,9 +329,7 @@ def build_workspace_file_response(
         "http_uri": artifact_url,
         "object_key": object_key,
         "signed_url": signed_url,
-        "oss_uri": oss_object_uri(uploads_config.oss.bucket, object_key)
-        if uploads_config.backend == "oss" and uploads_config.oss.bucket
-        else None,
+        "oss_uri": oss_object_uri(uploads_config.oss.bucket, object_key) if uploads_config.backend == "oss" and uploads_config.oss.bucket else None,
         "modified": modified,
         "extension": Path(filename).suffix,
     }
@@ -355,9 +353,5 @@ def build_workspace_file_response(
         response["markdown_http_uri"] = response["markdown_artifact_url"]
         response["markdown_object_key"] = markdown_object_key
         response["markdown_signed_url"] = markdown_signed_url
-        response["markdown_oss_uri"] = (
-            oss_object_uri(uploads_config.oss.bucket, markdown_object_key)
-            if uploads_config.backend == "oss" and uploads_config.oss.bucket and markdown_object_key
-            else None
-        )
+        response["markdown_oss_uri"] = oss_object_uri(uploads_config.oss.bucket, markdown_object_key) if uploads_config.backend == "oss" and uploads_config.oss.bucket and markdown_object_key else None
     return response

@@ -127,7 +127,7 @@ export function remarkRewriteResolvedOssUrls(urlMap: Record<string, string>) {
         const resolved =
           urlMap[normalizeOssUriCandidate(node.url)] ?? urlMap[node.url];
         if (resolved) {
-          node.url = resolved;
+          n.url = resolved;
         }
       });
     };

@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from deerflow.sandbox.exceptions import SandboxRuntimeError
+from deerflow.sandbox.skill_scope import derive_skill_scope_from_runtime
 from deerflow.sandbox.tools import (
     VIRTUAL_PATH_PREFIX,
     _apply_cwd_prefix,
@@ -26,7 +27,6 @@ from deerflow.sandbox.tools import (
     validate_local_tool_path,
     write_file_tool,
 )
-from deerflow.sandbox.skill_scope import derive_skill_scope_from_runtime
 
 _THREAD_DATA = {
     "workspace_path": "/tmp/deer-flow/threads/t1/user-data/workspace",

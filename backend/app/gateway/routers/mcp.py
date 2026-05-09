@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from deerflow.config.extensions_config import ExtensionsConfig, get_extensions_config, reload_extensions_config
@@ -11,9 +11,6 @@ from deerflow.config.extensions_config import ExtensionsConfig, get_extensions_c
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["mcp"])
 
-from app.gateway.db.models import User
-from app.gateway.db.repository import ThreadRepository, WorkspaceRepository
-from app.gateway.deps import get_checkpointer, get_current_user, get_db, get_store
 
 class McpOAuthConfigResponse(BaseModel):
     """OAuth configuration for an MCP server."""
