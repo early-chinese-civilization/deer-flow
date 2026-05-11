@@ -1317,6 +1317,28 @@ class SkillRepository:
         return deduped
 
     @staticmethod
+    def _dedupe_visible_skills(skills: list[Skill]) -> list[Skill]:
+        """Collapse visible-list duplicates caused by stale user rows for direct-use System Skills."""
+        deduped = SkillRepository._dedupe_public_skills(skills)
+        public_system_definition_ids = {
+            skill.skill_definition_id
+            for skill in deduped
+            if skill.user_id is None and skill.skill_definition_id is not None and is_system_skill_definition(skill.definition)
+        }
+        if not public_system_definition_ids:
+            return deduped
+
+        return [
+            skill
+            for skill in deduped
+            if not (
+                skill.user_id is not None
+                and skill.skill_definition_id in public_system_definition_ids
+                and is_system_skill_definition(skill.definition)
+            )
+        ]
+
+    @staticmethod
     async def create_skill(
         db: AsyncSession,
         *,
@@ -1379,7 +1401,7 @@ class SkillRepository:
             )
         )
         result = await db.execute(stmt)
-        return SkillRepository._dedupe_public_skills(list(result.scalars().all()))
+        return SkillRepository._dedupe_visible_skills(list(result.scalars().all()))
 
     @staticmethod
     async def list_public_skills(db: AsyncSession) -> list[Skill]:

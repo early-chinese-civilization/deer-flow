@@ -5,6 +5,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.gateway.db.models import Skill, SkillDefinition, SkillInstall, SkillRelease, SkillVersion, User
+from app.gateway.db.repository import SkillRepository
 from app.gateway.routers import skills as skills_router
 
 
@@ -103,6 +104,38 @@ def _release(published_skill_id: int, version: SkillVersion | None = None) -> Sk
     release.skill_version = version
     release.publisher_user = User(id=7, external_auth_id="sub", username="alice", display_name="Alice")
     return release
+
+
+def test_visible_skills_hide_stale_user_rows_for_public_system_definition():
+    definition = _definition(definition_id=7, owner_user_id=None, source_type="legacy", source_identifier="legacy")
+    public = _public_skill(24, "chart-visualization")
+    public.owner_user_id = None
+    public.skill_definition_id = definition.id
+    public.definition = definition
+    stale_user_row = _custom_skill(28, "chart-visualization")
+    stale_user_row.skill_definition_id = definition.id
+    stale_user_row.definition = definition
+
+    result = SkillRepository._dedupe_visible_skills([stale_user_row, public])
+
+    assert result == [public]
+
+
+def test_visible_skills_preserve_community_and_personal_rows_for_same_definition():
+    owner = User(id=8, external_auth_id="sub-8", username="bob", display_name="Bob")
+    definition = _definition(definition_id=102, owner_user_id=8, source_type="user", source_identifier="8", owner_user=owner)
+    community = _public_skill(102, "community-skill")
+    community.owner_user_id = owner.id
+    community.owner_user = owner
+    community.skill_definition_id = definition.id
+    community.definition = definition
+    personal = _custom_skill(104, "community-skill")
+    personal.skill_definition_id = definition.id
+    personal.definition = definition
+
+    result = SkillRepository._dedupe_visible_skills([community, personal])
+
+    assert result == [community, personal]
 
 
 def test_skill_response_relation_matrix():
