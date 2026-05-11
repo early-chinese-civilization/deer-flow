@@ -24,6 +24,16 @@ void test("preserves unrelated draft query params while updating the agent", () 
   );
 });
 
+void test("removes the draft nonce while preserving unrelated new-chat query params", () => {
+  assert.equal(
+    pathOfNewThread({
+      currentSearch: "mode=skill&draft=old-draft&agent=old-agent",
+      agentName: null,
+    }),
+    "/workspace/chats/new?mode=skill",
+  );
+});
+
 void test("builds canonical existing-thread routes under the shared chats namespace", () => {
   assert.equal(
     pathOfThread({

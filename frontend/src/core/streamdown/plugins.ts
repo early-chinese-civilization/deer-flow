@@ -1,5 +1,4 @@
 import type { Element, ElementContent, Root } from "hast";
-import type { Root as MdastRoot, Text, Parent } from "mdast";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
@@ -7,6 +6,31 @@ import remarkMath from "remark-math";
 import type { StreamdownProps } from "streamdown";
 import { visit } from "unist-util-visit";
 import type { BuildVisitor } from "unist-util-visit";
+
+type MdastNode = {
+  type: string;
+  children?: MdastNode[];
+  value?: unknown;
+  [key: string]: unknown;
+};
+
+type MdastRoot = MdastNode & {
+  type: "root";
+  children: MdastNode[];
+};
+
+type MdastText = MdastNode & {
+  type: "text";
+  value: string;
+};
+
+type MdastParent = MdastNode & {
+  children: MdastNode[];
+};
+
+function isMdastText(node: MdastNode): node is MdastText {
+  return node.type === "text" && typeof node.value === "string";
+}
 
 function stripTrailingMarkdownPunctuation(value: string) {
   let text = value;
@@ -28,9 +52,13 @@ export function remarkLinkifyOssUris() {
   return (tree: MdastRoot) => {
     visit(
       tree,
-      "text",
-      (node: Text, index: number | undefined, parent: Parent | undefined) => {
+      (
+        node: MdastNode,
+        index: number | undefined,
+        parent: MdastParent | undefined,
+      ) => {
         if (
+          !isMdastText(node) ||
           !parent ||
           typeof index !== "number" ||
           parent.type === "link" ||
@@ -41,7 +69,7 @@ export function remarkLinkifyOssUris() {
           return;
         }
 
-        const value = typeof node.value === "string" ? node.value : "";
+        const value = node.value;
         if (!OSS_URI_RE.test(value)) {
           OSS_URI_RE.lastIndex = 0;
           return;

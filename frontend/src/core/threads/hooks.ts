@@ -22,6 +22,7 @@ import {
 } from "./message-attachments";
 import { getRunReconnectStorage } from "./reconnect-storage";
 import { shouldSuppressPassiveStreamError } from "./stream-error";
+import { resolveNextStreamThreadId } from "./stream-thread-id";
 import {
   buildThreadSubmitContext,
   buildThreadSubmitMetadata,
@@ -161,13 +162,17 @@ export function useThreadStream({
 
   useEffect(() => {
     const normalizedThreadId = threadId ?? null;
+    const nextOnStreamThreadId = resolveNextStreamThreadId(
+      onStreamThreadId,
+      normalizedThreadId,
+    );
     if (!normalizedThreadId) {
-      // Just reset for new thread creation when threadId becomes null/undefined
+      // Reset for new thread creation when threadId becomes null/undefined.
       startedRef.current = false;
-      setOnStreamThreadId(normalizedThreadId);
     }
+    setOnStreamThreadId(nextOnStreamThreadId);
     threadIdRef.current = normalizedThreadId;
-  }, [threadId]);
+  }, [onStreamThreadId, threadId]);
 
   const _handleOnStart = useCallback((id: string) => {
     if (!startedRef.current) {
@@ -362,9 +367,8 @@ export function useThreadStream({
       ];
       setOptimisticMessages(newOptimistic);
 
-      _handleOnStart(threadId);
-
       const shouldEnsureThread = !threadIdRef.current;
+      _handleOnStart(threadId);
       let ensuredThread: Awaited<ReturnType<typeof ensureThread>> | undefined =
         undefined;
 

@@ -1,8 +1,10 @@
+import { BRAND } from "@/core/brand";
 import { getBackendBaseURL } from "@/core/config";
 
 import type { Agent, CreateAgentRequest, UpdateAgentRequest } from "./types";
 
 const BACKEND_UNAVAILABLE_STATUSES = new Set([502, 503, 504]);
+const BACKEND_UNREACHABLE_MESSAGE = `Could not reach the ${BRAND.en.shortName} backend.`;
 
 export class AgentNameCheckError extends Error {
   constructor(
@@ -89,7 +91,7 @@ export async function checkAgentName(
     );
   } catch {
     throw new AgentNameCheckError(
-      "Could not reach the DeerFlow backend.",
+      BACKEND_UNREACHABLE_MESSAGE,
       "backend_unreachable",
     );
   }
@@ -98,7 +100,7 @@ export async function checkAgentName(
     const err = (await res.json().catch(() => ({}))) as { detail?: string };
     if (BACKEND_UNAVAILABLE_STATUSES.has(res.status)) {
       throw new AgentNameCheckError(
-        "Could not reach the DeerFlow backend.",
+        BACKEND_UNREACHABLE_MESSAGE,
         "backend_unreachable",
       );
     }

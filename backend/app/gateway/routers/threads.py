@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/threads", tags=["threads"])
 
 _SEARCH_SCAN_LIMIT = 10_000
+_THREAD_ROUTE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class ThreadDeleteResponse(BaseModel):
@@ -165,6 +167,12 @@ def _delete_thread_data(thread_id: str, paths: Paths | None = None) -> ThreadDel
 
 def _validate_thread_id(thread_id: str, paths: Paths | None = None) -> None:
     """Validate a thread ID before using it anywhere in request handling."""
+    if not _THREAD_ROUTE_ID_RE.fullmatch(thread_id):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid thread_id {thread_id!r}: only alphanumeric characters, hyphens, and underscores are allowed.",
+        )
+
     path_manager = paths or get_paths()
     try:
         path_manager.thread_dir(thread_id)

@@ -2,11 +2,14 @@
 
 import { useEffect, useMemo } from "react";
 
+import { useI18n } from "@/core/i18n/hooks";
+
 type LoginRedirectProps = {
   returnTo: string;
 };
 
 export function LoginRedirect({ returnTo }: LoginRedirectProps) {
+  const { t } = useI18n();
   const loginUrl = useMemo(() => {
     const params = new URLSearchParams({ return_to: returnTo });
     return `/api/auth/login?${params.toString()}`;
@@ -20,7 +23,7 @@ export function LoginRedirect({ returnTo }: LoginRedirectProps) {
     <main className="flex min-h-screen items-center justify-center bg-neutral-50 px-6 py-16">
       <section className="w-full max-w-md rounded-3xl border border-neutral-200 bg-white p-10 shadow-sm">
         <p className="text-xs font-medium tracking-[0.28em] text-neutral-500 uppercase">
-          DeerFlow
+          {t.brand.shortName}
         </p>
         <h1 className="mt-4 text-3xl font-semibold tracking-tight text-neutral-950">
           Redirecting to sign in

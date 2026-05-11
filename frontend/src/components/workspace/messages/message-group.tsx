@@ -12,7 +12,7 @@ import {
   SquareTerminalIcon,
   WrenchIcon,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   ChainOfThought,
@@ -34,6 +34,7 @@ import { env } from "@/env";
 import { cn } from "@/lib/utils";
 
 import { useArtifacts } from "../artifacts";
+import { buildTransientArtifactAutoOpenId } from "../artifacts/transient-auto-open";
 import { FlipDisplay } from "../flip-display";
 import { Tooltip } from "../tooltip";
 
@@ -43,10 +44,12 @@ import { MarkdownContent } from "./markdown-content";
 export function MessageGroup({
   className,
   messages,
+  threadId,
   isLoading = false,
 }: {
   className?: string;
   messages: Message[];
+  threadId: string;
   isLoading?: boolean;
 }) {
   const { t } = useI18n();
@@ -127,7 +130,12 @@ export function MessageGroup({
                   }
                 ></ChainOfThoughtStep>
               ) : (
-                <ToolCall key={step.id} {...step} isLoading={isLoading} />
+                <ToolCall
+                  key={step.id}
+                  {...step}
+                  threadId={threadId}
+                  isLoading={isLoading}
+                />
               ),
             )}
           {lastToolCallStep && (
@@ -135,6 +143,7 @@ export function MessageGroup({
               <ToolCall
                 key={lastToolCallStep.id}
                 {...lastToolCallStep}
+                threadId={threadId}
                 isLast={true}
                 isLoading={isLoading}
               />
@@ -193,6 +202,7 @@ function ToolCall({
   name,
   args,
   result,
+  threadId,
   isLast = false,
   isLoading = false,
 }: {
@@ -201,12 +211,74 @@ function ToolCall({
   name: string;
   args: Record<string, unknown>;
   result?: string | Record<string, unknown>;
+  threadId: string;
   isLast?: boolean;
   isLoading?: boolean;
 }) {
   const { t } = useI18n();
-  const { setOpen, autoOpen, autoSelect, selectedArtifact, select } =
-    useArtifacts();
+  const {
+    setOpen,
+    autoOpen,
+    autoSelect,
+    selectedArtifact,
+    select,
+    hasTransientArtifactAutoOpened,
+    markTransientArtifactAutoOpened,
+  } = useArtifacts();
+  const transientArtifactPath =
+    (name === "write_file" || name === "str_replace") &&
+    typeof args.path === "string"
+      ? args.path
+      : undefined;
+  const transientArtifactId = useMemo(() => {
+    if (!transientArtifactPath) {
+      return null;
+    }
+
+    return buildTransientArtifactAutoOpenId({
+      threadId,
+      path: transientArtifactPath,
+      messageId,
+      toolCallId: id,
+    });
+  }, [id, messageId, threadId, transientArtifactPath]);
+
+  useEffect(() => {
+    if (
+      !isLoading ||
+      !isLast ||
+      !autoOpen ||
+      !autoSelect ||
+      !transientArtifactId ||
+      selectedArtifact === transientArtifactId ||
+      hasTransientArtifactAutoOpened(transientArtifactId)
+    ) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      if (hasTransientArtifactAutoOpened(transientArtifactId)) {
+        return;
+      }
+
+      markTransientArtifactAutoOpened(transientArtifactId);
+      select(transientArtifactId, true);
+      setOpen(true);
+    }, 100);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    autoOpen,
+    autoSelect,
+    hasTransientArtifactAutoOpened,
+    isLast,
+    isLoading,
+    markTransientArtifactAutoOpened,
+    select,
+    selectedArtifact,
+    setOpen,
+    transientArtifactId,
+  ]);
 
   if (name === "web_search") {
     let label: React.ReactNode = t.toolCalls.searchForRelatedInfo;
@@ -338,19 +410,7 @@ function ToolCall({
     if (!description) {
       description = t.toolCalls.writeFile;
     }
-    const path: string | undefined = (args as { path: string })?.path;
-    if (isLoading && isLast && autoOpen && autoSelect && path) {
-      setTimeout(() => {
-        const url = new URL(
-          `write-file:${path}?message_id=${messageId}&tool_call_id=${id}`,
-        ).toString();
-        if (selectedArtifact === url) {
-          return;
-        }
-        select(url, true);
-        setOpen(true);
-      }, 100);
-    }
+    const path = transientArtifactPath;
 
     return (
       <ChainOfThoughtStep
@@ -359,12 +419,10 @@ function ToolCall({
         label={description}
         icon={NotebookPenIcon}
         onClick={() => {
-          select(
-            new URL(
-              `write-file:${path}?message_id=${messageId}&tool_call_id=${id}`,
-            ).toString(),
-          );
-          setOpen(true);
+          if (transientArtifactId) {
+            select(transientArtifactId);
+            setOpen(true);
+          }
         }}
       >
         {path && (

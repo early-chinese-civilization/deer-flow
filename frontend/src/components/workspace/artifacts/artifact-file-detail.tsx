@@ -29,7 +29,11 @@ import {
 } from "@/components/ui/empty";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { CodeEditor } from "@/components/workspace/code-editor";
-import { getArtifactDisplayMode } from "@/core/artifacts/display";
+import {
+  getArtifactDisplayMode,
+  getSvgPreviewDataUrl,
+  shouldShowArtifactCodePreviewToggle,
+} from "@/core/artifacts/display";
 import { useArtifactContent } from "@/core/artifacts/hooks";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
@@ -94,9 +98,18 @@ export function ArtifactFileDetail({
 
     return getArtifactDisplayMode(filepath);
   }, [filepath, isCodeFile, language]);
+  const isSvgPreview = useMemo(() => {
+    return filepath.toLowerCase().endsWith(".svg");
+  }, [filepath]);
   const isSupportPreview = useMemo(() => {
     return displayMode === "rich-preview";
   }, [displayMode]);
+  const shouldShowViewToggle = useMemo(() => {
+    return shouldShowArtifactCodePreviewToggle({
+      displayMode,
+      isSvgPreview,
+    });
+  }, [displayMode, isSvgPreview]);
   const artifactSource = useMemo(() => {
     if (isWriteFile) {
       return null;
@@ -113,17 +126,34 @@ export function ArtifactFileDetail({
   const artifactViewUrl = browserOssSource
     ? resolvedOssUrl
     : urlOfArtifact({ filepath, threadId, isMock });
-  const { content, url } = useArtifactContent({
+  const {
+    content,
+    error: artifactContentError,
+    isLoading: isArtifactContentLoading,
+    url,
+  } = useArtifactContent({
     threadId,
     filepath: filepathFromProps,
-    enabled: isCodeFile && !isWriteFile && hasResolvedBrowserOssUrl,
+    enabled:
+      !isWriteFile &&
+      hasResolvedBrowserOssUrl &&
+      (isCodeFile || displayMode === "rich-preview"),
     urlOverride: browserOssSource ? resolvedOssUrl : undefined,
   });
 
   const displayContent = content ?? "";
-
   const [viewMode, setViewMode] = useState<"code" | "preview">("code");
   const [isInstalling, setIsInstalling] = useState(false);
+  const svgPreviewDataUrl = useMemo(() => {
+    return isSvgPreview ? getSvgPreviewDataUrl(displayContent) : null;
+  }, [displayContent, isSvgPreview]);
+  const shouldShowRichPreviewUnavailable =
+    isSupportPreview &&
+    viewMode === "preview" &&
+    !isArtifactContentLoading &&
+    (artifactContentError != null ||
+      (isSvgPreview && svgPreviewDataUrl == null));
+
   useEffect(() => {
     if (isSupportPreview) {
       setViewMode("preview");
@@ -165,7 +195,7 @@ export function ArtifactFileDetail({
           </ArtifactTitle>
         </div>
         <div className="flex min-w-0 grow items-center justify-center">
-          {isSupportPreview && (
+          {shouldShowViewToggle && (
             <ToggleGroup
               className="mx-auto"
               type="single"
@@ -232,11 +262,22 @@ export function ArtifactFileDetail({
       <ArtifactContent className="p-0">
         {isSupportPreview &&
           viewMode === "preview" &&
-          (language === "markdown" || language === "html") && (
+          isArtifactContentLoading && <ArtifactLoadingPreview />}
+        {shouldShowRichPreviewUnavailable && (
+          <ArtifactUnsupportedPreview
+            fileType={getFileExtensionDisplayName(filepath)}
+          />
+        )}
+        {isSupportPreview &&
+          viewMode === "preview" &&
+          !isArtifactContentLoading &&
+          !shouldShowRichPreviewUnavailable &&
+          (language === "markdown" || language === "html" || isSvgPreview) && (
             <ArtifactFilePreview
               content={displayContent}
               isWriteFile={isWriteFile}
-              language={language ?? "text"}
+              language={isSvgPreview ? "svg" : (language ?? "text")}
+              svgDataUrl={svgPreviewDataUrl ?? undefined}
               url={url}
             />
           )}
@@ -269,6 +310,22 @@ export function ArtifactFileDetail({
   );
 }
 
+function ArtifactLoadingPreview() {
+  const { t } = useI18n();
+
+  return (
+    <Empty className="rounded-none border-0">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <LoaderIcon className="animate-spin" />
+        </EmptyMedia>
+        <EmptyTitle>{t.common.loading}</EmptyTitle>
+      </EmptyHeader>
+      <EmptyContent />
+    </Empty>
+  );
+}
+
 function ArtifactUnsupportedPreview({ fileType }: { fileType: string }) {
   const { t } = useI18n();
 
@@ -292,11 +349,13 @@ export function ArtifactFilePreview({
   content,
   isWriteFile,
   language,
+  svgDataUrl,
   url,
 }: {
   content: string;
   isWriteFile: boolean;
   language: string;
+  svgDataUrl?: string;
   url?: string;
 }) {
   if (language === "markdown") {
@@ -313,14 +372,39 @@ export function ArtifactFilePreview({
     );
   }
   if (language === "html") {
+    const html = url
+      ? `<base href="${escapeHtmlAttribute(url)}">${content}`
+      : content;
     return (
       <iframe
         className="size-full"
         title="Artifact preview"
         sandbox="allow-scripts allow-forms"
-        {...(isWriteFile ? { srcDoc: content } : url ? { src: url } : {})}
+        srcDoc={isWriteFile ? content : html}
       />
     );
   }
+  if (language === "svg") {
+    if (!svgDataUrl) {
+      return null;
+    }
+    return (
+      <div className="flex size-full items-center justify-center bg-black/5 p-4">
+        <img
+          className="max-h-full max-w-full rounded-md object-contain"
+          src={svgDataUrl}
+          alt="SVG preview"
+        />
+      </div>
+    );
+  }
   return null;
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }

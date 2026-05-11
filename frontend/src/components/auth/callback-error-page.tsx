@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { getCallbackErrorCopy } from "@/core/auth/callback-error";
+import { BRAND } from "@/core/brand";
 
 type CallbackErrorPageProps = {
   error: string;
@@ -14,7 +15,7 @@ export function CallbackErrorPage({ error }: CallbackErrorPageProps) {
     <main className="flex min-h-screen items-center justify-center bg-neutral-50 px-6 py-16">
       <section className="w-full max-w-md rounded-3xl border border-neutral-200 bg-white p-10 shadow-sm">
         <p className="text-xs font-medium tracking-[0.28em] text-neutral-500 uppercase">
-          DeerFlow
+          {BRAND.en.shortName}
         </p>
         <h1 className="mt-4 text-3xl font-semibold tracking-tight text-neutral-950">
           {copy.title}

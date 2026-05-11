@@ -6,12 +6,13 @@ import { NuqsAdapter } from "nuqs/adapters/next/app";
 
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/core/auth";
+import { DEFAULT_BRAND } from "@/core/brand";
 import { I18nProvider } from "@/core/i18n/context";
 import { detectLocaleServer } from "@/core/i18n/server";
 
 export const metadata: Metadata = {
-  title: "DeerFlow",
-  description: "A LangChain-based framework for building super agents.",
+  title: DEFAULT_BRAND.fullName,
+  description: DEFAULT_BRAND.description,
 };
 
 export default async function RootLayout({

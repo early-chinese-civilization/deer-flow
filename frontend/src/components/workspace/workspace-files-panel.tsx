@@ -379,7 +379,9 @@ export function WorkspaceFilesPanel({
     queryClient.setQueriesData<ListFilesResponse | undefined>(
       { queryKey: ["uploads", "list", workspaceId] },
       (current) =>
-        addObservedWorkspaceFilesToList(current, Array.from(nextVirtualPaths)),
+        addObservedWorkspaceFilesToList(current, Array.from(nextVirtualPaths), {
+          workspaceId,
+        }),
     );
   }, [artifacts, filesQuery.data, queryClient, thread.messages, workspaceId]);
 

@@ -9,6 +9,8 @@
   VideoIcon,
 } from "lucide-react";
 
+import { BRAND } from "@/core/brand";
+
 import type { Translations } from "./types";
 
 export const zhCN: Translations = {
@@ -16,6 +18,9 @@ export const zhCN: Translations = {
   locale: {
     localName: "中文",
   },
+
+  // Brand
+  brand: BRAND.zh,
 
   // Common
   common: {
@@ -63,11 +68,11 @@ export const zhCN: Translations = {
   welcome: {
     greeting: "你好，欢迎回来！",
     description:
-      "欢迎使用 🦌 DeerFlow，一个完全开源的超级智能体。通过内置和自定义的 Skills，\nDeerFlow 可以帮你搜索网络、分析数据，还能为你生成幻灯片、\n图片、视频、播客及网页等，几乎可以做任何事情。",
+      "欢迎使用炎黄早期中华文明大模型，一个面向早期中华文明知识理解、资料分析与成果生成的智能协作平台。通过内置和自定义的 Skills，\n炎黄早期中华文明大模型可以帮你整理史料、分析数据，并生成报告、幻灯片、\n图片、视频、播客及网页等研究成果。",
 
     createYourOwnSkill: "创建你自己的 Agent SKill",
     createYourOwnSkillDescription:
-      "创建你的 Agent Skill 来释放 DeerFlow 的潜力。通过自定义技能，DeerFlow\n可以帮你搜索网络、分析数据，还能为你生成幻灯片、\n网页等作品，几乎可以做任何事情。",
+      "创建你的 Agent Skill 来扩展炎黄早期中华文明大模型的能力。通过自定义技能，炎黄早期中华文明大模型\n可以帮你搜索网络、分析数据，还能为你生成幻灯片、\n网页等研究成果。",
   },
 
   // Clipboard
@@ -84,6 +89,9 @@ export const zhCN: Translations = {
     createSkillPrompt:
       "我们一起用 skill-creator 技能来创建一个技能吧。先问问我希望这个技能能做什么。",
     addAttachments: "添加附件",
+    addAttachmentsWithLimit: (limit) => `添加附件（单文件最大 ${limit}）`,
+    uploadFileSizeExceeded: (filename, limit) =>
+      `${filename} 超过单文件最大上传限制 ${limit}。`,
     mode: "模式",
     flashMode: "闪速",
     flashModeDescription: "快速且高效的完成任务，但可能不够精准",
@@ -248,7 +256,7 @@ export const zhCN: Translations = {
 
   // Workspace
   workspace: {
-    githubTooltip: "访问 DeerFlow 的 Github 仓库",
+    githubTooltip: "访问项目源码仓库",
     settingsAndMore: "设置和更多",
     logout: "退出登录",
   },
@@ -257,6 +265,9 @@ export const zhCN: Translations = {
   conversation: {
     noMessages: "还没有消息",
     startConversation: "开始新的对话以查看消息",
+    threadNotFound: "对话不存在",
+    threadNotFoundDescription: "这个对话可能已被删除，或当前已无法访问。",
+    startNewConversation: "开始新对话",
   },
 
   // Chats
@@ -266,7 +277,7 @@ export const zhCN: Translations = {
 
   // Page titles (document title)
   pages: {
-    appName: "DeerFlow",
+    appName: "炎黄早期中华文明大模型",
     chats: "对话",
     newChat: "新对话",
     untitled: "未命名",
@@ -291,7 +302,7 @@ export const zhCN: Translations = {
     writeFile: "写入文件",
     clickToViewContent: "点击查看文件内容",
     writeTodos: "更新 To-do 列表",
-    skillInstallTooltip: "安装技能并使其可在 DeerFlow 中使用",
+    skillInstallTooltip: "安装技能并使其可在炎黄早期中华文明大模型中使用",
   },
 
   uploads: {
@@ -340,7 +351,8 @@ export const zhCN: Translations = {
     noResults: "未找到结果。",
     actions: "操作",
     keyboardShortcuts: "键盘快捷键",
-    keyboardShortcutsDescription: "使用键盘快捷键更快地操作 DeerFlow。",
+    keyboardShortcutsDescription:
+      "使用键盘快捷键更快地操作炎黄早期中华文明大模型。",
     openCommandPalette: "打开命令面板",
     toggleSidebar: "切换侧边栏",
   },
@@ -348,7 +360,7 @@ export const zhCN: Translations = {
   // Settings
   settings: {
     title: "设置",
-    description: "根据你的偏好调整 DeerFlow 的界面和行为。",
+    description: "根据你的偏好调整炎黄早期中华文明大模型的界面和行为。",
     sections: {
       appearance: "外观",
       memory: "记忆",
@@ -360,7 +372,7 @@ export const zhCN: Translations = {
     memory: {
       title: "记忆",
       description:
-        "DeerFlow 会在后台不断从你的对话中自动学习。这些记忆能帮助 DeerFlow 更好地理解你，并提供更个性化的体验。",
+        "炎黄早期中华文明大模型会在后台不断从你的对话中自动学习。这些记忆能帮助炎黄早期中华文明大模型更好地理解你的研究偏好，并提供更个性化的体验。",
       empty: "暂无可展示的记忆数据。",
       rawJson: "原始 JSON",
       exportButton: "导出记忆",
@@ -456,7 +468,7 @@ export const zhCN: Translations = {
       createSkill: "新建技能",
       emptyTitle: "还没有技能",
       emptyDescription:
-        "将你的 Agent Skill 文件夹放在 DeerFlow 根目录下的 `/skills/custom` 文件夹中。",
+        "将你的 Agent Skill 文件夹放在项目根目录下的 `/skills/custom` 文件夹中。",
       emptyButton: "创建你的第一个技能",
       uploadSkill: "上传技能",
       uploadPending: "上传中...",
@@ -477,12 +489,12 @@ export const zhCN: Translations = {
     notification: {
       title: "通知",
       description:
-        "DeerFlow 只会在窗口不活跃时发送完成通知，特别适合长时间任务：你可以先去做别的事，完成后会收到提醒。",
+        "炎黄早期中华文明大模型只会在窗口不活跃时发送完成通知，特别适合长时间任务：你可以先去做别的事，完成后会收到提醒。",
       requestPermission: "请求通知权限",
       deniedHint:
         "通知权限已被拒绝。可在浏览器的网站设置中重新开启，以接收完成提醒。",
       testButton: "发送测试通知",
-      testTitle: "DeerFlow",
+      testTitle: "炎黄早期中华文明大模型",
       testBody: "这是一条测试通知。",
       notSupported: "当前浏览器不支持通知功能。",
       disableNotification: "关闭通知",

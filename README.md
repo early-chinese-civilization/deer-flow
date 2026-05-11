@@ -557,6 +557,8 @@ Each task gets its own execution environment with a full filesystem view — ski
 
 File identity inside DeerFlow is `oss://...`: that is what gets stored in thread state and checkpoints. The Gateway mints presigned `PUT` URLs for uploads and presigned `GET` URLs for downloads/previews, while sandbox code keeps using `/mnt/user-data/...` paths and never parses `oss://`. Temporary `https://` links only exist at the model boundary.
 
+Workspace files shown from agent-produced `/mnt/user-data/outputs/...` paths resolve through the Gateway's stable workspace content proxy before any presigned URL is needed, so newly surfaced output files can be downloaded while the workspace list reconciles. Gateway-owned `users`, `workspaces`, and `threads` are soft-deleted via `deleted_at`; active repository reads and ownership checks exclude deleted rows.
+
 With `AioSandboxProvider`, shell execution runs inside isolated containers. With `LocalSandboxProvider`, file tools still map to per-thread directories on the host, but host `bash` is disabled by default because it is not a secure isolation boundary. Re-enable host bash only for fully trusted local workflows.
 
 This is the difference between a chatbot with tool access and an agent with an actual execution environment.

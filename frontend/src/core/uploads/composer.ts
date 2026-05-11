@@ -7,22 +7,25 @@ import { uuid } from "../utils/uuid";
 import type { ListFilesResponse } from "./api";
 import { uploadFileImmediately } from "./api";
 import { addUploadedFilesToList } from "./cache";
-import { hasBlockingAttachmentUploads } from "./composer-core";
+import {
+  hasBlockingAttachmentUploads,
+  resolveDraftComposerWorkspaceId,
+  type DraftComposerWorkspace,
+} from "./composer-core";
 
 export function useComposerAttachmentUploads(options: {
+  draftKey?: string | null;
   persistedWorkspaceId?: string | null;
 }) {
-  const { persistedWorkspaceId = null } = options;
+  const { draftKey = null, persistedWorkspaceId = null } = options;
   const attachments = usePromptInputAttachments();
   const queryClient = useQueryClient();
-  const [draftWorkspaceId, setDraftWorkspaceId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!persistedWorkspaceId) {
-      return;
-    }
-    setDraftWorkspaceId(persistedWorkspaceId);
-  }, [persistedWorkspaceId]);
+  const [draftWorkspace, setDraftWorkspace] =
+    useState<DraftComposerWorkspace | null>(null);
+  const currentDraftWorkspaceId = resolveDraftComposerWorkspaceId(
+    draftWorkspace,
+    draftKey,
+  );
 
   useEffect(() => {
     const pendingAttachments = attachments.files.filter(
@@ -33,10 +36,13 @@ export function useComposerAttachmentUploads(options: {
       return;
     }
 
-    let targetWorkspaceId = persistedWorkspaceId ?? draftWorkspaceId;
-    if (!targetWorkspaceId) {
+    let targetWorkspaceId = persistedWorkspaceId ?? currentDraftWorkspaceId;
+    if (!targetWorkspaceId && draftKey) {
       targetWorkspaceId = uuid();
-      setDraftWorkspaceId(targetWorkspaceId);
+      setDraftWorkspace({ draftKey, workspaceId: targetWorkspaceId });
+    }
+    if (!targetWorkspaceId) {
+      return;
     }
 
     for (const attachment of pendingAttachments) {
@@ -71,7 +77,13 @@ export function useComposerAttachmentUploads(options: {
           }));
         });
     }
-  }, [attachments, draftWorkspaceId, persistedWorkspaceId, queryClient]);
+  }, [
+    attachments,
+    currentDraftWorkspaceId,
+    draftKey,
+    persistedWorkspaceId,
+    queryClient,
+  ]);
 
   const isUploading = useMemo(
     () =>
@@ -85,7 +97,7 @@ export function useComposerAttachmentUploads(options: {
 
   return {
     attachments: attachments.files,
-    composerWorkspaceId: persistedWorkspaceId ?? draftWorkspaceId,
+    composerWorkspaceId: persistedWorkspaceId ?? currentDraftWorkspaceId,
     hasBlockingUploads: hasBlockingAttachmentUploads(attachments.files),
     isUploading,
   };

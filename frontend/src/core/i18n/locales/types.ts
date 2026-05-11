@@ -6,6 +6,14 @@ export interface Translations {
     localName: string;
   };
 
+  // Brand
+  brand: {
+    fullName: string;
+    shortName: string;
+    mark: string;
+    description: string;
+  };
+
   // Common
   common: {
     home: string;
@@ -68,6 +76,8 @@ export interface Translations {
     placeholder: string;
     createSkillPrompt: string;
     addAttachments: string;
+    addAttachmentsWithLimit: (limit: string) => string;
+    uploadFileSizeExceeded: (filename: string, limit: string) => string;
     mode: string;
     flashMode: string;
     flashModeDescription: string;
@@ -203,6 +213,9 @@ export interface Translations {
   conversation: {
     noMessages: string;
     startConversation: string;
+    threadNotFound: string;
+    threadNotFoundDescription: string;
+    startNewConversation: string;
   };
 
   // Chats

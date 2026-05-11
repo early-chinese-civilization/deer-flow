@@ -1,13 +1,17 @@
 "use client";
 
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
 
 import { uuid } from "@/core/utils/uuid";
 
 import {
+  buildThreadChatRouteKey,
   promoteThreadChatState,
   resolveThreadChatState,
+  selectThreadChatState,
+  type PromotedThreadChatState,
+  type ThreadChatState,
 } from "./thread-chat-state";
 
 export function useThreadChat(options?: {
@@ -18,23 +22,47 @@ export function useThreadChat(options?: {
   const searchParams = useSearchParams();
   const draftAgentName = options?.draftAgentName ?? searchParams.get("agent");
   const draftResetKey = options?.draftResetKey ?? searchParams.get("draft");
-  const [threadState, setThreadState] = useState(() =>
-    resolveThreadChatState(threadIdFromPath, uuid),
+  const routeKey = buildThreadChatRouteKey({
+    threadIdFromPath,
+    draftAgentName,
+    draftResetKey,
+  });
+  const routeStatesRef = useRef(new Map<string, ThreadChatState>());
+  const routeState = (() => {
+    const existing = routeStatesRef.current.get(routeKey);
+    if (existing) {
+      return existing;
+    }
+
+    const nextState = resolveThreadChatState(threadIdFromPath, uuid);
+    routeStatesRef.current.set(routeKey, nextState);
+    return nextState;
+  })();
+  const [promoted, setPromoted] = useState<PromotedThreadChatState | null>(
+    null,
   );
+  const threadState = selectThreadChatState({
+    routeKey,
+    routeState,
+    promoted,
+  });
 
   const commitThreadId = (nextThreadId: string) => {
-    setThreadState(promoteThreadChatState(nextThreadId));
+    setPromoted({
+      routeKey,
+      state: promoteThreadChatState(nextThreadId),
+    });
   };
 
-  useEffect(() => {
-    setThreadState(resolveThreadChatState(threadIdFromPath, uuid));
-  }, [draftAgentName, draftResetKey, threadIdFromPath]);
   const isMock = searchParams.get("mock") === "true";
   return {
     threadId: threadState.threadId,
     isNewThread: threadState.isNewThread,
     setIsNewThread: (value: boolean) =>
-      setThreadState((current) => ({ ...current, isNewThread: value })),
+      setPromoted({
+        routeKey,
+        state: { ...threadState, isNewThread: value },
+      }),
     commitThreadId,
     isMock,
   };

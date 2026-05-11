@@ -172,7 +172,11 @@ export function checkCodeFile(
 
 export function getFileExtensionDisplayName(filepath: string) {
   const fileName = getFileName(filepath);
-  const extension = fileName.split(".").pop()!.toLocaleLowerCase();
+  const dotIndex = fileName.lastIndexOf(".");
+  const extension =
+    dotIndex > 0 && dotIndex < fileName.length - 1
+      ? fileName.slice(dotIndex + 1).toLocaleLowerCase()
+      : "";
   switch (extension) {
     case "doc":
     case "docx":
@@ -181,6 +185,8 @@ export function getFileExtensionDisplayName(filepath: string) {
       return "Markdown";
     case "txt":
       return "Text";
+    case "":
+      return "Unknown";
     case "ppt":
     case "pptx":
       return "PowerPoint";

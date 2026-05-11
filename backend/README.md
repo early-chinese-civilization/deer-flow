@@ -141,6 +141,8 @@ FastAPI application providing REST endpoints for frontend integration:
 
 Shared auth-protected routes install the `ecc-auth` auth-session middleware, so dependency-driven refresh can rotate cookies even when the endpoint returns a custom `JSONResponse`, `StreamingResponse`, or file download.
 
+Gateway-owned `users`, `workspaces`, and `threads` rows use `deleted_at` soft deletes. Repository reads and ownership checks only return active rows, while delete flows keep cleanup side effects for Store/checkpoint/local files and mark the business DB records deleted.
+
 ### IM Channels
 
 The IM bridge supports Feishu, Slack, and Telegram. Slack and Telegram still use the final `runs.wait()` response path, while Feishu now streams through `runs.stream(["messages-tuple", "values"])` and updates a single in-thread card in place.

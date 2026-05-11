@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { promoteThreadChatState, resolveThreadChatState } = await import(
-  new URL("./thread-chat-state.ts", import.meta.url).href
-);
+const {
+  buildThreadChatRouteKey,
+  promoteThreadChatState,
+  resolveThreadChatState,
+  selectThreadChatState,
+} = await import(new URL("./thread-chat-state.ts", import.meta.url).href);
 
 void test("resolves /new routes to a fresh draft thread state", () => {
   const state = resolveThreadChatState("new", () => "draft-thread-id");
@@ -32,4 +35,39 @@ void test("promotes a draft chat state to the persisted thread id after first se
     threadId: "persisted-thread-id",
     isNewThread: false,
   });
+});
+
+void test("ignores promoted state from another route when opening a new chat", () => {
+  const selected = selectThreadChatState({
+    routeKey: "new:draft-2",
+    routeState: {
+      threadId: "draft-thread-id",
+      isNewThread: true,
+    },
+    promoted: {
+      routeKey: "persisted:old-thread-id",
+      state: {
+        threadId: "old-thread-id",
+        isNewThread: false,
+      },
+    },
+  });
+
+  assert.deepEqual(selected, {
+    threadId: "draft-thread-id",
+    isNewThread: true,
+  });
+});
+
+void test("uses the draft reset key to isolate new chat route state", () => {
+  assert.notEqual(
+    buildThreadChatRouteKey({
+      threadIdFromPath: "new",
+      draftResetKey: "draft-a",
+    }),
+    buildThreadChatRouteKey({
+      threadIdFromPath: "new",
+      draftResetKey: "draft-b",
+    }),
+  );
 });

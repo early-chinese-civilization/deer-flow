@@ -1,12 +1,22 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { usePathname, useSearchParams } from "next/navigation";
+import { AlertCircleIcon, PlusIcon } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { parseAsString, useQueryStates } from "nuqs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
+import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import { AgentWelcome } from "@/components/workspace/agent-welcome";
 import {
   ChatBox,
@@ -30,17 +40,18 @@ import { useAgent, useAgents } from "@/core/agents";
 import { useI18n } from "@/core/i18n/hooks";
 import { useNotification } from "@/core/notification/hooks";
 import { useThreadSettings } from "@/core/settings";
-import { getThread } from "@/core/threads/api";
+import { getThread, isThreadApiError } from "@/core/threads/api";
 import { useThreadStream } from "@/core/threads/hooks";
+import { useNewThreadDraft } from "@/core/threads/new-thread-draft";
 import { textOfMessage } from "@/core/threads/utils";
 import {
   currentRouteOf,
   getThreadAgentName,
+  pathOfNewThread,
   pathOfThread,
 } from "@/core/threads/utils";
 import { useComposerAttachmentUploads } from "@/core/uploads/composer";
 import { hasBlockingAttachmentUploads } from "@/core/uploads/composer-core";
-import { uuid } from "@/core/utils/uuid";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
 
@@ -65,11 +76,13 @@ export function SharedChatPage({
   initialDraftNonce?: string;
 }) {
   const { t } = useI18n();
+  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const searchParamsString = searchParams.toString();
   const [showFilesPanel, setShowFilesPanel] = useState(true);
   const [hasMounted, setHasMounted] = useState(false);
+  const { draftKey } = useNewThreadDraft();
   const [{ agent: draftAgentQuery, draft: draftNonceQuery }, setDraftQuery] =
     useQueryStates(draftQueryParsers, {
       history: "replace",
@@ -93,9 +106,16 @@ export function SharedChatPage({
 
   const { threadId, isNewThread, commitThreadId, isMock } = useThreadChat({
     draftAgentName,
-    draftResetKey: draftNonce,
+    draftResetKey: draftKey,
   });
-  useSpecificChatMode(draftNonce ?? draftAgentName ?? undefined);
+  useSpecificChatMode(draftKey);
+
+  useEffect(() => {
+    if (!draftNonce) {
+      return;
+    }
+    void setDraftQuery({ draft: null });
+  }, [draftNonce, setDraftQuery]);
 
   const [settings] = useThreadSettings(threadId);
   const { agents, isLoading: agentsLoading } = useAgents();
@@ -107,7 +127,6 @@ export function SharedChatPage({
     enabled: !isNewThread,
     refetchOnWindowFocus: false,
   });
-
   const persistedAgentName = useMemo(() => {
     if (isNewThread || !threadDetailQuery.data) {
       return undefined;
@@ -132,6 +151,7 @@ export function SharedChatPage({
 
   const persistedWorkspaceId = threadDetailQuery.data?.workspace_id ?? null;
   const { composerWorkspaceId } = useComposerAttachmentUploads({
+    draftKey: isNewThread ? threadId : null,
     persistedWorkspaceId,
   });
 
@@ -168,6 +188,11 @@ export function SharedChatPage({
       }
     },
   });
+  const isThreadNotFound =
+    !isNewThread &&
+    !isSendingMessage &&
+    isThreadApiError(threadDetailQuery.error) &&
+    threadDetailQuery.error.status === 404;
 
   useEffect(() => {
     if (isNewThread || !threadDetailQuery.data) {
@@ -189,7 +214,7 @@ export function SharedChatPage({
     (nextAgentName: string | null) => {
       void setDraftQuery({
         agent: nextAgentName,
-        draft: uuid(),
+        draft: null,
       });
     },
     [setDraftQuery],
@@ -232,8 +257,11 @@ export function SharedChatPage({
     await thread.stop();
   }, [thread]);
 
+  const showNewThreadLayout =
+    isNewThread && !isSendingMessage && thread.messages.length === 0;
+
   const agentControl = useMemo(() => {
-    if (isNewThread) {
+    if (showNewThreadLayout) {
       return (
         <DraftAgentControl
           agentName={draftAgentName}
@@ -261,12 +289,12 @@ export function SharedChatPage({
     draftAgentName,
     effectiveAgentName,
     handleDraftAgentChange,
-    isNewThread,
+    showNewThreadLayout,
     thread.isLoading,
     threadDetailQuery.isPending,
   ]);
 
-  const inputHeader = isNewThread ? (
+  const inputHeader = showNewThreadLayout ? (
     draftAgentName ? (
       <AgentWelcome agent={agent} agentName={draftAgentName} />
     ) : (
@@ -279,6 +307,30 @@ export function SharedChatPage({
     isSendingMessage ||
     (!isNewThread && !threadDetailQuery.isSuccess);
 
+  if (isThreadNotFound) {
+    return (
+      <div className="flex size-full items-center justify-center p-6">
+        <Empty className="border-0">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <AlertCircleIcon />
+            </EmptyMedia>
+            <EmptyTitle>{t.conversation.threadNotFound}</EmptyTitle>
+            <EmptyDescription>
+              {t.conversation.threadNotFoundDescription}
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button onClick={() => router.replace(pathOfNewThread())}>
+              <PlusIcon />
+              {t.conversation.startNewConversation}
+            </Button>
+          </EmptyContent>
+        </Empty>
+      </div>
+    );
+  }
+
   return (
     <ThreadContext.Provider
       value={{ thread, workspaceId: persistedWorkspaceId, isMock }}
@@ -290,7 +342,7 @@ export function SharedChatPage({
               <header
                 className={cn(
                   "absolute top-0 right-0 left-0 z-30 flex h-12 shrink-0 items-center px-4",
-                  isNewThread
+                  showNewThreadLayout
                     ? "bg-background/0 backdrop-blur-none"
                     : "bg-background/80 shadow-xs backdrop-blur",
                 )}
@@ -299,7 +351,7 @@ export function SharedChatPage({
                   <ThreadTitle
                     threadId={threadId}
                     thread={thread}
-                    isNewThread={isNewThread}
+                    isNewThread={showNewThreadLayout}
                   />
                 </div>
                 <div className="flex items-center gap-2">
@@ -314,7 +366,7 @@ export function SharedChatPage({
               <main className="flex min-h-0 max-w-full grow flex-col">
                 <div className="flex size-full justify-center">
                   <MessageList
-                    className={cn("size-full", !isNewThread && "pt-10")}
+                    className={cn("size-full", !showNewThreadLayout && "pt-10")}
                     threadId={threadId}
                     thread={thread}
                   />
@@ -323,8 +375,8 @@ export function SharedChatPage({
                   <div
                     className={cn(
                       "relative w-full",
-                      isNewThread && "-translate-y-[calc(50vh-96px)]",
-                      isNewThread
+                      showNewThreadLayout && "-translate-y-[calc(50vh-96px)]",
+                      showNewThreadLayout
                         ? "max-w-(--container-width-sm)"
                         : "max-w-(--container-width-md)",
                     )}
@@ -344,9 +396,9 @@ export function SharedChatPage({
                     <InputBox
                       key={threadId}
                       className={cn("bg-background/5 w-full -translate-y-4")}
-                      isNewThread={isNewThread}
+                      isNewThread={showNewThreadLayout}
                       threadId={threadId}
-                      autoFocus={isNewThread}
+                      autoFocus={showNewThreadLayout}
                       status={
                         thread.error
                           ? "error"

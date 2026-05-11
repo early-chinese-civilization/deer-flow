@@ -104,3 +104,20 @@ def test_get_skills_prompt_section_uses_runtime_context(monkeypatch):
     assert "/mnt/skills/sql-review/SKILL.md" in section
     assert "api-design" in section
     assert "skill_load" in section
+
+
+def test_apply_prompt_template_repeats_identity_rule_in_final_reminders(monkeypatch):
+    monkeypatch.setattr(prompt_module, "get_config", lambda: {"context": {}})
+    monkeypatch.setattr(prompt_module, "get_deferred_tools_prompt_section", lambda: "")
+    monkeypatch.setattr(prompt_module, "_build_acp_section", lambda: "")
+    monkeypatch.setattr(prompt_module, "_build_custom_mounts_section", lambda: "")
+    monkeypatch.setattr(prompt_module, "_get_memory_context", lambda agent_name=None, runtime_agent_context=None: "")
+    monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None, runtime_agent_context=None: "")
+
+    prompt = prompt_module.apply_prompt_template(agent_name="default")
+    reminders_index = prompt.index("<critical_reminders>")
+    identity_index = prompt.index("Identity questions")
+
+    assert identity_index > reminders_index
+    assert "炎黄早期中华文明大模型" in prompt[identity_index:]
+    assert "Use the same language as the user" in prompt[identity_index:]

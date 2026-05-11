@@ -2,7 +2,11 @@
 
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/core/i18n/hooks";
-import { resetAttachmentForRetry } from "@/core/uploads/composer-core";
+import {
+  MAX_COMPOSER_UPLOAD_FILE_SIZE_LABEL,
+  filterComposerUploadFilesBySizeLimit,
+  resetAttachmentForRetry,
+} from "@/core/uploads/composer-core";
 import {
   Command,
   CommandEmpty,
@@ -53,6 +57,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { nanoid } from "nanoid";
+import { toast } from "sonner";
 import {
   type ChangeEvent,
   type ChangeEventHandler,
@@ -153,6 +158,7 @@ const useOptionalProviderAttachments = () =>
 
 export type PromptInputProviderProps = PropsWithChildren<{
   initialInput?: string;
+  maxFileSize?: number;
 }>;
 
 /**
@@ -161,8 +167,10 @@ export type PromptInputProviderProps = PropsWithChildren<{
  */
 export function PromptInputProvider({
   initialInput: initialTextInput = "",
+  maxFileSize,
   children,
 }: PromptInputProviderProps) {
+  const { t } = useI18n();
   // ----- textInput state
   const [textInput, setTextInput] = useState(initialTextInput);
   const clearInput = useCallback(() => setTextInput(""), []);
@@ -174,28 +182,48 @@ export function PromptInputProvider({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const openRef = useRef<() => void>(() => {});
 
-  const add = useCallback((files: File[] | FileList) => {
-    const incoming = Array.from(files);
-    if (incoming.length === 0) {
-      return;
-    }
+  const add = useCallback(
+    (files: File[] | FileList) => {
+      const incoming = Array.from(files);
+      if (incoming.length === 0) {
+        return;
+      }
+      const { accepted, rejected } =
+        maxFileSize != null
+          ? filterComposerUploadFilesBySizeLimit(incoming, maxFileSize)
+          : { accepted: incoming, rejected: [] };
 
-    setAttachmentFiles((prev) =>
-      prev.concat(
-        incoming.map((file) => ({
-          id: nanoid(),
-          type: "file" as const,
-          url: URL.createObjectURL(file),
-          mediaType: file.type,
-          filename: file.name,
-          sourceFile: file,
-          uploadState: "pending" as const,
-          uploadError: null,
-          uploadedFile: null,
-        })),
-      ),
-    );
-  }, []);
+      for (const rejection of rejected) {
+        toast.error(
+          t.inputBox.uploadFileSizeExceeded(
+            rejection.name,
+            MAX_COMPOSER_UPLOAD_FILE_SIZE_LABEL,
+          ),
+        );
+      }
+
+      if (accepted.length === 0) {
+        return;
+      }
+
+      setAttachmentFiles((prev) =>
+        prev.concat(
+          accepted.map((file) => ({
+            id: nanoid(),
+            type: "file" as const,
+            url: URL.createObjectURL(file),
+            mediaType: file.type,
+            filename: file.name,
+            sourceFile: file,
+            uploadState: "pending" as const,
+            uploadError: null,
+            uploadedFile: null,
+          })),
+        ),
+      );
+    },
+    [maxFileSize, t.inputBox],
+  );
 
   const update = useCallback(
     (
@@ -539,6 +567,7 @@ export const PromptInput = ({
   children,
   ...props
 }: PromptInputProps) => {
+  const { t } = useI18n();
   // Try to use a provider controller if present
   const controller = useOptionalPromptInputController();
   const usingProvider = !!controller;
@@ -592,14 +621,31 @@ export const PromptInput = ({
         });
         return;
       }
-      const withinSize = (f: File) =>
-        maxFileSize ? f.size <= maxFileSize : true;
-      const sized = accepted.filter(withinSize);
-      if (accepted.length > 0 && sized.length === 0) {
+      const sized =
+        maxFileSize != null
+          ? filterComposerUploadFilesBySizeLimit(accepted, maxFileSize)
+          : { accepted, rejected: [] };
+      if (sized.rejected.length > 0) {
+        for (const rejection of sized.rejected) {
+          toast.error(
+            t.inputBox.uploadFileSizeExceeded(
+              rejection.name,
+              MAX_COMPOSER_UPLOAD_FILE_SIZE_LABEL,
+            ),
+          );
+        }
         onError?.({
           code: "max_file_size",
-          message: "All files exceed the maximum size.",
+          message:
+            sized.rejected[0] != null
+              ? t.inputBox.uploadFileSizeExceeded(
+                  sized.rejected[0].name,
+                  MAX_COMPOSER_UPLOAD_FILE_SIZE_LABEL,
+                )
+              : "",
         });
+      }
+      if (sized.accepted.length === 0) {
         return;
       }
 
@@ -609,8 +655,10 @@ export const PromptInput = ({
             ? Math.max(0, maxFiles - prev.length)
             : undefined;
         const capped =
-          typeof capacity === "number" ? sized.slice(0, capacity) : sized;
-        if (typeof capacity === "number" && sized.length > capacity) {
+          typeof capacity === "number"
+            ? sized.accepted.slice(0, capacity)
+            : sized.accepted;
+        if (typeof capacity === "number" && sized.accepted.length > capacity) {
           onError?.({
             code: "max_files",
             message: "Too many files. Some were not added.",
@@ -633,7 +681,7 @@ export const PromptInput = ({
         return prev.concat(next);
       });
     },
-    [matchesAccept, maxFiles, maxFileSize, onError],
+    [matchesAccept, maxFiles, maxFileSize, onError, t.inputBox],
   );
 
   const removeLocal = useCallback(

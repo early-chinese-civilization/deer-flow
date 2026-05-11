@@ -163,6 +163,7 @@ export function MessageList({
                   <MessageGroup
                     key={"thinking-group-" + message.id}
                     messages={[message]}
+                    threadId={threadId}
                     isLoading={thread.isLoading}
                   />,
                 );
@@ -201,6 +202,7 @@ export function MessageList({
             <MessageGroup
               key={"group-" + group.id}
               messages={group.messages}
+              threadId={threadId}
               isLoading={thread.isLoading}
             />
           );

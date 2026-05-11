@@ -24,8 +24,7 @@ import {
 import { useDeleteAgent } from "@/core/agents";
 import type { Agent } from "@/core/agents";
 import { useI18n } from "@/core/i18n/hooks";
-import { pathOfNewThread } from "@/core/threads/utils";
-import { uuid } from "@/core/utils/uuid";
+import { useStartNewThread } from "@/core/threads/new-thread-draft";
 
 interface AgentCardProps {
   agent: Agent;
@@ -34,6 +33,7 @@ interface AgentCardProps {
 export function AgentCard({ agent }: AgentCardProps) {
   const { t } = useI18n();
   const router = useRouter();
+  const startNewThread = useStartNewThread();
   const deleteAgent = useDeleteAgent();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const skills = agent.skills ?? [];
@@ -41,12 +41,7 @@ export function AgentCard({ agent }: AgentCardProps) {
   const hiddenSkillCount = skills.length - visibleSkills.length;
 
   function handleChat() {
-    router.push(
-      pathOfNewThread({
-        agentName: agent.name,
-        draftNonce: uuid(),
-      }),
-    );
+    startNewThread({ agentName: agent.name });
   }
 
   function handleEdit() {

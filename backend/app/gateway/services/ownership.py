@@ -52,6 +52,8 @@ async def require_thread_access(
     thread = await ThreadRepository.get_thread_by_id(db, thread_id)
     if thread is None:
         raise _thread_not_found_error(thread_id)
+    if getattr(thread, "deleted_at", None) is not None:
+        raise _thread_not_found_error(thread_id)
     if thread.user_id != user.id:
         raise HTTPException(status_code=403, detail=f"Thread belongs to user {thread.user_id}")
 

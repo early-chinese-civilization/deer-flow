@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -58,6 +58,10 @@ class UserRepository:
     """Persistence helpers for local user records."""
 
     @staticmethod
+    def _active_user_stmt():
+        return select(User).where(User.deleted_at.is_(None))
+
+    @staticmethod
     def _build_user_values(
         *,
         external_auth_id: str,
@@ -100,6 +104,7 @@ class UserRepository:
             email_verified=email_verified,
         )
         update_values = {key: value for key, value in insert_values.items() if key != "external_auth_id"}
+        update_values["deleted_at"] = None
 
         stmt = (
             insert(User)
@@ -117,7 +122,7 @@ class UserRepository:
     @staticmethod
     async def get_user_by_id(db: AsyncSession, user_id: int) -> User | None:
         """Load a user by primary key."""
-        result = await db.execute(select(User).where(User.id == user_id))
+        result = await db.execute(UserRepository._active_user_stmt().where(User.id == user_id))
         return result.scalar_one_or_none()
 
     @staticmethod
@@ -126,12 +131,16 @@ class UserRepository:
         external_auth_id: str,
     ) -> User | None:
         """Load a user by external authentication subject."""
-        result = await db.execute(select(User).where(User.external_auth_id == external_auth_id))
+        result = await db.execute(UserRepository._active_user_stmt().where(User.external_auth_id == external_auth_id))
         return result.scalar_one_or_none()
 
 
 class ThreadRepository:
     """Persistence helpers for canonical thread records."""
+
+    @staticmethod
+    def _active_thread_stmt():
+        return select(Thread).where(Thread.deleted_at.is_(None))
 
     @staticmethod
     async def create_thread(
@@ -170,7 +179,7 @@ class ThreadRepository:
         thread_id: str,
     ) -> Thread | None:
         """Load a thread row by thread_id."""
-        result = await db.execute(select(Thread).where(Thread.thread_id == thread_id))
+        result = await db.execute(ThreadRepository._active_thread_stmt().where(Thread.thread_id == thread_id))
         return result.scalar_one_or_none()
 
     @staticmethod
@@ -184,7 +193,7 @@ class ThreadRepository:
         offset: int = 0,
     ) -> list[Thread]:
         """Search threads owned by a user."""
-        stmt = select(Thread).where(Thread.user_id == user_id)
+        stmt = ThreadRepository._active_thread_stmt().where(Thread.user_id == user_id)
         if status is not None:
             stmt = stmt.where(Thread.status == status)
         if metadata:
@@ -238,7 +247,8 @@ class ThreadRepository:
         commit: bool = True,
     ) -> bool:
         """Delete a thread row."""
-        result = await db.execute(delete(Thread).where(Thread.thread_id == thread_id))
+        now = datetime.now(UTC)
+        result = await db.execute(update(Thread).where(Thread.thread_id == thread_id, Thread.deleted_at.is_(None)).values(deleted_at=now, updated_at=now))
         if commit:
             await db.commit()
         return result.rowcount > 0
@@ -246,6 +256,10 @@ class ThreadRepository:
 
 class WorkspaceRepository:
     """Persistence helpers for workspace records."""
+
+    @staticmethod
+    def _active_workspace_stmt():
+        return select(Workspace).where(Workspace.deleted_at.is_(None))
 
     @staticmethod
     async def create_workspace(
@@ -282,7 +296,7 @@ class WorkspaceRepository:
         workspace_uuid = _as_optional_uuid(workspace_id)
         if workspace_uuid is None:
             return None
-        result = await db.execute(select(Workspace).where(Workspace.id == workspace_uuid))
+        result = await db.execute(WorkspaceRepository._active_workspace_stmt().where(Workspace.id == workspace_uuid))
         return result.scalar_one_or_none()
 
     @staticmethod
@@ -296,7 +310,8 @@ class WorkspaceRepository:
         workspace_uuid = _as_optional_uuid(workspace_id)
         if workspace_uuid is None:
             return False
-        result = await db.execute(delete(Workspace).where(Workspace.id == workspace_uuid))
+        now = datetime.now(UTC)
+        result = await db.execute(update(Workspace).where(Workspace.id == workspace_uuid, Workspace.deleted_at.is_(None)).values(deleted_at=now, updated_at=now))
         if commit:
             await db.commit()
         return result.rowcount > 0

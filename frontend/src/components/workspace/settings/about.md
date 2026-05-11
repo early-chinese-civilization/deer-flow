@@ -1,55 +1,30 @@
-# 🦌 [About DeerFlow 2.0](https://github.com/bytedance/deer-flow)
+# 炎黄早期中华文明大模型
 
-> **From Open Source, Back to Open Source**
-
-**DeerFlow** (**D**eep **E**xploration and **E**fficient **R**esearch **Flow**) is a community-driven SuperAgent harness that researches, codes, and creates.
-With the help of sandboxes, memories, tools and skills, it handles
-different levels of tasks that could take minutes to hours.
+炎黄早期中华文明大模型是一个面向早期中华文明研究与资料处理的智能工作区。它围绕对话、文件、工具、智能体和记忆组织工作流，帮助用户上传材料、发起分析、查看生成文件，并把长任务过程沉淀到会话和工作区中。
 
 ---
 
-## 🌟 GitHub Repository
+## 现有能力
 
-Explore DeerFlow on GitHub: [github.com/bytedance/deer-flow](https://github.com/bytedance/deer-flow)
-
-## 🌐 Official Website
-
-Visit the official website of DeerFlow: [deerflow.tech](https://deerflow.tech/)
-
-## 📧 Support
-
-If you have any questions or need help, please contact us at [support@deerflow.tech](mailto:support@deerflow.tech).
+- **对话与任务执行**：支持新建对话、历史会话恢复和多种执行模式；复杂任务会展示工具调用、子任务进度和待办更新。
+- **文件上传与工作区**：支持上传文档、表格、图片等附件，按会话工作区管理文件，并提供文件列表、搜索、刷新、预览和下载。
+- **Artifacts 成果展示**：集中展示模型生成或写入的文件，支持 Markdown、HTML、SVG、图片、代码等格式预览或查看源码；不支持预览的文件会提示下载。
+- **智能体与技能**：支持创建和编辑自定义智能体，配置名称、描述、SOUL 提示词和可用 Skills；可管理公共/自定义 Skills，安装 .skill 文件，并按需启用。
+- **工具扩展**：可在设置中管理 MCP 工具服务的启用状态，让智能体按配置调用外部工具。
+- **记忆与个性化**：支持查看长期记忆摘要和事实，手动新增、编辑、删除事实，导入导出记忆，或清空全部记忆。
+- **导出与通知**：会话可导出为 Markdown 或 JSON；长任务完成后，可在窗口不活跃时发送浏览器通知。
 
 ---
 
-## 📜 License
+## 适用场景
 
-DeerFlow is proudly open source and distributed under the **MIT License**.
+- 早期中华文明、考古、历史、文博资料的阅读、整理、提取和对比。
+- 上传文献、表格、图片后，生成摘要、研究提纲、分析报告或可下载文件。
+- 围绕专题建立自定义智能体和 Skills，复用稳定的研究流程。
+- 管理同一会话中的输入材料、中间文件、生成结果和历史上下文。
 
 ---
 
-## 🙌 Acknowledgments
+## 使用提示
 
-We extend our heartfelt gratitude to the open source projects and contributors who have made DeerFlow a reality. We truly stand on the shoulders of giants.
-
-### Core Frameworks
-
-- **[LangChain](https://github.com/langchain-ai/langchain)**: A phenomenal framework that powers our LLM interactions and chains.
-- **[LangGraph](https://github.com/langchain-ai/langgraph)**: Enabling sophisticated multi-agent orchestration.
-- **[Next.js](https://nextjs.org/)**: A cutting-edge framework for building web applications.
-
-### UI Libraries
-
-- **[Shadcn](https://ui.shadcn.com/)**: Minimalistic components that power our UI.
-- **[SToneX](https://github.com/stonexer)**: For his invaluable contribution to token-by-token visual effects.
-
-These outstanding projects form the backbone of DeerFlow and exemplify the transformative power of open source collaboration.
-
-### Special Thanks
-
-Finally, we want to express our heartfelt gratitude to the core authors of DeerFlow 1.0 and 2.0:
-
-- **[Daniel Walnut](https://github.com/hetaoBackend/)**
-- **[Henry Li](https://github.com/magiccube/)**
-
-Without their vision, passion and dedication, `DeerFlow` would not be what it is today.
+先在新对话中说明研究目标，必要时上传材料；如果希望得到文件结果，可以明确要求“生成 Markdown 报告”、“整理为表格”、“输出 HTML 页面”或“创建可下载文件”。对长期专题，可在智能体、技能、工具和记忆中持续完善工作流。
