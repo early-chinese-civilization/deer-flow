@@ -17,7 +17,7 @@ def test_clarification_options_accept_json_string_list() -> None:
     assert "  1. Option A" in message
     assert "  2. Option B" in message
     assert "  1. [" not in message
-    assert "  2. \"" not in message
+    assert '  2. "' not in message
 
 
 def test_clarification_options_do_not_split_plain_string() -> None:
