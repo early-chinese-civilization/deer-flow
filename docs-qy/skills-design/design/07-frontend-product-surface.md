@@ -2,7 +2,19 @@
 
 日期：2026-04-29
 
-状态：前端信息架构
+状态：前端信息架构；2026-05-11 主 Skills Gallery 已有三入口实现，本文作为剩余 UX/文案约束
+
+## 2026-05-11 当前代码校准
+
+`frontend/src/components/workspace/skills/skills-gallery.tsx` 当前已经有 System / Community / My Skills 三个入口，并通过 `src/core/skills/display.ts` 使用 `space`、`source_kind`、`viewer_relation`、platform version、install/update state 来派生卡片状态。
+
+因此，下文记录的是早期两技术桶信息架构的历史问题，不再代表主 Skills Gallery。仍需继续关注的是：
+
+1. settings/边角页面是否仍有 public/custom 兼容过滤。
+2. 用户文案是否还把 install/add-to-My-Skills 叫 download。
+3. `viewer_relation="downloaded"` 是否只作为 API legacy alias，被 UI 渲染成“已安装”。
+4. Agent create/edit 是否优先提交 `skill_install_ids` / system IDs，而不是只提交 name。
+5. 更新确认、受影响 Agent、不可用状态和鼠标点击提交流程是否都经过验收。
 
 ## 文档目的
 
@@ -10,13 +22,13 @@
 
 读完后应该能设计 SkillHub、我的 Skills、Skill 详情页和 Agent 绑定区。
 
-## 当前前端问题
+## 历史前端问题与剩余风险
 
-当前 Skills Gallery 已经提供基础操作，但信息架构仍是旧模型：
+早期 Skills Gallery 的旧模型问题是：
 
-1. 只有 public/custom 两个 tab，不足以表达系统、社区、我创建的、我安装的。
+1. 早期 public/custom 两个技术桶不足以表达系统、社区、我创建的、我安装的。主 Skills Gallery 已修正为三入口；其他页面仍需检查。
 2. “Download”不是普通用户心智中的安装。
-3. 发布弹窗告诉用户“版本仍来自 SKILL.md”，与目标产品口径相反。
+3. 早期发布弹窗曾把版本来源描述成包内 metadata，与目标产品口径相反；当前和后续 UI 都必须只展示平台版本。
 4. Badge 展示 package/release，暴露内部实现。
 5. 没有 Skill 详情页、版本历史、更新确认页。
 6. Agent 创建页只显示 Skill 名称列表，用户看不到版本、来源、更新状态。

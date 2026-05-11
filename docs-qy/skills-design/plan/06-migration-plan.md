@@ -2,11 +2,23 @@
 
 日期：2026-04-29
 
-状态：分阶段迁移建议
+状态：历史分阶段迁移建议；2026-05-11 主体对象已落地
+
+## 2026-05-11 当前代码校准
+
+本文件是 2026-04-29 的迁移拆解，不是当前待办清单。当前代码已经有平台版本、不可变 artifact、安装态、Agent install/system binding、Runtime Manifest 和 run-level sandbox bundle。
+
+继续工作时先读：
+
+1. [../design/00-current-code-status.md](../design/00-current-code-status.md)
+2. [../design/04-current-implementation-gap.md](../design/04-current-implementation-gap.md)
+3. [12-user-flow-max-test-implementation-plan.md](12-user-flow-max-test-implementation-plan.md)
+
+不要从“新增 SkillVersion / 新增 SkillInstall / 引入 Runtime Manifest”重新开始。当前剩余重点是修复 `.deer-flow` 存储阻塞、补完整 v2/update max-flow、清理 legacy route/name/copy 文案和补同名来源/失败路径测试。
 
 ## 文档目的
 
-这份文档只描述如何从当前实现迁移到目标模型。它不重复产品流程，不展开边界规则。
+这份文档描述早期如何从旧实现迁移到目标模型。它不重复产品流程，不展开边界规则。
 
 读完后应该能把工作拆成几轮可落地的实现任务。
 
@@ -16,7 +28,7 @@
 
 不要一次性重构全部。当前实现已经有可用骨架，应该按能保留现有功能的顺序推进。
 
-基本策略：
+早期基本策略：
 
 1. 先停止错误版本来源。
 2. 再引入不可变版本快照。
@@ -167,17 +179,15 @@
 
 ## 当前实现辅助下的 MVP 调整
 
-结合代码现状，MVP 可以拆得更现实：
+2026-05-11 的 MVP 调整是：
 
-1. 第一小步不是做完整社区市场，而是先把版本来源从 `SKILL.md` 切到平台。
-2. 第二小步是让上传新内容产生平台版本历史，而不是原地覆盖 custom Skill。
-3. 第三小步是把 public latest 改造成 SkillHub 当前发布版本，并保留 release 历史。
-4. 第四小步是安装态和不可变 Artifact Store。
-5. 第五小步是 Agent 绑定 install，并引入 Runtime Manifest。
-6. 第六小步是按 Manifest 改造 `skill_load` 和 sandbox allowlist。
-7. 第七小步再做系统/社区/我的 Skills UI 分区和“下载”。
+1. 不再把版本来源、SkillVersion、SkillInstall、Agent install binding 或 Runtime Manifest 当成待新增主体。
+2. 继续修复本地/OSS/FUSE-backed `.deer-flow` 上传阻塞，避免 API pending 和 DB transaction/lock 污染。
+3. 继续跑完整最大测试：v1 install/bind/runtime 已有证据；v2 upload/publish、未更新仍 v1、update-install 后 v2 仍待完成。
+4. 继续清理 route/name 文案债：`download` route 是 install，`fork-package` 才是 editable ZIP 下载。
+5. 继续补同名不同来源、System direct binding、legacy `skill_id`/`custom`/name-only fallback 的测试。
 
-这样做的好处：
+这样做的好处仍然成立：
 
 1. 可以保留现有 API 和测试的大部分骨架。
 2. 每一步都有用户可见收益。

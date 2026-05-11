@@ -2,7 +2,19 @@
 
 日期：2026-04-29
 
-状态：文档入口与探索指引
+状态：历史 roadmap + 当前入口指引；2026-05-11 需先读当前代码状态
+
+## 2026-05-11 状态校准
+
+当前代码已经落地 `SkillDefinition`、`SkillVersion`、`SkillInstall`、`skill_releases.skill_version_id`、`agents_skills.skill_install_id`、System Skill direct binding、`runtime_manifests`、manifest-backed `skill_load` / sandbox bundle 和 fork claim 机制。
+
+因此，本文件早期关于 SkillVersion、SkillInstall、Agent 版本绑定和 Runtime Manifest 尚未落地的判断是 2026-04-29 的历史 roadmap，不再是当前代码现实。
+
+当前继续工作时按这个顺序：
+
+1. 读 [../design/00-current-code-status.md](../design/00-current-code-status.md) 确认当前代码事实。
+2. 用 [../design/04-current-implementation-gap.md](../design/04-current-implementation-gap.md) 看剩余缺口。
+3. 用 [12-user-flow-max-test-implementation-plan.md](12-user-flow-max-test-implementation-plan.md) 继续补完整 v2/update max-flow。
 
 ## 这组文档解决什么
 
@@ -22,18 +34,11 @@
 
 版本代表 Skill 内容版本，由平台生成、保存和展示。用户不能通过 Skill 内容里的 `version` 字段改写平台版本。
 
-当前实现已经有 Skills API、`skills` 表、`skill_releases` 表、`agents_skills` 绑定、上传、发布、下载、前端 Gallery 和部分测试。这些是可复用底座。
+当前实现已经有 Skills API、`SkillDefinition`、`SkillVersion`、`SkillInstall`、`SkillRelease`、`AgentSkill` install/system binding、Runtime Manifest、上传、发布、安装、fork package、前端 Gallery 和部分 runtime/e2e 证据。这些是继续收口 v2/update max-flow 的底座。
 
-当前实现最大的结构缺口是：
+2026-04-29 时记录的旧结构缺口中，平台版本、安装态、Agent install binding、System direct binding、Runtime Manifest 和 sandbox bundle 已经有主体实现。仍要继续收口的是 public/custom/name-only 兼容债、前端边角文案、同名来源测试和完整 v2/update 最大验收。
 
-1. 没有不可变 `SkillVersion`。
-2. 没有用户安装态 `SkillInstall`。
-3. Agent 绑定不具备稳定版本语义。
-4. public Skill 混合了承载官方预制与社区发布的语义。
-5. 前端仍暴露 `package version`、`public latest`、`version still comes from SKILL.md` 等内部口径。
-6. 运行时仍把 Skill 可读范围绑定到 `public` 或单个 `user_id` scope，缺少“用户安装别人 Skill 后如何稳定调度指定版本”的解析层。
-
-【关键点】目标架构不应继续靠目录复制或 public latest 跑通 Agent。后续调研与实现应以 Runtime Manifest 和不可变 Artifact Store 为核心：业务层选择安装态，Agent 层消费 Manifest，运行时只读取 Manifest 授权的 SkillVersion artifact。
+【关键点】当前代码已经按 Runtime Manifest 和不可变 Artifact Store 前进。后续重点不是重新设计这些对象，而是修复存储阻塞、补完整 v2/update 最大验收、继续清理 legacy route/name/copy 文案和兼容路径。
 
 【决策入口】调研完成后的目标方案以 [11-runtime-manifest-lead-decision.md](11-runtime-manifest-lead-decision.md) 为准。10 号文档解释关键架构问题，explorer 文档解释外部调研输入，11 号文档负责拍板后续实现口径。
 
@@ -41,6 +46,7 @@
 
 | 文档 | 只回答什么问题 | 适合谁先读 |
 | --- | --- | --- |
+| [../design/00-current-code-status.md](../design/00-current-code-status.md) | 当前代码已经实现什么、哪些历史口径已过时、哪些 max-flow 证据未完成 | 所有人 |
 | [11-runtime-manifest-lead-decision.md](11-runtime-manifest-lead-decision.md) | 调研后的目标方案决策总纲：哪些问题已拍板、实现必须服从哪些不变量 | 后端、调度、sandbox、前端、测试、接手 agent |
 | [12-user-flow-max-test-implementation-plan.md](12-user-flow-max-test-implementation-plan.md) | 如何把用户交互流程当成最大测试，按安装、绑定、运行、手动更新拆具体实现任务 | 产品、设计、前端、后端、runtime、sandbox、测试 |
 | [06-migration-plan.md](06-migration-plan.md) | 如何从当前实现分阶段迁移到目标模型 | 后端、前端、项目推进 |
@@ -59,30 +65,33 @@
 
 产品对齐：
 
-1. [../design/01-product-contract.md](../design/01-product-contract.md)
-2. [../user-test/01-skills-user-flow-and-acceptance.md](../user-test/01-skills-user-flow-and-acceptance.md)
-3. [12-user-flow-max-test-implementation-plan.md](12-user-flow-max-test-implementation-plan.md)
-4. [../design/03-boundary-rules.md](../design/03-boundary-rules.md)
-5. [08-validation-and-open-questions.md](08-validation-and-open-questions.md)
+1. [../design/00-current-code-status.md](../design/00-current-code-status.md)
+2. [../design/01-product-contract.md](../design/01-product-contract.md)
+3. [../user-test/01-skills-user-flow-and-acceptance.md](../user-test/01-skills-user-flow-and-acceptance.md)
+4. [12-user-flow-max-test-implementation-plan.md](12-user-flow-max-test-implementation-plan.md)
+5. [../design/03-boundary-rules.md](../design/03-boundary-rules.md)
+6. [08-validation-and-open-questions.md](08-validation-and-open-questions.md)
 
 后端探索：
 
-1. [11-runtime-manifest-lead-decision.md](11-runtime-manifest-lead-decision.md)
-2. [12-user-flow-max-test-implementation-plan.md](12-user-flow-max-test-implementation-plan.md)
-3. [../design/04-current-implementation-gap.md](../design/04-current-implementation-gap.md)
-4. [../design/05-target-domain-model.md](../design/05-target-domain-model.md)
-5. [../design/09-agent-skill-runtime-scheduling.md](../design/09-agent-skill-runtime-scheduling.md)
-6. [../design/10-runtime-manifest-and-artifact-store.md](../design/10-runtime-manifest-and-artifact-store.md)
-7. [../explorer/skill-market-runtime-manifest-research.md](../explorer/skill-market-runtime-manifest-research.md)
-8. [06-migration-plan.md](06-migration-plan.md)
-9. [08-validation-and-open-questions.md](08-validation-and-open-questions.md)
+1. [../design/00-current-code-status.md](../design/00-current-code-status.md)
+2. [11-runtime-manifest-lead-decision.md](11-runtime-manifest-lead-decision.md)
+3. [12-user-flow-max-test-implementation-plan.md](12-user-flow-max-test-implementation-plan.md)
+4. [../design/04-current-implementation-gap.md](../design/04-current-implementation-gap.md)
+5. [../design/05-target-domain-model.md](../design/05-target-domain-model.md)
+6. [../design/09-agent-skill-runtime-scheduling.md](../design/09-agent-skill-runtime-scheduling.md)
+7. [../design/10-runtime-manifest-and-artifact-store.md](../design/10-runtime-manifest-and-artifact-store.md)
+8. [../explorer/skill-market-runtime-manifest-research.md](../explorer/skill-market-runtime-manifest-research.md)
+9. [06-migration-plan.md](06-migration-plan.md)
+10. [08-validation-and-open-questions.md](08-validation-and-open-questions.md)
 
 前端探索：
 
-1. [../design/01-product-contract.md](../design/01-product-contract.md)
-2. [../user-test/01-skills-user-flow-and-acceptance.md](../user-test/01-skills-user-flow-and-acceptance.md)
-3. [12-user-flow-max-test-implementation-plan.md](12-user-flow-max-test-implementation-plan.md)
-4. [../design/07-frontend-product-surface.md](../design/07-frontend-product-surface.md)
+1. [../design/00-current-code-status.md](../design/00-current-code-status.md)
+2. [../design/01-product-contract.md](../design/01-product-contract.md)
+3. [../user-test/01-skills-user-flow-and-acceptance.md](../user-test/01-skills-user-flow-and-acceptance.md)
+4. [12-user-flow-max-test-implementation-plan.md](12-user-flow-max-test-implementation-plan.md)
+5. [../design/07-frontend-product-surface.md](../design/07-frontend-product-surface.md)
 
 测试改造：
 
