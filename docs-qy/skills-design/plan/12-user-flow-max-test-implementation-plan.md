@@ -2,7 +2,22 @@
 
 日期：2026-04-30
 
-状态：实现拆解计划
+状态：实现拆解计划；2026-05-11 代码已推进到 runtime manifest 主线，完整 v2/update max-flow 尚未通过
+
+## 2026-05-11 当前进度
+
+本计划的阶段 1-5 已经有主体实现：
+
+- `SkillDefinition` / `SkillVersion` / `SkillInstall` / `SkillRelease` 已存在。
+- Agent 非系统 Skill 绑定已走 `skill_install_id`，System Skill 走 direct system version binding。
+- Runtime Manifest 已持久化，并作为 prompt / `skill_load` / sandbox bundle 的共同授权真相。
+- 前端 Skills Gallery 已有 System / Community / My Skills 三个入口，安装、可编辑 ZIP 下载、发布、更新预览/确认等主操作已有实现。
+
+已通过的实际验收：v1 upload/publish -> v1 install -> Agent bind -> manifest-backed `skill_load` -> `SKILL_RUNTIME_OK_V1`。
+
+尚未通过的实际验收：v2 upload/publish -> installer 不更新仍运行 v1 -> update-install -> runtime v2。阻塞原因是本地 `backend/.deer-flow` 挂载导致 v2 上传卡住和 DB 事务等待，不是本计划的领域对象尚未设计。
+
+继续执行时，不要从阶段 1 重新做表设计；应从存储阻塞、v2/update max-flow、legacy 文案/兼容路径清理和测试补齐开始。
 
 ## 文档目的
 
@@ -56,14 +71,14 @@
 
 | 层 | 当前落点 | 当前能力 | 必须补齐 |
 | --- | --- | --- | --- |
-| 数据模型 | `skills`、`skill_releases`、`agents_skills` | 上传、发布、下载、Agent 绑定已有骨架 | `SkillVersion`、`SkillInstall`、Manifest/run 审计；`AgentSkillBinding` 绑定 install |
-| Skills API | `upload_skills`、`publish_skill`、`download_skill` | 能上传、发布 public latest、复制 public 到用户目录 | 上传生成平台版本；发布指定版本；安装创建安装态；更新切换安装态 |
-| Agent API | Agent 创建/编辑接收 skill name | 能把当前用户 Skill 行绑定给 Agent | 改为绑定安装态，返回 Skill 来源、版本、更新状态 |
-| Runtime 注入 | `get_runtime_agent_bundle` 生成 `file_path` / `virtual_path` | 能把绑定 Skill 注入 prompt 和 tool runtime | 改为 Runtime Resolver 生成 Manifest，prompt/tool/sandbox 共用同一份 Manifest |
-| skill_load | 当前按 runtime skill root map 解析 `/mnt/skills` | 能限制读取 Skills 虚拟路径 | 改为只读 Manifest 授权的 SkillVersion artifact |
-| sandbox scope | 当前按 public 或单 user scope 推导 | 有基础安全边界 | 改为 run-level readonly bundle 或 Manifest allowlist，禁止 fallback |
-| 前端 Skills | `SkillsGallery` public/custom tab | 有上传、下载、发布入口 | 拆成 SkillHub / 我的 Skills / 更新确认；文案从下载改安装 |
-| 前端 Agent | Agent skills 是字符串列表 | 能选择 Skill 名称 | 展示并提交安装态；展示当前版本和不可用状态 |
+| 数据模型 | `skills`、`skill_definitions`、`skill_versions`、`skill_installs`、`skill_releases`、`agents_skills`、`runtime_manifests` | 平台版本、安装态、release、Agent install/system binding、Manifest 已有主体实现 | 修复存储阻塞；继续清理 legacy `skill_id`/`custom`/name-only 路径 |
+| Skills API | `upload_skills`、`publish_skill`、`download_skill`、`fork-package`、`update-install` | 上传生成版本；发布指定版本；兼容 download route 实际安装；更新安装态；fork claim package | 继续压低 route name/文案债；补 v2/update max-flow |
+| Agent API | Agent 创建/编辑接收 `skill_install_ids`、system IDs，也兼容 skill name | 能返回 `skill_metadata` 和版本/来源/可用状态 | 避免新 UI 只提交 name；继续覆盖同名不同来源 |
+| Runtime 注入 | `get_runtime_agent_bundle` 生成 Runtime Manifest | prompt/tool/sandbox 共用 manifest entry | 完整验证 v1/v2/update 和失败 hard-fail |
+| skill_load | manifest-backed virtual path allowlist | 能按 artifact/hash 校验读取 Skill | 持续禁止 latest/name/filesystem scan fallback |
+| sandbox scope | run-level readonly bundle | 由 manifest hash 生成 `.runtime-skill-bundles` | 修复/替换慢挂载后补 e2e |
+| 前端 Skills | `SkillsGallery` System / Community / My Skills | 有上传、安装、发布、下载 editable ZIP、更新确认 | Settings page 和边角文案继续同步；完整 update UX 验收 |
+| 前端 Agent | Agent metadata 支持 Skill 来源/版本 | 新请求可提交 install/system IDs | 同名来源选择、不可用状态和 click/keyboard 提交流程继续补测试 |
 | 测试 | publish/download/upload/runtime 有局部测试 | 能覆盖旧模型安全和回滚 | 以最大测试重写版本、安装、绑定、Manifest、skill_load、更新验收 |
 
 ## 实现阶段

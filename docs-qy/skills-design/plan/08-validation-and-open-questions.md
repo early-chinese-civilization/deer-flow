@@ -2,7 +2,23 @@
 
 日期：2026-04-29
 
-状态：测试口径与待确认问题
+状态：测试口径与待确认问题；2026-05-11 已关闭部分历史问题
+
+## 2026-05-11 校准
+
+已由当前代码关闭的问题：
+
+1. Runtime Manifest：已持久化完整 JSON 和 `manifest_hash`。
+2. sandbox 方案：当前采用 run-level readonly bundle。
+3. 官方/System Skill：不创建 per-user install，Agent 可直接绑定具体 system SkillVersion。
+4. 平台版本：不来自包内 version；包内 version 只作为 `source_package_version`。
+5. Agent 主绑定：非系统 Skill 通过 `skill_install_id`，System Skill 通过 system version binding。
+
+仍不能标记完成的问题：
+
+1. v2/update/runtime-v2 的完整 max-flow 尚未通过，原因是本地 `.deer-flow` 挂载阻塞 v2 上传。
+2. follow-install-current 是否长期满足产品心智，仍需业务确认；如果要 per-Agent pin，需要新模型。
+3. settings/边角页面和所有文案仍需继续查 `download`/`downloaded`/package version 等历史债。
 
 ## 文档目的
 
@@ -122,13 +138,13 @@
 2. 发布到 SkillHub 是否需要人工审核，还是先自动校验后立即发布。
 3. 我的空间中是否允许两个不同来源的同名 Skill 并存。
 4. 更新已安装 Skill 后，是否需要提供立即回滚能力作为 MVP。
-5. 官方 Skill 是否默认自动安装给所有用户，还是只在 SkillHub 推荐。
+5. 官方 Skill 是否默认自动安装给所有用户，还是只在 SkillHub 推荐。当前代码选择“不自动安装，直接作为 System Skill 可绑定/可用”。
 6. Agent 对话页是否要向最终用户展示当前启用的 Skill 名称和版本。
 7. 安装 artifact 物化路径是否按 Skill 名称、install id，还是 version id 组织。
 8. 用户空间是否允许安装两个不同来源但同名的 Skill。
-9. Run 记录是否在 MVP 保存本次使用的 Skill 版本，作为后续审计和问题排查依据。
-10. Runtime Manifest 是 run 前持久化，还是按需生成后随 run record 保存快照。
-11. sandbox 采用多 artifact root allowlist，还是 run-level readonly bundle。
+9. Run 记录是否在 MVP 保存本次使用的 Skill 版本，作为后续审计和问题排查依据。当前代码已保存 Runtime Manifest JSON/hash。
+10. Runtime Manifest 是 run 前持久化，还是按需生成后随 run record 保存快照。当前代码已选择 run 前解析并持久化。
+11. sandbox 采用多 artifact root allowlist，还是 run-level readonly bundle。当前代码已选择 run-level readonly bundle。
 
 ## 验证优先级
 

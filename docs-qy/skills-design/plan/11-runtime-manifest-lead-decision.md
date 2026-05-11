@@ -2,7 +2,20 @@
 
 日期：2026-04-30
 
-状态：目标方案决策总纲
+状态：目标方案决策总纲；2026-05-11 主体已落地，字段名以代码为准
+
+## 2026-05-11 当前代码校准
+
+当前代码已实现本文件的主线：`SkillDefinition`、`SkillVersion`、`SkillRelease`、`SkillInstall`、Agent install/system binding、Runtime Manifest、manifest-backed `skill_load` 和 run-level sandbox bundle。
+
+字段名和早期目标字段不同的地方，以代码为准：
+
+- `SkillDefinition` 当前使用 `source_type` / `source_identifier` / `owner_user_id`，不是 `owner_type` / `source_namespace`。
+- System Skill 当前不创建 per-user `SkillInstall`；Agent 通过 `system_skill_definition_id` / `system_skill_version_id` 绑定具体系统版本。
+- 当前 Skills API `viewer_relation` 仍使用 `downloaded` 字面值表达 installed-from-Community personal row；用户文案必须渲染为“已安装”，不是下载。
+- 当前 sandbox 方案已经选择 run-level readonly bundle。
+
+仍未完成的是完整 v2/update/runtime-v2 max-flow，且被本地 `.deer-flow` 存储挂载阻塞。
 
 ## 文档目的
 
@@ -40,7 +53,7 @@ SkillDefinition
 2. `SkillVersion` 是不可变内容快照。
 3. `SkillRelease` 是 SkillHub 公开发布事件。
 4. `SkillInstall` 是用户当前选择使用哪个版本。
-5. `AgentSkillBinding` 绑定用户自己的安装态，不绑定 public Skill、skill name 或 latest release。
+5. `AgentSkillBinding` 绑定用户自己的安装态；System Skill 例外，绑定具体 system SkillVersion，不绑定 public latest、skill name 或 latest release。
 6. `Runtime Manifest` 是一次 Agent run 的唯一运行时授权真相。
 7. prompt、`skill_load`、sandbox 都只能消费同一份 Runtime Manifest。
 8. Artifact Store 保存不可变内容，目录物化只是运行时实现，不是产品身份。
@@ -54,7 +67,7 @@ SkillDefinition
 | 问题 | 决策 |
 | --- | --- |
 | 平台版本是否来自 `SKILL.md` | 否。平台版本由 DeerFlow 生成，包内版本只保存为 source metadata。 |
-| Agent 是否可以绑定 public latest | 否。Agent 绑定用户安装态。 |
+| Agent 是否可以绑定 public latest | 否。非系统 Skill 绑定用户安装态；System Skill 绑定具体 system SkillVersion。 |
 | 发布新版是否自动影响已安装用户 | 否。用户确认更新前 `SkillInstall.current_version_id` 不变。 |
 | Runtime Manifest 是否只是 prompt 展示 DTO | 否。它是 prompt、tool、sandbox 的共同授权契约。 |
 | Artifact 是否允许原地替换 | 否。`SkillVersion` 指向不可变 artifact。 |

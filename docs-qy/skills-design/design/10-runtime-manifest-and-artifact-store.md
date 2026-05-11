@@ -2,7 +2,25 @@
 
 日期：2026-04-30
 
-状态：关键目标架构与调研入口
+状态：关键目标架构；2026-05-11 已部分落地，当前实现见 00
+
+## 2026-05-11 当前实现校准
+
+本文件的架构方向已经被当前代码大体采用。继续读前先看 [00-current-code-status.md](00-current-code-status.md) 和 [09-agent-skill-runtime-scheduling.md](09-agent-skill-runtime-scheduling.md)。
+
+已由代码确认的点：
+
+1. Runtime Manifest 持久化为 `runtime_manifests.manifest_json` 和 `manifest_hash`。
+2. 非系统 Skill 通过 `AgentSkill.skill_install_id -> SkillInstall.current_version_id -> SkillVersion.artifact_uri` 解析。
+3. System Skill 通过 `AgentSkill.system_skill_version_id -> SkillVersion.artifact_uri` 直接解析，不创建 per-user install。
+4. sandbox 当前采用 run-level readonly bundle，而不是 public/user scope 推导。
+5. Manifest entry 已包含 `skill_version_id`、`artifact_uri`、`content_hash`、`file_manifest_hash`、`source_kind`、`binding_kind` 等运行时字段。
+
+尚未完整验收的点：
+
+1. v2 上传/发布、未更新仍运行 v1、手动更新后运行 v2 的完整浏览器 max-flow。
+2. 本地 `backend/.deer-flow` 挂载阻塞下的上传/事务失败处理。
+3. follow-install-current 是否作为长期产品语义，还是升级到 Agent-level version pin。
 
 ## 文档目的
 
@@ -169,7 +187,7 @@ Artifact Store
 
 【关键点】无论采用哪种实现，授权单位都必须是 Manifest 中的 SkillVersion artifact，而不是 public 目录或用户目录。
 
-## Agent 更新语义：待确认设计点
+## Agent 更新语义：当前实现与待确认点
 
 这里需要重新讨论，不能只用“Runtime Manifest 是快照”来回答 Agent 是否会随 Skill 更新。
 
@@ -187,7 +205,7 @@ AgentSkillBinding -> SkillInstall -> current_version_id
 
 因此，Runtime Manifest 解决的是“每次 run 的 prompt / `skill_load` / sandbox 授权一致且可审计”，但它不等于“Agent 绑定永远固定在 v1”。Agent 是否随 install 更新，是 AgentSkillBinding 层的产品语义。
 
-需要确认两个可选方向：
+当前代码已经选择并实现方向 A。方向 B 仍是未来产品选择，不是当前代码事实。
 
 ### 方向 A：Follow install current
 
@@ -234,12 +252,12 @@ AgentSkillBinding -> pinned_skill_version_id
 
 这不是 Runtime Manifest 的冗余问题。Manifest 仍然必要，因为它冻结的是“某次 run 实际使用了哪个 SkillVersion”。真正待决的是 Agent binding 应该是可变 install 指针，还是 Agent 级版本 pin。
 
-在设计最终确认前，文档和测试必须区分：
+当前文档和测试必须区分：
 
 1. `publish v2`：不改变安装者 runtime。
 2. `update install to v2`：当前实现会改变绑定该 install 的 Agent 的未来 Manifest。
 3. `existing manifest`：历史快照不被改写。
-4. `agent pinned version`：如果产品选择这个方向，需要新增模型和验收，不应只靠 Manifest 名义宣称已满足。
+4. `agent pinned version`：当前未实现。如果产品选择这个方向，需要新增模型和验收，不应只靠 Manifest 名义宣称已满足。
 
 【关键点】“手动更新”必须明确手动更新的对象：是更新 `SkillInstall` 后所有绑定 Agent 跟随，还是更新某个 Agent 的 pinned version。这个设计需要产品、后端、前端和验收用例一起确认。
 
@@ -279,18 +297,18 @@ skill name 不是稳定身份。
 
 ## 调研 agent 重点问题
 
-后续调研 agent 可以优先围绕这些问题给方案。
+下列问题中，一部分已经由当前代码关闭。未关闭项继续作为设计/实现风险跟踪。
 
-1. Runtime Manifest 应该持久化还是只在 run 开始时生成？
-2. Run record 是否必须保存完整 Manifest，还是只保存 skill version 快照？
-3. Artifact Store 用 content hash 作为主键，还是用 version id 作为主路径？
-4. 多 artifact root allowlist 和 run-level bundle 哪个更适合当前 sandbox？
+1. Runtime Manifest 应该持久化还是只在 run 开始时生成？已关闭：持久化完整 Manifest JSON 和 hash。
+2. Run record 是否必须保存完整 Manifest，还是只保存 skill version 快照？已关闭：MVP 保存完整 Manifest JSON。
+3. Artifact Store 用 content hash 作为主键，还是用 version id 作为主路径？已关闭到当前实现：路径使用 definition id + version number + content hash prefix；hash 仍用于校验和复用。
+4. 多 artifact root allowlist 和 run-level bundle 哪个更适合当前 sandbox？已关闭到当前实现：run-level readonly bundle。
 5. 如何处理两个 Skill 的 virtual name 冲突？
-6. `skill_load` 如何从 virtual path 严格映射到 Manifest artifact？
+6. `skill_load` 如何从 virtual path 严格映射到 Manifest artifact？当前实现已走 manifest-backed virtual path 和 artifact validation，仍需持续回归。
 7. 下架、禁用、安全阻断应该发生在 resolver 前、resolver 中，还是 tool 调用时？
-8. 官方默认 Skill 是否也需要显式 SkillInstall？
+8. 官方默认 Skill 是否也需要显式 SkillInstall？已关闭：System Skill 直接绑定 system definition/version，不需要 per-user install。
 9. 自定义 Agent 是否允许混合 follow install 和 pinned version？
-10. 旧 public/custom 数据如何迁移到 SkillDefinition、SkillVersion、SkillInstall？
+10. 旧 public/custom 数据如何迁移到 SkillDefinition、SkillVersion、SkillInstall？部分已实现；legacy `custom/`、`skill_id` 和 name-only 路径仍需持续清理。
 
 ## 验收标准
 

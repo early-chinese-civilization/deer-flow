@@ -2,7 +2,19 @@
 
 日期：2026-04-29
 
-状态：目标领域模型
+状态：目标领域模型；2026-05-11 主体已落地，字段名以代码为准
+
+## 2026-05-11 当前代码校准
+
+本文件描述目标对象边界。当前代码已经落地这些对象，但字段名和早期建议不完全一致：
+
+- `SkillDefinition` 当前使用 `source_type`、`source_identifier`、`owner_user_id`，不是 `owner_type/source_namespace`。
+- `SkillVersion` 当前使用 `skill_definition_id`、`version_number`、`artifact_uri`、`content_hash`、`file_manifest_hash`、`source_package_version`。
+- `SkillInstall` 当前使用 `skill_definition_id`、`installed_version_id`、`current_version_id`。
+- `AgentSkillBinding` 当前表名仍是 `agents_skills` / ORM `AgentSkill`，非系统绑定用 `skill_install_id`，System Skill 用 `system_skill_definition_id` / `system_skill_version_id`。
+- Runtime Manifest 已持久化到 `runtime_manifests`。
+
+如果本文件的“建议字段”和代码不同，以代码为准；本文件保留领域意图。
 
 ## 文档目的
 
@@ -18,7 +30,7 @@
 2. `SkillVersion`：不可变内容快照。
 3. `SkillRelease`：SkillHub 的公开发布记录。
 4. `SkillInstall`：用户安装态。
-5. `AgentSkillBinding`：Agent 绑定安装态。
+5. `AgentSkillBinding`：Agent 绑定安装态，或绑定具体 System Skill 版本。
 
 这几个对象分别回答：
 
@@ -26,7 +38,7 @@
 2. 这是第几个内容版本？
 3. 哪个版本被公开发布了？
 4. 某个用户安装了哪个版本？
-5. 某个 Agent 使用哪个已安装 Skill？
+5. 某个 Agent 使用哪个已安装 Skill 或哪个系统 Skill 版本？
 
 ## SkillDefinition：Skill 的稳定身份
 
@@ -152,22 +164,25 @@
 推荐方向：
 
 1. Agent 绑定 `skill_install_id`。
-2. 运行时通过 install 的 `current_version_id` 找到 artifact。
-3. 更新 install 的版本前，先查询受影响 Agent。
-4. 对话历史可以记录当次运行用到的 `skill_version_id`，但不作为 MVP 必须。
+2. System Skill 绑定具体 system `SkillVersion`，不要求用户安装态。
+3. 运行时通过 install 的 `current_version_id` 或 system version 找到 artifact。
+4. 更新 install 的版本前，先查询受影响 Agent。
+5. 对话历史可以记录当次运行用到的 `skill_version_id`，但不作为 MVP 必须。
 
 它解决的问题：
 
 1. SkillHub 新版本不会自动影响 Agent。
 2. 用户确认更新后，绑定该安装态的 Agent 后续才变化。
-3. 删除或禁用 Skill 时，可以准确提示受影响 Agent。
+3. System Skill 可直接进入 Agent binding，但 Manifest 中必须记录具体 system version。
+4. 删除或禁用 Skill 时，可以准确提示受影响 Agent。
 
 关键规则：
 
 1. Agent 不直接绑定 SkillHub release。
 2. Agent 不直接绑定别人发布的 SkillDefinition。
-3. Agent 通过用户空间里的安装态获得运行时内容。
-4. 正在进行中的回复不被中途切换版本。
+3. Agent 通过用户空间里的安装态获得非系统运行时内容。
+4. Agent 通过 system binding 获得平台预置 Skill 的具体版本。
+5. 正在进行中的回复不被中途切换版本。
 
 ## 来源关系
 
