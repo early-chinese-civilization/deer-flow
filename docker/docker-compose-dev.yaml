@@ -122,7 +122,7 @@ services:
     command: sh -c "cd backend && uv sync && PYTHONPATH=. uv run uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001 --reload --reload-include='*.yaml .env' > /app/logs/gateway.log 2>&1"
     volumes:
       - ../backend/:/app/backend/
-      - ../backend/.deer-flow:/app/backend/.deer-flow
+      - ${DEER_FLOW_DOCKER_DATA_DIR:-../backend/.deer-flow}:/app/backend/.deer-flow
       # Preserve the .venv built during Docker image build — mounting the full backend/
       # directory above would otherwise shadow it with the (empty) host directory.
       - gateway-venv:/app/backend/.venv
@@ -153,12 +153,12 @@ services:
       - DEER_FLOW_CHECKPOINTER_DATABASE_URL=${DOCKER_CHECKPOINTER_DATABASE_URL:-postgresql://deerflow:123456@host.docker.internal:5432/check_point}
       - DEER_FLOW_HOME=/app/backend/.deer-flow
       - DEER_FLOW_SHARED_FS_ROOT=/app/backend/.deer-flow
-      - DEER_FLOW_HOST_SHARED_FS_ROOT=${DEER_FLOW_ROOT}/backend/.deer-flow
+      - DEER_FLOW_HOST_SHARED_FS_ROOT=${DEER_FLOW_DOCKER_DATA_DIR:-${DEER_FLOW_ROOT}/backend/.deer-flow}
       - DEER_FLOW_CHANNELS_LANGGRAPH_URL=${DEER_FLOW_CHANNELS_LANGGRAPH_URL:-http://langgraph:2024}
       - DEER_FLOW_CHANNELS_GATEWAY_URL=${DEER_FLOW_CHANNELS_GATEWAY_URL:-http://gateway:8001}
       - DEER_FLOW_SANDBOX_PROVISIONER_URL=http://provisioner:8002
-      - DEER_FLOW_HOST_BASE_DIR=${DEER_FLOW_ROOT}/backend/.deer-flow
-      - DEER_FLOW_HOST_SKILLS_PATH=${DEER_FLOW_ROOT}/backend/.deer-flow/skills
+      - DEER_FLOW_HOST_BASE_DIR=${DEER_FLOW_DOCKER_DATA_DIR:-${DEER_FLOW_ROOT}/backend/.deer-flow}
+      - DEER_FLOW_HOST_SKILLS_PATH=${DEER_FLOW_DOCKER_DATA_DIR:-${DEER_FLOW_ROOT}/backend/.deer-flow}/skills
       - DEER_FLOW_SANDBOX_HOST=host.docker.internal
     env_file:
       - ../.env
@@ -183,6 +183,7 @@ services:
     command: sh -c "cd backend && uv sync && uv run langgraph dev --no-browser --allow-blocking --host 0.0.0.0 --port 2024 --n-jobs-per-worker 10 > /app/logs/langgraph.log 2>&1"
     volumes:
       - ../backend/:/app/backend/
+      - ${DEER_FLOW_DOCKER_DATA_DIR:-../backend/.deer-flow}:/app/backend/.deer-flow
       # Preserve the .venv built during Docker image build — mounting the full backend/
       # directory above would otherwise shadow it with the (empty) host directory.
       - langgraph-venv:/app/backend/.venv
@@ -215,10 +216,10 @@ services:
       - DEER_FLOW_CHECKPOINTER_DATABASE_URL=${DOCKER_CHECKPOINTER_DATABASE_URL:-postgresql://deerflow:123456@host.docker.internal:5432/check_point}
       - DEER_FLOW_HOME=/app/backend/.deer-flow
       - DEER_FLOW_SHARED_FS_ROOT=/app/backend/.deer-flow
-      - DEER_FLOW_HOST_SHARED_FS_ROOT=${DEER_FLOW_ROOT}/backend/.deer-flow
+      - DEER_FLOW_HOST_SHARED_FS_ROOT=${DEER_FLOW_DOCKER_DATA_DIR:-${DEER_FLOW_ROOT}/backend/.deer-flow}
       - DEER_FLOW_SANDBOX_PROVISIONER_URL=http://provisioner:8002
-      - DEER_FLOW_HOST_BASE_DIR=${DEER_FLOW_ROOT}/backend/.deer-flow
-      - DEER_FLOW_HOST_SKILLS_PATH=${DEER_FLOW_ROOT}/backend/.deer-flow/skills
+      - DEER_FLOW_HOST_BASE_DIR=${DEER_FLOW_DOCKER_DATA_DIR:-${DEER_FLOW_ROOT}/backend/.deer-flow}
+      - DEER_FLOW_HOST_SKILLS_PATH=${DEER_FLOW_DOCKER_DATA_DIR:-${DEER_FLOW_ROOT}/backend/.deer-flow}/skills
       - DEER_FLOW_SANDBOX_HOST=host.docker.internal
     env_file:
       - ../.env

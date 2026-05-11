@@ -70,6 +70,7 @@ config.yaml.bak
 *.code-workspace
 .env.*
 !.env.example
+backend/.deer-flow-docker/
 node_modules/
 .next/
 dist/

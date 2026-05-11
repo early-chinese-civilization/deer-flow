@@ -56,10 +56,15 @@ tests/
 # Exclude directories not needed in Docker context
 # Frontend build only needs frontend/
 # Backend build only needs backend/
+.trellis/
+.omx/
+docs-qy/
 scripts/
 logs/
 docker/
 skills/
+backend/.deer-flow
+backend/.deer-flow-docker
 frontend/.next
 frontend/node_modules
 backend/.venv
