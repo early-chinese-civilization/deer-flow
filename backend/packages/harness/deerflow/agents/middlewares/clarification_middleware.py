@@ -1,5 +1,6 @@
 """Middleware for intercepting clarification requests and presenting them to the user."""
 
+import json
 import logging
 from collections.abc import Callable
 from typing import override
@@ -46,6 +47,38 @@ class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
         """
         return any("\u4e00" <= char <= "\u9fff" for char in text)
 
+    def _normalize_options(self, options: object) -> list[str]:
+        """Normalize model-provided options before rendering markdown."""
+        if options is None:
+            return []
+
+        if isinstance(options, str):
+            raw_options = options.strip()
+            if not raw_options:
+                return []
+            try:
+                parsed_options = json.loads(raw_options)
+            except json.JSONDecodeError:
+                return [raw_options]
+            if isinstance(parsed_options, list | tuple):
+                return self._normalize_options(parsed_options)
+            if isinstance(parsed_options, str):
+                parsed_option = parsed_options.strip()
+                return [parsed_option] if parsed_option else []
+            return [raw_options]
+
+        if isinstance(options, list | tuple):
+            normalized_options = []
+            for option in options:
+                if option is None:
+                    continue
+                option_text = str(option).strip()
+                if option_text:
+                    normalized_options.append(option_text)
+            return normalized_options
+
+        return []
+
     def _format_clarification_message(self, args: dict) -> str:
         """Format the clarification arguments into a user-friendly message.
 
@@ -58,7 +91,7 @@ class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
         question = args.get("question", "")
         clarification_type = args.get("clarification_type", "missing_info")
         context = args.get("context")
-        options = args.get("options", [])
+        options = self._normalize_options(args.get("options"))
 
         # Type-specific icons
         type_icons = {
