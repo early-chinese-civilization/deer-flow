@@ -42,6 +42,7 @@ import { useNotification } from "@/core/notification/hooks";
 import { useThreadSettings } from "@/core/settings";
 import { getThread, isThreadApiError } from "@/core/threads/api";
 import { useThreadStream } from "@/core/threads/hooks";
+import { useNewThreadDraft } from "@/core/threads/new-thread-draft";
 import { textOfMessage } from "@/core/threads/utils";
 import {
   currentRouteOf,
@@ -51,7 +52,6 @@ import {
 } from "@/core/threads/utils";
 import { useComposerAttachmentUploads } from "@/core/uploads/composer";
 import { hasBlockingAttachmentUploads } from "@/core/uploads/composer-core";
-import { uuid } from "@/core/utils/uuid";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
 
@@ -82,6 +82,7 @@ export function SharedChatPage({
   const searchParamsString = searchParams.toString();
   const [showFilesPanel, setShowFilesPanel] = useState(true);
   const [hasMounted, setHasMounted] = useState(false);
+  const { draftKey } = useNewThreadDraft();
   const [{ agent: draftAgentQuery, draft: draftNonceQuery }, setDraftQuery] =
     useQueryStates(draftQueryParsers, {
       history: "replace",
@@ -105,9 +106,16 @@ export function SharedChatPage({
 
   const { threadId, isNewThread, commitThreadId, isMock } = useThreadChat({
     draftAgentName,
-    draftResetKey: draftNonce,
+    draftResetKey: draftKey,
   });
-  useSpecificChatMode(draftNonce ?? draftAgentName ?? undefined);
+  useSpecificChatMode(draftKey);
+
+  useEffect(() => {
+    if (!draftNonce) {
+      return;
+    }
+    void setDraftQuery({ draft: null });
+  }, [draftNonce, setDraftQuery]);
 
   const [settings] = useThreadSettings(threadId);
   const { agents, isLoading: agentsLoading } = useAgents();
@@ -206,7 +214,7 @@ export function SharedChatPage({
     (nextAgentName: string | null) => {
       void setDraftQuery({
         agent: nextAgentName,
-        draft: uuid(),
+        draft: null,
       });
     },
     [setDraftQuery],
@@ -313,11 +321,7 @@ export function SharedChatPage({
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <Button
-              onClick={() =>
-                router.replace(pathOfNewThread({ draftNonce: uuid() }))
-              }
-            >
+            <Button onClick={() => router.replace(pathOfNewThread())}>
               <PlusIcon />
               {t.conversation.startNewConversation}
             </Button>

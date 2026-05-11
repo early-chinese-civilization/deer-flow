@@ -24,14 +24,13 @@ void test("preserves unrelated draft query params while updating the agent", () 
   );
 });
 
-void test("replaces the draft nonce while preserving unrelated new-chat query params", () => {
+void test("removes the draft nonce while preserving unrelated new-chat query params", () => {
   assert.equal(
     pathOfNewThread({
       currentSearch: "mode=skill&draft=old-draft&agent=old-agent",
       agentName: null,
-      draftNonce: "new-draft",
     }),
-    "/workspace/chats/new?mode=skill&draft=new-draft",
+    "/workspace/chats/new?mode=skill",
   );
 });
 

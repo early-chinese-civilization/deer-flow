@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 
 import { pathOfNewThread, pathOfThread } from "@/core/threads/utils";
-import { uuid } from "@/core/utils/uuid";
 
 type LegacyAgentChatPageProps = {
   params: Promise<{
@@ -45,7 +44,6 @@ export default async function LegacyAgentChatPage({
       pathOfNewThread({
         currentSearch,
         agentName,
-        draftNonce: uuid(),
       }),
     );
   }

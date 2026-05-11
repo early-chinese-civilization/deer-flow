@@ -90,8 +90,6 @@ function buildChatSearchParams(
   options: {
     agentName?: string | null;
     hasExplicitAgentName: boolean;
-    draftNonce?: string | null;
-    hasExplicitDraftNonce: boolean;
   },
 ): URLSearchParams {
   const params = toSearchParams(currentSearch);
@@ -105,17 +103,7 @@ function buildChatSearchParams(
     }
   }
 
-  if (options.hasExplicitDraftNonce) {
-    const draftNonce =
-      typeof options.draftNonce === "string" && options.draftNonce.trim()
-        ? options.draftNonce.trim()
-        : undefined;
-    if (draftNonce) {
-      params.set(CHAT_DRAFT_QUERY_KEY, draftNonce);
-    } else {
-      params.delete(CHAT_DRAFT_QUERY_KEY);
-    }
-  }
+  params.delete(CHAT_DRAFT_QUERY_KEY);
 
   return params;
 }
@@ -153,8 +141,6 @@ export function pathOfThread(
   const searchParams = buildChatSearchParams(options?.currentSearch, {
     agentName: resolvedAgentName ?? null,
     hasExplicitAgentName: true,
-    draftNonce: null,
-    hasExplicitDraftNonce: true,
   });
 
   return buildRoute(`/workspace/chats/${threadId}`, searchParams);
@@ -163,15 +149,11 @@ export function pathOfThread(
 export function pathOfNewThread(options?: {
   currentSearch?: SearchParamsInput;
   agentName?: string | null;
-  draftNonce?: string | null;
 }) {
   const hasExplicitAgentName = options != null && "agentName" in options;
-  const hasExplicitDraftNonce = options != null && "draftNonce" in options;
   const searchParams = buildChatSearchParams(options?.currentSearch, {
     agentName: options?.agentName ?? null,
     hasExplicitAgentName,
-    draftNonce: options?.draftNonce ?? null,
-    hasExplicitDraftNonce,
   });
 
   return buildRoute("/workspace/chats/new", searchParams);

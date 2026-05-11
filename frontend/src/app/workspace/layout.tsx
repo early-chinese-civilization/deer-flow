@@ -8,6 +8,7 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { CommandPalette } from "@/components/workspace/command-palette";
 import { WorkspaceSidebar } from "@/components/workspace/workspace-sidebar";
 import { getLocalSettings, useLocalSettings } from "@/core/settings";
+import { NewThreadDraftProvider } from "@/core/threads/new-thread-draft";
 
 const queryClient = new QueryClient();
 
@@ -32,15 +33,17 @@ export default function WorkspaceLayout({
   );
   return (
     <QueryClientProvider client={queryClient}>
-      <SidebarProvider
-        className="h-screen"
-        open={open}
-        onOpenChange={handleOpenChange}
-      >
-        <WorkspaceSidebar />
-        <SidebarInset className="min-w-0">{children}</SidebarInset>
-      </SidebarProvider>
-      <CommandPalette />
+      <NewThreadDraftProvider>
+        <SidebarProvider
+          className="h-screen"
+          open={open}
+          onOpenChange={handleOpenChange}
+        >
+          <WorkspaceSidebar />
+          <SidebarInset className="min-w-0">{children}</SidebarInset>
+        </SidebarProvider>
+        <CommandPalette />
+      </NewThreadDraftProvider>
       <Toaster position="top-center" />
     </QueryClientProvider>
   );

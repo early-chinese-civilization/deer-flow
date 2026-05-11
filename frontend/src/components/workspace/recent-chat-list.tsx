@@ -64,7 +64,6 @@ import {
   pathOfThread,
   titleOfThread,
 } from "@/core/threads/utils";
-import { uuid } from "@/core/utils/uuid";
 import { env } from "@/env";
 import { isIMEComposing } from "@/lib/ime";
 
@@ -98,7 +97,6 @@ export function RecentChatList() {
         newThreadRoute: pathOfNewThread({
           currentSearch,
           agentName: null,
-          draftNonce: uuid(),
         }),
         getThreadRoute: (thread) =>
           pathOfThread(thread, {

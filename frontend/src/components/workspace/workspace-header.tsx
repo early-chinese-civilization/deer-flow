@@ -2,7 +2,7 @@
 
 import { MessageSquarePlus } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 
 import {
   SidebarMenu,
@@ -12,8 +12,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useI18n } from "@/core/i18n/hooks";
-import { pathOfNewThread } from "@/core/threads/utils";
-import { uuid } from "@/core/utils/uuid";
+import { useStartNewThread } from "@/core/threads/new-thread-draft";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
 
@@ -21,17 +20,10 @@ export function WorkspaceHeader({ className }: { className?: string }) {
   const { t } = useI18n();
   const { state } = useSidebar();
   const pathname = usePathname();
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const startNewThread = useStartNewThread();
 
   function handleNewChat() {
-    router.push(
-      pathOfNewThread({
-        currentSearch: searchParams.toString(),
-        agentName: null,
-        draftNonce: uuid(),
-      }),
-    );
+    startNewThread({ agentName: null });
   }
 
   return (
