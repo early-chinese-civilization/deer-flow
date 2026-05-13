@@ -230,6 +230,26 @@ async def test_assert_gateway_schema_ready_requires_terminal_skill_uuid():
 
 
 @pytest.mark.anyio
+async def test_assert_gateway_schema_ready_requires_terminal_skill_version_skill_id():
+    from app.gateway.db.schema_preflight import assert_gateway_schema_ready
+
+    columns = _complete_columns(*REQUIRED_GATEWAY_TABLES)
+    columns["skill_versions"] = tuple(column for column in columns["skill_versions"] if column != "skill_id")
+    engine = SimpleNamespace(
+        connect=lambda: _FakeConnectContext(
+            _FakeConnection(
+                tables=_all_required_tables(),
+                revisions=["e5f6a7b8c9d0"],
+                columns=columns,
+            )
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="skill_versions.skill_id"):
+        await assert_gateway_schema_ready(engine)
+
+
+@pytest.mark.anyio
 async def test_assert_gateway_schema_ready_requires_identity_map_constraints():
     from app.gateway.db.schema_preflight import assert_gateway_schema_ready
 
@@ -247,6 +267,28 @@ async def test_assert_gateway_schema_ready_requires_identity_map_constraints():
     )
 
     with pytest.raises(RuntimeError, match="skill_identity_migration_map.uq_skill_identity_migration_map_skill_id"):
+        await assert_gateway_schema_ready(engine)
+
+
+@pytest.mark.anyio
+async def test_assert_gateway_schema_ready_requires_composite_skill_constraints():
+    from app.gateway.db.schema_preflight import assert_gateway_schema_ready
+
+    constraints = _complete_constraints()
+    constraints["skill_installations"] = tuple(constraint for constraint in constraints["skill_installations"] if constraint != "fk_skill_installations_skill_version_composite")
+    constraints["skill_releases"] = tuple(constraint for constraint in constraints["skill_releases"] if constraint != "uq_skill_releases_skill_version")
+    engine = SimpleNamespace(
+        connect=lambda: _FakeConnectContext(
+            _FakeConnection(
+                tables=_all_required_tables(),
+                revisions=["e5f6a7b8c9d0"],
+                columns=_complete_columns(*REQUIRED_GATEWAY_TABLES),
+                constraints=constraints,
+            )
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="fk_skill_installations_skill_version_composite"):
         await assert_gateway_schema_ready(engine)
 
 
@@ -277,7 +319,7 @@ async def test_assert_gateway_schema_ready_accepts_terminal_skill_identity_found
         connect=lambda: _FakeConnectContext(
             _FakeConnection(
                 tables=_all_required_tables(),
-                revisions=["8a6f1b2c3d4e"],
+                revisions=["e5f6a7b8c9d0"],
                 columns=_complete_columns(*REQUIRED_GATEWAY_TABLES),
             )
         )

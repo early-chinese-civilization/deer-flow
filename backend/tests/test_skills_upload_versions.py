@@ -8,7 +8,8 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-from app.gateway.db.models import PendingSkillForkClaim, Skill, SkillDefinition, SkillVersion, User
+from app.gateway.db.models import LegacySkill as Skill
+from app.gateway.db.models import PendingSkillForkClaim, SkillDefinition, SkillVersion, User
 from app.gateway.routers import skills as skills_router
 
 

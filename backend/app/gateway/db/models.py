@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -251,6 +251,9 @@ class Skill(Base):
 
     owner_user = relationship("User", back_populates="skills", foreign_keys=[owner_user_id])
     legacy_identity_mapping = relationship("SkillIdentityMigrationMap", back_populates="skill", uselist=False, cascade="all, delete-orphan")
+    versions = relationship("SkillVersion", back_populates="skill")
+    installations = relationship("SkillInstallation", back_populates="skill")
+    releases = relationship("SkillRelease", back_populates="skill")
 
     __table_args__ = (
         Index(
@@ -379,7 +382,7 @@ class SkillDefinition(Base):
 
     owner_user = relationship("User", foreign_keys=[owner_user_id])
     versions = relationship("SkillVersion", back_populates="definition", cascade="all, delete-orphan")
-    installs = relationship("SkillInstall", back_populates="definition", cascade="all, delete-orphan")
+    installs = relationship("SkillInstallation", back_populates="definition", cascade="all, delete-orphan")
     legacy_skills = relationship("LegacySkill", back_populates="definition")
     terminal_identity_mapping = relationship("SkillIdentityMigrationMap", back_populates="definition", uselist=False, cascade="all, delete-orphan")
 
@@ -446,11 +449,17 @@ class SkillVersion(Base):
     __tablename__ = "skill_versions"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True, comment="Skill version ID")
+    skill_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("skills.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="Terminal Skill UUID that scopes version_number",
+    )
     skill_definition_id = Column(
         BigInteger,
         ForeignKey("skill_definitions.id", ondelete="CASCADE"),
         nullable=False,
-        comment="Stable skill definition ID",
+        comment="Legacy SkillDefinition compatibility ID",
     )
     version_number = Column(Integer, nullable=False, comment="Platform-managed monotonically increasing version")
     source_package_version = Column(String(255), nullable=True, comment="Optional source SKILL.md version metadata")
@@ -471,23 +480,31 @@ class SkillVersion(Base):
         comment="Created at",
     )
 
+    skill = relationship("Skill", back_populates="versions", foreign_keys=[skill_id])
     definition = relationship("SkillDefinition", back_populates="versions")
     created_by_user = relationship("User", foreign_keys=[created_by_user_id])
-    releases = relationship("SkillRelease", back_populates="skill_version")
-    installs_current = relationship("SkillInstall", foreign_keys="SkillInstall.current_version_id", back_populates="current_version")
-    installs_initial = relationship("SkillInstall", foreign_keys="SkillInstall.installed_version_id", back_populates="installed_version")
+    releases = relationship("SkillRelease", back_populates="skill_version", foreign_keys="SkillRelease.skill_version_id")
+    installs_current = relationship("SkillInstallation", foreign_keys="SkillInstallation.current_version_id", back_populates="current_version")
+    installs_initial = relationship("SkillInstallation", foreign_keys="SkillInstallation.installed_version_id", back_populates="installed_version")
 
     __table_args__ = (
+        UniqueConstraint("skill_id", "version_number", name="uq_skill_versions_skill_version_number"),
+        UniqueConstraint("skill_id", "content_hash", name="uq_skill_versions_skill_content_hash"),
         UniqueConstraint("skill_definition_id", "version_number", name="uq_skill_versions_definition_version"),
         UniqueConstraint("skill_definition_id", "content_hash", name="uq_skill_versions_definition_content_hash"),
+        Index("ix_skill_versions_skill_id_created", "skill_id", "created_at"),
         Index("ix_skill_versions_definition_created", "skill_definition_id", "created_at"),
     )
 
 
-class SkillInstall(Base):
-    """User install state for a skill definition and its current version."""
+class SkillInstallation(Base):
+    """Terminal user-available Skill version relation.
 
-    __tablename__ = "skill_installs"
+    Legacy route code still imports ``SkillInstall`` and reads the numeric
+    version compatibility columns during the migration window.
+    """
+
+    __tablename__ = "skill_installations"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True, comment="Skill install ID")
     user_id = Column(
@@ -496,23 +513,31 @@ class SkillInstall(Base):
         nullable=False,
         comment="Installing user ID",
     )
+    skill_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("skills.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="Terminal Skill UUID selected by this installation",
+    )
+    version_number = Column(Integer, nullable=False, comment="Terminal runtime version number selected for this installation")
+    status = Column(String(50), nullable=False, default="active", comment="Installation status")
     skill_definition_id = Column(
         BigInteger,
         ForeignKey("skill_definitions.id", ondelete="CASCADE"),
         nullable=False,
-        comment="Installed skill definition ID",
+        comment="Legacy SkillDefinition compatibility ID",
     )
     installed_version_id = Column(
         BigInteger,
         ForeignKey("skill_versions.id", ondelete="RESTRICT"),
         nullable=False,
-        comment="Version first installed by this user",
+        comment="Legacy initial SkillVersion row ID",
     )
     current_version_id = Column(
         BigInteger,
         ForeignKey("skill_versions.id", ondelete="RESTRICT"),
         nullable=False,
-        comment="Version currently selected for runtime",
+        comment="Legacy current SkillVersion row ID",
     )
     created_at = Column(
         DateTime(timezone=True),
@@ -530,30 +555,55 @@ class SkillInstall(Base):
     deleted_at = Column(DateTime(timezone=True), nullable=True, comment="Soft delete timestamp")
 
     user = relationship("User", foreign_keys=[user_id])
+    skill = relationship("Skill", back_populates="installations", foreign_keys=[skill_id])
     definition = relationship("SkillDefinition", back_populates="installs")
     installed_version = relationship("SkillVersion", foreign_keys=[installed_version_id], back_populates="installs_initial")
     current_version = relationship("SkillVersion", foreign_keys=[current_version_id], back_populates="installs_current")
     agent_skills = relationship("AgentSkill", back_populates="skill_install")
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["skill_id", "version_number"],
+            ["skill_versions.skill_id", "skill_versions.version_number"],
+            name="fk_skill_installations_skill_version_composite",
+            ondelete="RESTRICT",
+        ),
         Index(
-            "uq_skill_installs_user_definition_active",
+            "uq_skill_installations_user_skill_active",
+            "user_id",
+            "skill_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "uq_skill_installations_user_definition_active",
             "user_id",
             "skill_definition_id",
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
-        Index("ix_skill_installs_current_version_id", "current_version_id"),
-        Index("ix_skill_installs_deleted_at", "deleted_at"),
+        Index("ix_skill_installations_skill_version", "skill_id", "version_number"),
+        Index("ix_skill_installations_current_version_id", "current_version_id"),
+        Index("ix_skill_installations_deleted_at", "deleted_at"),
     )
 
 
+SkillInstall = SkillInstallation
+
+
 class SkillRelease(Base):
-    """Immutable record of a skill publish event."""
+    """Visibility state for an exact terminal Skill version."""
 
     __tablename__ = "skill_releases"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True, comment="Skill release ID")
+    skill_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("skills.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="Terminal Skill UUID published by this release row",
+    )
+    version_number = Column(Integer, nullable=False, comment="Terminal Skill version number published by this release row")
     skill_name = Column(String(255), nullable=False, comment="Published skill name")
     release_version = Column(String(64), nullable=False, unique=True, comment="System-generated immutable release version")
     package_version = Column(String(255), nullable=True, comment="Optional SKILL.md package version")
@@ -583,24 +633,41 @@ class SkillRelease(Base):
         BigInteger,
         ForeignKey("skill_versions.id", ondelete="RESTRICT"),
         nullable=True,
-        comment="Immutable platform skill version published by this release",
+        comment="Legacy SkillVersion row ID compatibility reference",
     )
+    published_at = Column(DateTime(timezone=True), nullable=True, comment="Published at")
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(UTC),
         comment="Created at",
     )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        comment="Updated at",
+    )
 
+    skill = relationship("Skill", back_populates="releases", foreign_keys=[skill_id])
     publisher_user = relationship("User", foreign_keys=[publisher_user_id])
     source_skill = relationship("LegacySkill", foreign_keys=[source_skill_id], back_populates="source_releases")
     published_skill = relationship("LegacySkill", foreign_keys=[published_skill_id], back_populates="published_releases")
-    skill_version = relationship("SkillVersion", back_populates="releases")
+    skill_version = relationship("SkillVersion", back_populates="releases", foreign_keys=[skill_version_id])
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["skill_id", "version_number"],
+            ["skill_versions.skill_id", "skill_versions.version_number"],
+            name="fk_skill_releases_skill_version_composite",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("skill_id", "version_number", name="uq_skill_releases_skill_version"),
         Index("ix_skill_releases_skill_name_created", "skill_name", "created_at"),
         Index("ix_skill_releases_published_skill_id", "published_skill_id"),
         Index("ix_skill_releases_skill_version_id", "skill_version_id"),
+        Index("ix_skill_releases_status_skill_version", "status", "skill_id", "version_number"),
         Index("ix_skill_releases_status", "status"),
     )
 
@@ -678,9 +745,9 @@ class AgentSkill(Base):
     )
     skill_install_id = Column(
         BigInteger,
-        ForeignKey("skill_installs.id", ondelete="CASCADE"),
+        ForeignKey("skill_installations.id", ondelete="CASCADE"),
         nullable=True,
-        comment="Install ID resolved by runtime manifest",
+        comment="Compatibility column for terminal skill_installations.id",
     )
     system_skill_definition_id = Column(
         BigInteger,
@@ -706,7 +773,7 @@ class AgentSkill(Base):
 
     agent = relationship("Agent", back_populates="agent_skills")
     skill = relationship("LegacySkill", back_populates="agent_skills")
-    skill_install = relationship("SkillInstall", back_populates="agent_skills")
+    skill_install = relationship("SkillInstallation", back_populates="agent_skills")
     system_skill_definition = relationship("SkillDefinition", foreign_keys=[system_skill_definition_id])
     system_skill_version = relationship("SkillVersion", foreign_keys=[system_skill_version_id])
 

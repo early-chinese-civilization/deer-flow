@@ -22,7 +22,7 @@ REQUIRED_GATEWAY_TABLES = frozenset(
         "skill_identity_migration_map",
         "skill_definitions",
         "skill_versions",
-        "skill_installs",
+        "skill_installations",
         "skill_releases",
         "pending_skill_fork_claims",
         "runtime_manifests",
@@ -132,6 +132,8 @@ REQUIRED_GATEWAY_COLUMNS = {
     "skill_releases": frozenset(
         {
             "id",
+            "skill_id",
+            "version_number",
             "skill_name",
             "release_version",
             "package_version",
@@ -143,7 +145,9 @@ REQUIRED_GATEWAY_COLUMNS = {
             "source_skill_id",
             "published_skill_id",
             "skill_version_id",
+            "published_at",
             "created_at",
+            "updated_at",
         }
     ),
     "skill_definitions": frozenset(
@@ -163,6 +167,7 @@ REQUIRED_GATEWAY_COLUMNS = {
     "skill_versions": frozenset(
         {
             "id",
+            "skill_id",
             "skill_definition_id",
             "version_number",
             "source_package_version",
@@ -174,10 +179,13 @@ REQUIRED_GATEWAY_COLUMNS = {
             "created_at",
         }
     ),
-    "skill_installs": frozenset(
+    "skill_installations": frozenset(
         {
             "id",
             "user_id",
+            "skill_id",
+            "version_number",
+            "status",
             "skill_definition_id",
             "installed_version_id",
             "current_version_id",
@@ -221,6 +229,14 @@ REQUIRED_GATEWAY_COLUMN_SIGNATURES = {
     ("skill_identity_migration_map", "old_skill_definition_id"): {"udt_name": "int8", "is_nullable": "NO"},
     ("skill_identity_migration_map", "skill_id"): {"udt_name": "uuid", "is_nullable": "NO"},
     ("skill_identity_migration_map", "migration_source"): {"udt_name": "varchar", "is_nullable": "NO"},
+    ("skill_versions", "skill_id"): {"udt_name": "uuid", "is_nullable": "NO"},
+    ("skill_versions", "version_number"): {"udt_name": "int4", "is_nullable": "NO"},
+    ("skill_installations", "skill_id"): {"udt_name": "uuid", "is_nullable": "NO"},
+    ("skill_installations", "version_number"): {"udt_name": "int4", "is_nullable": "NO"},
+    ("skill_installations", "status"): {"udt_name": "varchar", "is_nullable": "NO"},
+    ("skill_releases", "skill_id"): {"udt_name": "uuid", "is_nullable": "NO"},
+    ("skill_releases", "version_number"): {"udt_name": "int4", "is_nullable": "NO"},
+    ("skill_releases", "status"): {"udt_name": "varchar", "is_nullable": "NO"},
 }
 
 REQUIRED_GATEWAY_INDEXES = {
@@ -228,6 +244,9 @@ REQUIRED_GATEWAY_INDEXES = {
     "skills": frozenset({"uq_skills_owner_name_active", "ix_skills_owner_user_id", "ix_skills_deleted_at"}),
     "legacy_skills": frozenset({"ix_legacy_skills_skill_definition_id", "ix_legacy_skills_deleted_at"}),
     "skill_identity_migration_map": frozenset({"ix_skill_identity_migration_map_skill_id", "ix_skill_identity_migration_map_old_skill_id"}),
+    "skill_versions": frozenset({"ix_skill_versions_skill_id_created"}),
+    "skill_installations": frozenset({"uq_skill_installations_user_skill_active", "ix_skill_installations_skill_version"}),
+    "skill_releases": frozenset({"ix_skill_releases_status_skill_version"}),
 }
 
 REQUIRED_GATEWAY_CONSTRAINTS = {
@@ -240,6 +259,25 @@ REQUIRED_GATEWAY_CONSTRAINTS = {
             "fk_skill_identity_migration_map_old_skill_id_legacy_skills",
             "uq_skill_identity_migration_map_skill_id",
             "uq_skill_identity_migration_map_migration_source",
+        }
+    ),
+    "skill_versions": frozenset(
+        {
+            "fk_skill_versions_skill_id_skills",
+            "uq_skill_versions_skill_version_number",
+            "uq_skill_versions_skill_content_hash",
+        }
+    ),
+    "skill_installations": frozenset(
+        {
+            "skill_installations_pkey",
+            "fk_skill_installations_skill_version_composite",
+        }
+    ),
+    "skill_releases": frozenset(
+        {
+            "fk_skill_releases_skill_version_composite",
+            "uq_skill_releases_skill_version",
         }
     ),
 }

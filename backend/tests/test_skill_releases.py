@@ -1,15 +1,20 @@
+import uuid
 from pathlib import Path
+
+import pytest
 
 from app.gateway.db.models import PendingSkillForkClaim, RuntimeManifest, SkillDefinition, SkillInstall, SkillRelease, SkillVersion
 from app.gateway.db.repository import SkillReleaseRepository, SkillRepository
 
 
 class FakeAsyncSession:
-    def __init__(self):
+    def __init__(self, skill_version=None):
         self.added = []
         self.committed = False
+        self.executed = []
         self.flushed = False
         self.refreshed = []
+        self.skill_version = skill_version
 
     def add(self, value):
         self.added.append(value)
@@ -22,6 +27,10 @@ class FakeAsyncSession:
 
     async def commit(self):
         self.committed = True
+
+    async def execute(self, stmt):
+        self.executed.append(stmt)
+        return FakeScalarResult(self.skill_version)
 
 
 class FakeScalarResult:
@@ -46,6 +55,8 @@ def test_skill_release_model_declares_release_contract_columns():
     columns = SkillRelease.__table__.columns
 
     assert SkillRelease.__tablename__ == "skill_releases"
+    assert "skill_id" in columns
+    assert "version_number" in columns
     assert "skill_name" in columns
     assert "release_version" in columns
     assert "package_version" in columns
@@ -57,14 +68,27 @@ def test_skill_release_model_declares_release_contract_columns():
     assert "source_skill_id" in columns
     assert "published_skill_id" in columns
     assert "skill_version_id" in columns
+    assert "published_at" in columns
     assert "created_at" in columns
+    assert "updated_at" in columns
     assert columns["release_version"].unique is True
     assert columns["package_version"].nullable is True
 
 
 def test_create_skill_release_generates_release_version_and_persists_metadata():
     async def run():
-        session = FakeAsyncSession()
+        skill_id = uuid.UUID("11111111-1111-4111-8111-111111111111")
+        session = FakeAsyncSession(
+            skill_version=SkillVersion(
+                id=13,
+                skill_id=skill_id,
+                skill_definition_id=11,
+                version_number=2,
+                content_hash="hash",
+                file_manifest_hash="manifest",
+                artifact_uri="artifacts/skills/13/demo-skill",
+            )
+        )
 
         release = await SkillReleaseRepository.create_release(
             session,
@@ -77,6 +101,8 @@ def test_create_skill_release_generates_release_version_and_persists_metadata():
             source_skill_id=11,
             published_skill_id=12,
             skill_version_id=13,
+            skill_id=skill_id,
+            version_number=2,
         )
 
         assert release in session.added
@@ -92,6 +118,9 @@ def test_create_skill_release_generates_release_version_and_persists_metadata():
         assert release.source_skill_id == 11
         assert release.published_skill_id == 12
         assert release.skill_version_id == 13
+        assert release.skill_id == skill_id
+        assert release.version_number == 2
+        assert release.published_at is not None
 
     import asyncio
 
@@ -100,7 +129,18 @@ def test_create_skill_release_generates_release_version_and_persists_metadata():
 
 def test_create_skill_release_allows_empty_package_version():
     async def run():
-        session = FakeAsyncSession()
+        skill_id = uuid.UUID("22222222-2222-4222-8222-222222222222")
+        session = FakeAsyncSession(
+            skill_version=SkillVersion(
+                id=13,
+                skill_id=skill_id,
+                skill_definition_id=11,
+                version_number=1,
+                content_hash="hash",
+                file_manifest_hash="manifest",
+                artifact_uri="artifacts/skills/13/demo-skill",
+            )
+        )
 
         release = await SkillReleaseRepository.create_release(
             session,
@@ -112,6 +152,8 @@ def test_create_skill_release_allows_empty_package_version():
             source_skill_id=11,
             published_skill_id=12,
             skill_version_id=13,
+            skill_id=skill_id,
+            version_number=1,
             release_version="rel_fixed",
             commit=False,
         )
@@ -119,6 +161,41 @@ def test_create_skill_release_allows_empty_package_version():
         assert session.committed is False
         assert release.release_version == "rel_fixed"
         assert release.package_version is None
+
+    import asyncio
+
+    asyncio.run(run())
+
+
+def test_create_skill_release_rejects_mismatched_legacy_version_identity():
+    async def run():
+        session = FakeAsyncSession(
+            skill_version=SkillVersion(
+                id=13,
+                skill_id=uuid.UUID("33333333-3333-4333-8333-333333333333"),
+                skill_definition_id=11,
+                version_number=2,
+                content_hash="hash",
+                file_manifest_hash="manifest",
+                artifact_uri="artifacts/skills/13/demo-skill",
+            )
+        )
+
+        with pytest.raises(ValueError, match="skill_id"):
+            await SkillReleaseRepository.create_release(
+                session,
+                skill_name="demo-skill",
+                package_version=None,
+                description="Demo skill",
+                artifact_path="public/demo-skill",
+                publisher_user_id=7,
+                source_skill_id=11,
+                published_skill_id=12,
+                skill_version_id=13,
+                skill_id=uuid.UUID("44444444-4444-4444-8444-444444444444"),
+                version_number=2,
+                commit=False,
+            )
 
     import asyncio
 
@@ -197,6 +274,7 @@ def test_platform_skill_version_install_models_declares_manifest_foundation_colu
     assert "owner_user_id" in definition_columns
 
     assert SkillVersion.__tablename__ == "skill_versions"
+    assert "skill_id" in version_columns
     assert "skill_definition_id" in version_columns
     assert "version_number" in version_columns
     assert "source_package_version" in version_columns
@@ -204,8 +282,11 @@ def test_platform_skill_version_install_models_declares_manifest_foundation_colu
     assert "file_manifest_hash" in version_columns
     assert "artifact_uri" in version_columns
 
-    assert SkillInstall.__tablename__ == "skill_installs"
+    assert SkillInstall.__tablename__ == "skill_installations"
     assert "user_id" in install_columns
+    assert "skill_id" in install_columns
+    assert "version_number" in install_columns
+    assert "status" in install_columns
     assert "skill_definition_id" in install_columns
     assert "installed_version_id" in install_columns
     assert "current_version_id" in install_columns

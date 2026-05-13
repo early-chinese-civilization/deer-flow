@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi import HTTPException
 
-from app.gateway.db.models import Agent, AgentSkill, Skill, SkillDefinition, SkillInstall, SkillVersion, User
+from app.gateway.db.models import Agent, AgentSkill, LegacySkill, SkillDefinition, SkillInstall, SkillVersion, User
 from app.gateway.routers import agents as agents_router
 
 
@@ -165,7 +165,7 @@ def test_agent_response_keeps_legacy_skill_binding_visible_but_unavailable() -> 
                 id=601,
                 agent_id=501,
                 skill_id=301,
-                skill=Skill(id=301, user_id=22, name="legacy-skill", description="Legacy", file_path="custom/legacy-skill"),
+                skill=LegacySkill(id=301, user_id=22, name="legacy-skill", description="Legacy", file_path="custom/legacy-skill"),
                 display_order=0,
                 enabled=True,
             )

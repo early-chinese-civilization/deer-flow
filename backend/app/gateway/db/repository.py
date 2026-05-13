@@ -795,6 +795,48 @@ class TerminalSkillRepository:
         skill = await TerminalSkillRepository.get_by_legacy_definition_id(db, skill_definition_id=skill_definition_id)
         return skill.id if skill is not None else None
 
+    @staticmethod
+    async def ensure_for_legacy_definition(db: AsyncSession, *, definition: SkillDefinition) -> Skill:
+        """Ensure a compatibility SkillDefinition has a terminal Skill identity."""
+        existing = await TerminalSkillRepository.get_by_legacy_definition_id(db, skill_definition_id=definition.id)
+        if existing is not None:
+            return existing
+
+        owner_user_id = definition.owner_user_id
+        if owner_user_id is None:
+            system_user_id = (
+                await db.execute(
+                    select(User.id).where(
+                        User.external_auth_id == INTERNAL_SYSTEM_EXTERNAL_AUTH_ID,
+                    )
+                )
+            ).scalar_one_or_none()
+            if system_user_id is None:
+                raise ValueError(f'Internal system user "{INTERNAL_SYSTEM_EXTERNAL_AUTH_ID}" is required before creating terminal Skill identity')
+            owner_user_id = int(system_user_id)
+
+        skill = Skill(
+            owner_user_id=owner_user_id,
+            name=definition.name,
+            display_name=definition.display_name,
+            description=definition.description,
+            created_at=definition.created_at,
+            updated_at=definition.updated_at,
+            deleted_at=definition.deleted_at,
+        )
+        db.add(skill)
+        await db.flush()
+        mapping = SkillIdentityMigrationMap(
+            old_skill_definition_id=definition.id,
+            skill_id=skill.id,
+            old_skill_id=None,
+            migration_source=f"skill_definition:{definition.id}",
+        )
+        db.add(mapping)
+        await db.flush()
+        await db.refresh(skill)
+        return skill
+
 
 class SkillDefinitionRepository:
     """Persistence helpers for stable skill definitions."""
@@ -949,7 +991,9 @@ class SkillVersionRepository:
     ) -> SkillVersion:
         latest = await SkillVersionRepository.get_latest_for_definition(db, skill_definition_id=definition.id)
         next_number = 1 if latest is None else latest.version_number + 1
+        terminal_skill = await TerminalSkillRepository.ensure_for_legacy_definition(db, definition=definition)
         version = SkillVersion(
+            skill_id=terminal_skill.id,
             skill_definition_id=definition.id,
             version_number=next_number,
             source_package_version=source_package_version,
@@ -1080,12 +1124,18 @@ class SkillInstallRepository:
         if install is None:
             install = SkillInstall(
                 user_id=user_id,
+                skill_id=version.skill_id,
+                version_number=version.version_number,
+                status="active",
                 skill_definition_id=definition.id,
                 installed_version_id=version.id,
                 current_version_id=version.id,
             )
             db.add(install)
         else:
+            install.skill_id = version.skill_id
+            install.version_number = version.version_number
+            install.status = "active"
             install.current_version_id = version.id
             install.updated_at = now
         await db.flush()
@@ -1100,6 +1150,9 @@ class SkillInstallRepository:
         version: SkillVersion,
     ) -> SkillInstall:
         """Update only the runtime-selected version for an existing install."""
+        install.skill_id = version.skill_id
+        install.version_number = version.version_number
+        install.status = "active"
         install.current_version_id = version.id
         install.updated_at = datetime.now(UTC)
         await db.flush()
@@ -1128,12 +1181,35 @@ class SkillReleaseRepository:
         source_skill_id: int | None,
         published_skill_id: int | None,
         skill_version_id: int | None = None,
+        skill_id: str | uuid.UUID | None = None,
+        version_number: int | None = None,
         status: str = "published",
         release_version: str | None = None,
+        published_at: datetime | None = None,
         commit: bool = True,
     ) -> SkillRelease:
-        """Create an immutable skill release record."""
+        """Create a release visibility row for an exact terminal Skill version."""
+        terminal_skill_id = _as_optional_uuid(skill_id)
+        terminal_version_number = version_number
+        if skill_version_id is not None:
+            version = await SkillVersionRepository.get_by_id(db, skill_version_id=skill_version_id)
+            if version is None:
+                raise ValueError(f"Skill version {skill_version_id} not found")
+            if terminal_skill_id is None:
+                terminal_skill_id = version.skill_id
+            elif terminal_skill_id != version.skill_id:
+                raise ValueError("Skill release skill_id must match the legacy skill_version_id row")
+            if terminal_version_number is None:
+                terminal_version_number = version.version_number
+            elif terminal_version_number != version.version_number:
+                raise ValueError("Skill release version_number must match the legacy skill_version_id row")
+        if terminal_skill_id is None or terminal_version_number is None:
+            raise ValueError("Skill release creation requires skill_id and version_number")
+
+        now = datetime.now(UTC)
         release = SkillRelease(
+            skill_id=terminal_skill_id,
+            version_number=terminal_version_number,
             skill_name=skill_name,
             release_version=release_version or SkillReleaseRepository.generate_release_version(),
             package_version=package_version,
@@ -1145,6 +1221,8 @@ class SkillReleaseRepository:
             source_skill_id=source_skill_id,
             published_skill_id=published_skill_id,
             skill_version_id=skill_version_id,
+            published_at=published_at if published_at is not None else (now if status == "published" else None),
+            updated_at=now,
         )
         db.add(release)
         await db.flush()
