@@ -3,11 +3,9 @@ import {
   Code2Icon,
   CopyIcon,
   EyeIcon,
-  LoaderIcon,
-  PackageIcon,
   XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Streamdown } from "streamdown";
 
@@ -34,19 +32,16 @@ import { useArtifactContent } from "@/core/artifacts/hooks";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
 import { useResolvedOssUrl } from "@/core/oss";
-import { installSkill } from "@/core/skills/api";
 import { streamdownPlugins } from "@/core/streamdown";
 import {
   checkCodeFile,
   getFileExtensionDisplayName,
   getFileName,
 } from "@/core/utils/files";
-import { env } from "@/env";
 import { cn } from "@/lib/utils";
 
 import { ArtifactLink } from "../citations/artifact-link";
 import { useThread } from "../messages/context";
-import { Tooltip } from "../tooltip";
 
 import { useArtifacts } from "./context";
 
@@ -123,7 +118,6 @@ export function ArtifactFileDetail({
   const displayContent = content ?? "";
 
   const [viewMode, setViewMode] = useState<"code" | "preview">("code");
-  const [isInstalling, setIsInstalling] = useState(false);
   useEffect(() => {
     if (isSupportPreview) {
       setViewMode("preview");
@@ -132,29 +126,6 @@ export function ArtifactFileDetail({
 
     setViewMode("code");
   }, [isSupportPreview]);
-
-  const handleInstallSkill = useCallback(async () => {
-    if (isInstalling) return;
-
-    setIsInstalling(true);
-    try {
-      const result = await installSkill({
-        thread_id: threadId,
-        path: filepath,
-      });
-      if (result.success) {
-        toast.success(result.message);
-        return;
-      }
-
-      toast.error(result.message ?? "Failed to install skill");
-    } catch (error) {
-      console.error("Failed to install skill:", error);
-      toast.error("Failed to install skill");
-    } finally {
-      setIsInstalling(false);
-    }
-  }, [filepath, isInstalling, threadId]);
 
   return (
     <Artifact className={cn(className)}>
@@ -189,20 +160,6 @@ export function ArtifactFileDetail({
         </div>
         <div className="flex items-center gap-2">
           <ArtifactActions>
-            {!isWriteFile && filepath.endsWith(".skill") && (
-              <Tooltip content={t.toolCalls.skillInstallTooltip}>
-                <ArtifactAction
-                  icon={isInstalling ? LoaderIcon : PackageIcon}
-                  label={t.common.install}
-                  tooltip={t.common.install}
-                  disabled={
-                    isInstalling ||
-                    env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true"
-                  }
-                  onClick={handleInstallSkill}
-                />
-              </Tooltip>
-            )}
             {isCodeFile && (
               <ArtifactAction
                 icon={CopyIcon}

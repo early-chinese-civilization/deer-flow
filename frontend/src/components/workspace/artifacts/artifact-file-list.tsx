@@ -1,6 +1,5 @@
-import { DownloadIcon, LoaderIcon, PackageIcon } from "lucide-react";
-import { useCallback, useState } from "react";
-import { toast } from "sonner";
+import { DownloadIcon } from "lucide-react";
+import { useCallback } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -12,7 +11,6 @@ import {
 } from "@/components/ui/card";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
-import { installSkill } from "@/core/skills/api";
 import {
   getFileExtensionDisplayName,
   getFileIcon,
@@ -33,7 +31,6 @@ export function ArtifactFileList({
 }) {
   const { t } = useI18n();
   const { select: selectArtifact, setOpen } = useArtifacts();
-  const [installingFile, setInstallingFile] = useState<string | null>(null);
   const fileEntries = Object.entries(files);
 
   const handleClick = useCallback(
@@ -42,34 +39,6 @@ export function ArtifactFileList({
       setOpen(true);
     },
     [selectArtifact, setOpen],
-  );
-
-  const handleInstallSkill = useCallback(
-    async (e: React.MouseEvent, filepath: string) => {
-      e.stopPropagation();
-      e.preventDefault();
-
-      if (installingFile) return;
-
-      setInstallingFile(filepath);
-      try {
-        const result = await installSkill({
-          thread_id: threadId,
-          path: filepath,
-        });
-        if (result.success) {
-          toast.success(result.message);
-        } else {
-          toast.error(result.message || "Failed to install skill");
-        }
-      } catch (error) {
-        console.error("Failed to install skill:", error);
-        toast.error("Failed to install skill");
-      } finally {
-        setInstallingFile(null);
-      }
-    },
-    [threadId, installingFile],
   );
 
   return (
@@ -91,20 +60,6 @@ export function ArtifactFileList({
               {getFileExtensionDisplayName(filepath)} file
             </CardDescription>
             <CardAction>
-              {filepath.endsWith(".skill") && (
-                <Button
-                  variant="ghost"
-                  disabled={installingFile === filepath}
-                  onClick={(e) => handleInstallSkill(e, filepath)}
-                >
-                  {installingFile === filepath ? (
-                    <LoaderIcon className="size-4 animate-spin" />
-                  ) : (
-                    <PackageIcon className="size-4" />
-                  )}
-                  {t.common.install}
-                </Button>
-              )}
               <a
                 href={urlOfArtifact({
                   filepath,

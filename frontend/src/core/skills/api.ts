@@ -1,17 +1,16 @@
 import { getBackendBaseURL } from "@/core/config";
 
 import {
+  normalizeSkillFromApi,
+  type SkillApiResponse,
+} from "./normalization";
+import {
   buildSkillHubInstallRequest,
   buildSkillInstallUpdateConfirmRequest,
   buildSkillInstallUpdatePreviewRequest,
   getSkillHubInstallFallbackError,
 } from "./request";
 import type { Skill } from "./type";
-import type {
-  SkillSourceKind,
-  SkillSpace,
-  SkillViewerRelation,
-} from "./type";
 
 export interface SkillUploadCheckResponse {
   filename: string;
@@ -83,60 +82,6 @@ export interface SkillInstallUpdatePreview {
   publisher?: string | null;
   source: string;
   affected_agents: SkillUpdateAffectedAgent[];
-}
-
-type SkillApiResponse = Omit<
-  Skill,
-  "space" | "source_kind" | "viewer_relation" | "skill_installation_id"
-> & {
-  category?: "public" | "custom" | null;
-  space?: SkillSpace | null;
-  source_kind?: SkillSourceKind | "fork" | null;
-  viewer_relation?: SkillViewerRelation | "downloaded" | "forked" | null;
-  skill_installation_id?: number | null;
-  skill_install_id?: number | null;
-};
-
-function normalizeSkillFromApi(raw: SkillApiResponse): Skill {
-  const space =
-    raw.space ??
-    (raw.skill_definition_source_type === "legacy" ||
-    (raw.category === "public" && raw.owner_user_id == null)
-      ? "system"
-      : raw.category === "public"
-        ? "community"
-        : "personal");
-  const sourceKind =
-    raw.source_kind === "fork"
-      ? "personal"
-      : raw.source_kind ??
-        (space === "system"
-          ? "official"
-          : space === "personal" && raw.skill_installation_id == null
-            ? "personal"
-            : "community");
-  const viewerRelation =
-    raw.viewer_relation === "downloaded"
-      ? "installed"
-      : raw.viewer_relation === "forked"
-        ? "authored"
-        : raw.viewer_relation ??
-          (space === "system"
-            ? "system_available"
-            : space === "community"
-              ? "community_available"
-              : sourceKind === "personal"
-                ? "authored"
-                : "installed");
-
-  return {
-    ...raw,
-    space,
-    source_kind: sourceKind,
-    viewer_relation: viewerRelation,
-    skill_installation_id:
-      raw.skill_installation_id ?? raw.skill_install_id ?? null,
-  };
 }
 
 export async function loadSkills() {
@@ -354,41 +299,4 @@ export async function publishSkill(
   }
 
   return normalizeSkillFromApi((await response.json()) as SkillApiResponse);
-}
-
-export interface InstallSkillRequest {
-  thread_id: string;
-  path: string;
-}
-
-export interface InstallSkillResponse {
-  success: boolean;
-  skill_name: string;
-  message: string;
-}
-
-export async function installSkill(
-  request: InstallSkillRequest,
-): Promise<InstallSkillResponse> {
-  const response = await fetch(`${getBackendBaseURL()}/api/skills/install`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(request),
-    credentials: "include",
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    const errorMessage =
-      errorData.detail ?? `HTTP ${response.status}: ${response.statusText}`;
-    return {
-      success: false,
-      skill_name: "",
-      message: errorMessage,
-    };
-  }
-
-  return response.json();
 }

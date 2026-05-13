@@ -246,7 +246,6 @@ export interface Translations {
     writeFile: string;
     clickToViewContent: string;
     writeTodos: string;
-    skillInstallTooltip: string;
   };
 
   // Uploads

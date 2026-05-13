@@ -40,8 +40,13 @@ void test("install APIs avoid download-named frontend aliases", async () => {
   assert.doesNotMatch(apiSource, /\bcheckSkillDownload\b/);
   assert.doesNotMatch(
     apiSource,
-    /\bdownloadSkill\b|\bdownloadSkillForkPackage\b|\bcheckSkillHubInstall\b/,
+    /\bdownloadSkill\b|\bdownloadSkillForkPackage\b|\bcheckSkillHubInstall\b|\binstallSkill\s*\(/,
   );
+  assert.doesNotMatch(
+    apiSource,
+    /\bInstallSkillRequest\b|\bInstallSkillResponse\b/,
+  );
+  assert.doesNotMatch(apiSource, /\bthread_id\b|\bpath\b/);
   assert.doesNotMatch(
     hooksSource,
     /\buseDownloadSkill\b|\buseDownloadSkillForkPackage\b/,

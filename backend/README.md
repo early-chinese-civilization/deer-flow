@@ -75,7 +75,7 @@ Per-thread isolated execution with virtual path translation:
 - **Abstract interface**: `execute_command`, `read_file`, `write_file`, `list_dir`
 - **Providers**: `LocalSandboxProvider` (filesystem) and `AioSandboxProvider` (Docker, in community/)
 - **Virtual paths**: `/mnt/user-data/{workspace,uploads,outputs}` → thread-specific physical directories
-- **Skills path**: `/mnt/skills` → Runtime Manifest-authorized skill artifacts for active runs
+- **Skills path**: `/mnt/skills` → runtime descriptor-authorized terminal Skill version bundle for active runs; persisted Runtime Manifest records are audit snapshots only
 - **Skills loading**: Standalone/local discovery reads public and private skill directories; existing `skills/custom` content is legacy compatibility only and is not a new install target
 - **File-write safety**: `str_replace` serializes read-modify-write per `(sandbox.id, path)` so isolated sandboxes keep concurrency even when virtual paths match
 - **Tools**: `bash`, `ls`, `read_file`, `write_file`, `str_replace` (`bash` is disabled by default when using `LocalSandboxProvider`; use `AioSandboxProvider` for isolated shell access)

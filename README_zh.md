@@ -375,9 +375,9 @@ Skills 是 DeerFlow 能做“几乎任何事”的关键。
 
 Skills 采用按需渐进加载，不会一次性把所有内容都塞进上下文。只有任务确实需要时才加载，这样能把上下文窗口控制得更干净，也更适合对 token 比较敏感的模型。
 
-通过 Gateway 安装 `.skill` 压缩包时，DeerFlow 会接受标准的可选 frontmatter 元数据，比如 `version`、`author`、`compatibility`，不会把本来合法的外部 skill 拒之门外。如果提供 `version`，它必须是字符串；DeerFlow 会把它作为用户可读的 package version 展示，但不会强制 SemVer。上传冲突检查会按当前用户同名 custom skill 的 package version 判断：同名同版本是重复上传；同名但版本不同会更新该用户当前的 custom skill 副本，而不是创建第二个同名 active skill。
+通过 Gateway 上传 `.skill` 压缩包时，DeerFlow 会接受标准的可选 frontmatter 元数据，比如 `version`、`author`、`compatibility`，不会把本来合法的外部 skill 拒之门外。如果提供 `version`，它必须是字符串；DeerFlow 会把它作为用户可读的 package version 展示，但平台版本由 DeerFlow 管理的 `(skill_id, version_number)` 决定。新内容会写入 `.deer-flow/skills/{skill_id}/{version_number}/`，不会覆盖旧版本目录。
 
-自定义 skill 可以发布到公共目录，成为当前 public latest。每次发布都会创建一条不可变的系统 release 记录，包含系统生成的 `release_version`、来自 `SKILL.md` 的可选 package `version`，以及 Skills Gallery 中填写的可选发布说明。`skills` 表仍然表示当前可见、可下载、可绑定的副本；release 记录用于追踪这份 public latest 是哪一次发布产生的。Skills Gallery 会优先展示 package version，没有时回退到 release version，并且发布自定义 skill 前会要求确认“发布为 public latest”。
+自定义 skill 可以发布到 Community Space。发布不会复制一份可变最新目录作为事实来源，而是创建或更新 `skill_releases(skill_id, version_number, status)`；发现、安装和更新只选择 `status="published"` 的 release。Skills Gallery 的安装按钮会为精确发布版本创建或更新 `skill_installation`，自定义 Agent 再通过 `agent_skills.skill_installation_id` 绑定已安装的 skill。
 
 Tools 也是同样的思路。DeerFlow 自带一组核心工具：网页搜索、网页抓取、文件操作、bash 执行；同时也支持通过 MCP Server 和 Python 函数扩展自定义工具。你可以替换任何一项，也可以继续往里加。
 
