@@ -11,7 +11,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.gateway.db.models import LegacySkill as Skill
-from app.gateway.db.models import PendingSkillForkClaim, SkillDefinition, SkillVersion, User
+from app.gateway.db.models import SkillDefinition, SkillVersion, User
 from app.gateway.routers import skills as skills_router
 
 
@@ -69,6 +69,10 @@ def _terminal_skill_id(definition_id: int) -> UUID:
     return UUID(int=definition_id)
 
 
+def _terminal_version_path(version: SkillVersion) -> str:
+    return f"{version.skill_id}/{version.version_number}"
+
+
 def _patch_terminal_skill_repository(monkeypatch) -> None:
     async def ensure_for_legacy_definition(db, *, definition):
         return SimpleNamespace(id=_terminal_skill_id(definition.id))
@@ -93,7 +97,7 @@ def test_package_version_does_not_participate_in_platform_content_hash(tmp_path)
     assert changed_hash != v1_hash
 
 
-def test_platform_fork_sidecar_does_not_participate_in_platform_content_hash(tmp_path):
+def test_platform_sidecar_participates_in_platform_content_hash(tmp_path):
     source = tmp_path / "source"
     fork = tmp_path / "fork"
     _write_skill_dir(source, version="1.0.0", marker="SKILL_RUNTIME_OK_V1")
@@ -108,38 +112,8 @@ def test_platform_fork_sidecar_does_not_participate_in_platform_content_hash(tmp
     source_hash, source_manifest_hash = skills_router._hash_skill_directory(source)
     fork_hash, fork_manifest_hash = skills_router._hash_skill_directory(fork)
 
-    assert fork_hash == source_hash
+    assert fork_hash != source_hash
     assert fork_manifest_hash != source_manifest_hash
-
-
-def test_download_source_skill_prefers_definition_identity(monkeypatch):
-    selected_skill = Skill(
-        id=5,
-        name="demo-skill",
-        skill_definition_id=42,
-        user_id=None,
-        owner_user_id=None,
-    )
-
-    async def get_public_skill_by_definition(db, *, skill_definition_id):
-        assert skill_definition_id == 42
-        return selected_skill
-
-    async def get_public_skill_by_name_and_owner(db, *, name, owner_user_id):
-        raise AssertionError("definition-aware fork download must not fall back to name lookup")
-
-    monkeypatch.setattr(skills_router.SkillRepository, "get_public_skill_by_definition", get_public_skill_by_definition)
-    monkeypatch.setattr(skills_router.SkillRepository, "get_public_skill_by_name_and_owner", get_public_skill_by_name_and_owner)
-
-    async def run():
-        return await skills_router._get_download_source_skill(
-            FakeDb(),
-            skill_name="demo-skill",
-            owner_user_id=None,
-            skill_definition_id=42,
-        )
-
-    assert asyncio.run(run()) is selected_skill
 
 
 def test_ensure_skill_version_creates_v1_then_v2_and_reuses_identical_content(tmp_path, monkeypatch):
@@ -156,7 +130,7 @@ def test_ensure_skill_version_creates_v1_then_v2_and_reuses_identical_content(tm
     async def get_latest_for_definition(db, *, skill_definition_id):
         return versions[-1] if versions else None
 
-    async def create_version(db, *, definition, source_package_version, description, content_hash, file_manifest_hash, artifact_uri, created_by_user_id):
+    async def create_version(db, *, definition, source_package_version, description, content_hash, file_manifest_hash, created_by_user_id):
         version = SkillVersion(
             id=len(versions) + 1,
             skill_id=_terminal_skill_id(definition.id),
@@ -166,7 +140,6 @@ def test_ensure_skill_version_creates_v1_then_v2_and_reuses_identical_content(tm
             description=description,
             content_hash=content_hash,
             file_manifest_hash=file_manifest_hash,
-            artifact_uri=artifact_uri,
             created_by_user_id=created_by_user_id,
         )
         versions.append(version)
@@ -221,9 +194,9 @@ def test_ensure_skill_version_creates_v1_then_v2_and_reuses_identical_content(tm
     assert same.id == v1.id
     assert created_v2 is True
     assert v2.version_number == 2
-    assert v1.artifact_uri != v2.artifact_uri
-    assert v1.artifact_uri == f"{_terminal_skill_id(definition.id)}/1"
-    assert v2.artifact_uri == f"{_terminal_skill_id(definition.id)}/2"
+    assert _terminal_version_path(v1) != _terminal_version_path(v2)
+    assert _terminal_version_path(v1) == f"{_terminal_skill_id(definition.id)}/1"
+    assert _terminal_version_path(v2) == f"{_terminal_skill_id(definition.id)}/2"
     assert len(versions) == 2
 
 
@@ -259,7 +232,7 @@ def test_ensure_skill_version_keeps_same_name_different_owners_distinct(tmp_path
         scoped = [version for version in versions if version.skill_definition_id == skill_definition_id]
         return scoped[-1] if scoped else None
 
-    async def create_version(db, *, definition, source_package_version, description, content_hash, file_manifest_hash, artifact_uri, created_by_user_id):
+    async def create_version(db, *, definition, source_package_version, description, content_hash, file_manifest_hash, created_by_user_id):
         version = SkillVersion(
             id=len(versions) + 1,
             skill_id=_terminal_skill_id(definition.id),
@@ -269,7 +242,6 @@ def test_ensure_skill_version_keeps_same_name_different_owners_distinct(tmp_path
             description=description,
             content_hash=content_hash,
             file_manifest_hash=file_manifest_hash,
-            artifact_uri=artifact_uri,
             created_by_user_id=created_by_user_id,
             definition=definition,
         )
@@ -315,127 +287,8 @@ def test_ensure_skill_version_keeps_same_name_different_owners_distinct(tmp_path
     assert definition_b.source_identifier == "8"
     assert version_a.skill_definition_id == definition_a.id
     assert version_b.skill_definition_id == definition_b.id
-    assert version_a.artifact_uri == f"{_terminal_skill_id(definition_a.id)}/1"
-    assert version_b.artifact_uri == f"{_terminal_skill_id(definition_b.id)}/1"
-
-
-def test_ensure_skill_version_can_use_fork_source_identity(tmp_path, monkeypatch):
-    definitions: list[SkillDefinition] = []
-    versions: list[SkillVersion] = []
-
-    async def get_or_create(db, *, name, display_name, description, owner_user_id, source_type=None, source_identifier=None):
-        definition = SkillDefinition(
-            id=1,
-            name=name,
-            display_name=display_name,
-            description=description,
-            source_type=source_type,
-            source_identifier=source_identifier,
-            owner_user_id=owner_user_id,
-        )
-        definitions.append(definition)
-        return definition
-
-    async def get_by_definition_and_hash(db, *, skill_definition_id, content_hash):
-        return None
-
-    async def get_latest_for_definition(db, *, skill_definition_id):
-        return None
-
-    async def create_version(db, *, definition, source_package_version, description, content_hash, file_manifest_hash, artifact_uri, created_by_user_id):
-        version = SkillVersion(
-            id=1,
-            skill_id=_terminal_skill_id(definition.id),
-            skill_definition_id=definition.id,
-            version_number=1,
-            source_package_version=source_package_version,
-            description=description,
-            content_hash=content_hash,
-            file_manifest_hash=file_manifest_hash,
-            artifact_uri=artifact_uri,
-            created_by_user_id=created_by_user_id,
-            definition=definition,
-        )
-        versions.append(version)
-        return version
-
-    monkeypatch.setattr(skills_router.SkillDefinitionRepository, "get_or_create", get_or_create)
-    monkeypatch.setattr(skills_router.SkillVersionRepository, "get_by_definition_and_hash", get_by_definition_and_hash)
-    monkeypatch.setattr(skills_router.SkillVersionRepository, "get_latest_for_definition", get_latest_for_definition)
-    monkeypatch.setattr(skills_router.SkillVersionRepository, "create_version", create_version)
-    monkeypatch.setattr(skills_router, "_copy_version_artifact", lambda source_dir, artifact_uri, **kwargs: None)
-    _patch_terminal_skill_repository(monkeypatch)
-
-    skill_dir = tmp_path / "fork"
-    _write_skill_dir(skill_dir, version="pkg-a", marker="FORK_RUNTIME")
-
-    async def run():
-        return await skills_router._ensure_skill_version_from_dir(
-            FakeDb(),
-            user_id=7,
-            skill_name="demo-skill",
-            description="Fork",
-            source_package_version="pkg-a",
-            skill_dir=skill_dir,
-            definition_source_type="fork",
-            definition_source_identifier='{"source_version_id":91}',
-        )
-
-    version, created, definition = asyncio.run(run())
-
-    assert created is True
-    assert definition.source_type == "fork"
-    assert definition.source_identifier == '{"source_version_id":91}'
-    assert version.skill_definition_id == definition.id
-    assert version.artifact_uri == f"{_terminal_skill_id(definition.id)}/1"
-
-
-def test_uploaded_fork_claim_validates_against_server_record(monkeypatch):
-    source_definition = SkillDefinition(id=90, name="source-skill", source_type="user", source_identifier="8", owner_user_id=8)
-    source_version = SkillVersion(
-        id=91,
-        skill_definition_id=90,
-        version_number=3,
-        content_hash="c" * 64,
-        file_manifest_hash="f" * 64,
-        artifact_uri="artifacts/skills/90/v3/source-skill",
-        definition=source_definition,
-    )
-    claim = PendingSkillForkClaim(
-        id=12,
-        user_id=7,
-        source_skill_definition_id=90,
-        source_skill_version_id=91,
-        claim_token_hash="hashed",
-        status="pending",
-    )
-    claim.source_version = source_version
-
-    async def get_valid_claim(db, *, claim_id, user_id, claim_token, now):
-        assert claim_id == 12
-        assert user_id == 7
-        assert claim_token == "secret"
-        return claim
-
-    monkeypatch.setattr(skills_router.PendingSkillForkClaimRepository, "get_valid_claim", get_valid_claim)
-
-    async def run():
-        return await skills_router._validate_uploaded_fork_claim(
-            FakeDb(),
-            parsed_claim=skills_router.ParsedForkClaim(
-                claim_id=12,
-                claim_token="secret",
-                source_skill_definition_id=90,
-                source_skill_version_id=91,
-            ),
-            user_id=7,
-        )
-
-    validated = asyncio.run(run())
-
-    assert validated is not None
-    assert validated.source_version is source_version
-    assert skills_router._parse_recorded_source_version_id(validated.source_identifier) == 91
+    assert _terminal_version_path(version_a) == f"{_terminal_skill_id(definition_a.id)}/1"
+    assert _terminal_version_path(version_b) == f"{_terminal_skill_id(definition_b.id)}/1"
 
 
 def test_user_skill_definition_lookup_ignores_same_name_other_source(monkeypatch):
@@ -511,34 +364,34 @@ def test_version_artifact_copy_does_not_overwrite_prior_platform_version(tmp_pat
 
 def test_version_artifact_copy_skips_existing_destination_with_matching_hash(tmp_path, monkeypatch):
     skills_root = tmp_path / "skills"
-    monkeypatch.setattr(skills_router, "_resolve_skill_dir", lambda artifact_uri: skills_root / artifact_uri)
+    monkeypatch.setattr(skills_router, "_resolve_skill_dir", lambda version_relative_path: skills_root / version_relative_path)
     skill_dir = tmp_path / "skill"
     _write_skill_dir(skill_dir, version="pkg-a", marker="SKILL_RUNTIME_OK_V1")
     content_hash, file_manifest_hash = skills_router._hash_skill_directory(skill_dir)
-    artifact_uri = "00000000-0000-0000-0000-000000000001/1"
+    version_relative_path = "00000000-0000-0000-0000-000000000001/1"
 
-    skills_router._copy_version_artifact(skill_dir, artifact_uri, expected_content_hash=content_hash, expected_file_manifest_hash=file_manifest_hash)
-    skills_router._copy_version_artifact(skill_dir, artifact_uri, expected_content_hash=content_hash, expected_file_manifest_hash=file_manifest_hash)
+    skills_router._copy_version_artifact(skill_dir, version_relative_path, expected_content_hash=content_hash, expected_file_manifest_hash=file_manifest_hash)
+    skills_router._copy_version_artifact(skill_dir, version_relative_path, expected_content_hash=content_hash, expected_file_manifest_hash=file_manifest_hash)
 
-    assert "SKILL_RUNTIME_OK_V1" in (skills_root / artifact_uri / "SKILL.md").read_text(encoding="utf-8")
+    assert "SKILL_RUNTIME_OK_V1" in (skills_root / version_relative_path / "SKILL.md").read_text(encoding="utf-8")
 
 
 def test_version_artifact_copy_fails_when_existing_destination_hash_differs(tmp_path, monkeypatch):
     skills_root = tmp_path / "skills"
-    monkeypatch.setattr(skills_router, "_resolve_skill_dir", lambda artifact_uri: skills_root / artifact_uri)
+    monkeypatch.setattr(skills_router, "_resolve_skill_dir", lambda version_relative_path: skills_root / version_relative_path)
     v1_dir = tmp_path / "v1"
     v2_dir = tmp_path / "v2"
     _write_skill_dir(v1_dir, version="pkg-a", marker="SKILL_RUNTIME_OK_V1")
     _write_skill_dir(v2_dir, version="pkg-a", marker="SKILL_RUNTIME_OK_V2")
     v1_hash, v1_manifest_hash = skills_router._hash_skill_directory(v1_dir)
     v2_hash, v2_manifest_hash = skills_router._hash_skill_directory(v2_dir)
-    artifact_uri = "00000000-0000-0000-0000-000000000001/1"
+    version_relative_path = "00000000-0000-0000-0000-000000000001/1"
 
-    skills_router._copy_version_artifact(v1_dir, artifact_uri, expected_content_hash=v1_hash, expected_file_manifest_hash=v1_manifest_hash)
+    skills_router._copy_version_artifact(v1_dir, version_relative_path, expected_content_hash=v1_hash, expected_file_manifest_hash=v1_manifest_hash)
     with pytest.raises(ValueError, match="different content"):
-        skills_router._copy_version_artifact(v2_dir, artifact_uri, expected_content_hash=v2_hash, expected_file_manifest_hash=v2_manifest_hash)
+        skills_router._copy_version_artifact(v2_dir, version_relative_path, expected_content_hash=v2_hash, expected_file_manifest_hash=v2_manifest_hash)
 
-    assert "SKILL_RUNTIME_OK_V1" in (skills_root / artifact_uri / "SKILL.md").read_text(encoding="utf-8")
+    assert "SKILL_RUNTIME_OK_V1" in (skills_root / version_relative_path / "SKILL.md").read_text(encoding="utf-8")
 
 
 def test_check_upload_rejects_non_string_package_version():

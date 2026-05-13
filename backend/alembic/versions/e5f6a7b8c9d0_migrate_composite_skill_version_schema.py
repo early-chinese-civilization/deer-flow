@@ -45,7 +45,11 @@ def _has_constraint(table_name: str, constraint_name: str) -> bool:
     inspector = sa.inspect(op.get_bind())
     if inspector.get_pk_constraint(table_name).get("name") == constraint_name:
         return True
-    return any(constraint["name"] == constraint_name for constraint in inspector.get_foreign_keys(table_name)) or any(constraint["name"] == constraint_name for constraint in inspector.get_unique_constraints(table_name))
+    return (
+        any(constraint["name"] == constraint_name for constraint in inspector.get_foreign_keys(table_name))
+        or any(constraint["name"] == constraint_name for constraint in inspector.get_unique_constraints(table_name))
+        or any(constraint["name"] == constraint_name for constraint in inspector.get_check_constraints(table_name))
+    )
 
 
 def _relation_exists(relation_name: str) -> bool:
@@ -65,6 +69,16 @@ def _rename_indexes(pairs: Iterable[tuple[str, str]]) -> None:
 def _rename_constraint_if_exists(table_name: str, old_name: str, new_name: str) -> None:
     if _has_constraint(table_name, old_name) and not _has_constraint(table_name, new_name):
         op.execute(sa.text(f'ALTER TABLE "{table_name}" RENAME CONSTRAINT "{old_name}" TO "{new_name}"'))
+
+
+def _drop_index_if_exists(table_name: str, index_name: str) -> None:
+    if _has_index(table_name, index_name):
+        op.drop_index(index_name, table_name=table_name)
+
+
+def _drop_constraint_if_exists(table_name: str, constraint_name: str, constraint_type: str) -> None:
+    if _has_constraint(table_name, constraint_name):
+        op.drop_constraint(constraint_name, table_name, type_=constraint_type)
 
 
 def _assert_no_rows(sql: str, message: str) -> None:
@@ -117,6 +131,8 @@ def _upgrade_skill_versions() -> None:
         op.create_unique_constraint("uq_skill_versions_skill_content_hash", "skill_versions", ["skill_id", "content_hash"])
     if not _has_index("skill_versions", "ix_skill_versions_skill_id_created"):
         op.create_index("ix_skill_versions_skill_id_created", "skill_versions", ["skill_id", "created_at"])
+    if _has_column("skill_versions", "artifact_uri"):
+        op.drop_column("skill_versions", "artifact_uri")
 
 
 def _upgrade_skill_installations() -> None:
@@ -234,11 +250,92 @@ def _upgrade_skill_releases() -> None:
     if not _has_index("skill_releases", "ix_skill_releases_status_skill_version"):
         op.create_index("ix_skill_releases_status_skill_version", "skill_releases", ["status", "skill_id", "version_number"])
 
+    _drop_index_if_exists("skill_releases", "ix_skill_releases_skill_version_id")
+    _drop_constraint_if_exists("skill_releases", "fk_skill_releases_skill_version_id_skill_versions", "foreignkey")
+    if _has_column("skill_releases", "skill_version_id"):
+        op.drop_column("skill_releases", "skill_version_id")
+    if _has_column("skill_releases", "artifact_path"):
+        op.drop_column("skill_releases", "artifact_path")
+
+
+def _upgrade_agent_skills() -> None:
+    if _has_table("agents_skills") and not _has_table("agent_skills"):
+        op.rename_table("agents_skills", "agent_skills")
+    if not _has_table("agent_skills"):
+        return
+
+    _rename_constraint_if_exists("agent_skills", "agents_skills_pkey", "agent_skills_pkey")
+    _rename_constraint_if_exists("agent_skills", "fk_agents_skills_agent_id_agents", "fk_agent_skills_agent_id_agents")
+    _rename_constraint_if_exists("agent_skills", "fk_agents_skills_skill_install_id_skill_installations", "fk_agent_skills_skill_installation_id_skill_installations")
+    _rename_indexes(
+        (
+            ("ix_agents_skills_agent_id", "ix_agent_skills_agent_id"),
+            ("ix_agents_skills_deleted_at", "ix_agent_skills_deleted_at"),
+            ("ix_agents_skills_skill_install_id", "ix_agent_skills_skill_installation_id"),
+            ("uq_agents_skill_installs_active", "uq_agent_skills_agent_installation_active"),
+        )
+    )
+
+    if _has_column("agent_skills", "skill_install_id"):
+        if not _has_column("agent_skills", "skill_installation_id"):
+            op.alter_column("agent_skills", "skill_install_id", new_column_name="skill_installation_id", existing_type=sa.BigInteger(), existing_nullable=True)
+        else:
+            op.drop_column("agent_skills", "skill_install_id")
+
+    _rename_constraint_if_exists("agent_skills", "fk_agents_skills_skill_install_id_skill_installations", "fk_agent_skills_skill_installation_id_skill_installations")
+
+    _assert_no_rows(
+        "SELECT count(*) FROM agent_skills WHERE skill_installation_id IS NULL",
+        "Cannot migrate agent_skills: every active binding must resolve to skill_installation_id",
+    )
+    op.alter_column("agent_skills", "skill_installation_id", existing_type=sa.BigInteger(), nullable=False)
+
+    for constraint_name, constraint_type in (
+        ("ck_agents_skills_has_skill_or_install", "check"),
+        ("ck_agents_skills_system_version_has_definition", "check"),
+        ("fk_agents_skills_system_skill_definition_id_skill_definitions", "foreignkey"),
+        ("fk_agents_skills_system_skill_version_id_skill_versions", "foreignkey"),
+    ):
+        _drop_constraint_if_exists("agent_skills", constraint_name, constraint_type)
+
+    for index_name in (
+        "uq_agents_skills_active",
+        "ix_agents_skills_skill_id",
+        "uq_agents_system_skill_versions_active",
+        "ix_agents_skills_system_skill_version_id",
+    ):
+        _drop_index_if_exists("agent_skills", index_name)
+
+    for column_name in ("skill_id", "system_skill_definition_id", "system_skill_version_id"):
+        if _has_column("agent_skills", column_name):
+            op.drop_column("agent_skills", column_name)
+
+    if not _has_constraint("agent_skills", "fk_agent_skills_skill_installation_id_skill_installations"):
+        op.create_foreign_key(
+            "fk_agent_skills_skill_installation_id_skill_installations",
+            "agent_skills",
+            "skill_installations",
+            ["skill_installation_id"],
+            ["id"],
+            ondelete="CASCADE",
+        )
+    if not _has_index("agent_skills", "uq_agent_skills_agent_installation_active"):
+        op.create_index(
+            "uq_agent_skills_agent_installation_active",
+            "agent_skills",
+            ["agent_id", "skill_installation_id"],
+            unique=True,
+            postgresql_where=sa.text("deleted_at IS NULL"),
+        )
+    if not _has_index("agent_skills", "ix_agent_skills_skill_installation_id"):
+        op.create_index("ix_agent_skills_skill_installation_id", "agent_skills", ["skill_installation_id"])
+
 
 def upgrade() -> None:
     _upgrade_skill_versions()
     _upgrade_skill_installations()
     _upgrade_skill_releases()
+    _upgrade_agent_skills()
 
 
 def downgrade() -> None:
@@ -277,3 +374,6 @@ def downgrade() -> None:
         op.drop_constraint("fk_skill_versions_skill_id_skills", "skill_versions", type_="foreignkey")
     if _has_column("skill_versions", "skill_id"):
         op.drop_column("skill_versions", "skill_id")
+    if not _has_column("skill_versions", "artifact_uri"):
+        op.add_column("skill_versions", sa.Column("artifact_uri", sa.String(length=500), nullable=False, server_default="", comment="Legacy compatibility path"))
+        op.alter_column("skill_versions", "artifact_uri", server_default=None)

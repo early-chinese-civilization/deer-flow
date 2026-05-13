@@ -240,7 +240,7 @@ void test("update confirmation copy avoids public latest and package internals",
 
 void test("Skills workspace copy avoids forbidden internal terms", () => {
   const forbiddenTerms =
-    /public latest|custom|package version|artifact|Runtime Manifest|skill_definition_id|skill_install_id|source namespace/i;
+    /public latest|custom|package version|artifact|Runtime Manifest|skill_definition_id|skill_install_id|skill_installation_id|source namespace/i;
 
   assert.doesNotMatch(
     collectSkillsCopy(enUS.settings.skills).join(" "),
@@ -254,7 +254,7 @@ void test("Skills workspace copy avoids forbidden internal terms", () => {
 
 void test("Agent and chat Skill metadata copy avoids forbidden internal terms", () => {
   const forbiddenTerms =
-    /package version|artifact|Runtime Manifest|skill_definition_id|skill_install_id|source namespace/i;
+    /package version|artifact|Runtime Manifest|skill_definition_id|skill_install_id|skill_installation_id|source namespace/i;
 
   assert.doesNotMatch(
     collectAgentSkillCopy(enUS.agents).join(" "),

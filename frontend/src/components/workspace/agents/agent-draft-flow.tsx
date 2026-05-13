@@ -56,7 +56,7 @@ import {
   getAgentSkillSelectionGroups,
   getMetadataDisplaySummary,
   getMetadataSelectionKey,
-  getSelectionInstallIds as getSelectionInstallIdsFromForm,
+  getSelectionSkillInstallationIds,
   getSkillDisplaySummary,
   getSkillSelectionKey,
   type AgentSkillDisplaySummary,
@@ -144,8 +144,8 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
     [agent?.skill_metadata],
   );
 
-  function getSelectionInstallIds(): number[] {
-    return getSelectionInstallIdsFromForm(form.skills);
+  function getSelectionSkillInstallationIdsFromForm(): number[] {
+    return getSelectionSkillInstallationIds(form.skills);
   }
 
   function getSkillSummary(skill: (typeof visibleSkills)[number]) {
@@ -389,22 +389,22 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
 
     try {
       if (mode === "create") {
-        const skillInstallIds = getSelectionInstallIds();
+        const skillInstallationIds = getSelectionSkillInstallationIdsFromForm();
         await createAgentMutation.mutateAsync({
           name: normalizedName,
           description: form.description.trim(),
           soul: form.soul.trim(),
-          skill_install_ids:
-            skillInstallIds.length > 0 ? skillInstallIds : null,
+          skill_installation_ids:
+            skillInstallationIds.length > 0 ? skillInstallationIds : null,
         });
       } else {
-        const skillInstallIds = getSelectionInstallIds();
+        const skillInstallationIds = getSelectionSkillInstallationIdsFromForm();
         await updateAgentMutation.mutateAsync({
           name: agentName!,
           request: {
             description: form.description.trim(),
             soul: form.soul.trim(),
-            skill_install_ids: skillInstallIds,
+            skill_installation_ids: skillInstallationIds,
           },
         });
       }

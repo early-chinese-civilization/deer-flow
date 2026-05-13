@@ -70,7 +70,8 @@ def test_skill_releases_reference_exact_terminal_version_with_status() -> None:
     assert columns.status.nullable is False
     assert columns.published_at.nullable is True
     assert columns.updated_at.nullable is False
-    assert "skill_version_id" in columns
+    assert "skill_version_id" not in columns
+    assert "artifact_path" not in columns
 
     constrained, referred = _foreign_key_constraint_columns(SkillRelease.__table__, "fk_skill_releases_skill_version_composite")
     assert constrained == ("skill_id", "version_number")
@@ -86,10 +87,14 @@ def test_composite_skill_schema_migration_backfills_and_constrains_terminal_colu
     migration = migration_path.read_text(encoding="utf-8")
     assert "skill_identity_migration_map" in migration
     assert "skill_installations" in migration
-    assert "fk_agents_skills_skill_install_id_skill_installations" in migration
+    assert "agent_skills" in migration
+    assert "skill_installation_id" in migration
+    assert "fk_agent_skills_skill_installation_id_skill_installations" in migration
     assert "fk_skill_installations_skill_version_composite" in migration
     assert "fk_skill_releases_skill_version_composite" in migration
     assert "uq_skill_versions_skill_version_number" in migration
     assert "uq_skill_releases_skill_version" in migration
     assert "current_version_id = version.id" in migration
     assert "release.skill_version_id = version.id" in migration
+    assert 'op.drop_column("skill_releases", "skill_version_id")' in migration
+    assert 'op.drop_column("skill_releases", "artifact_path")' in migration

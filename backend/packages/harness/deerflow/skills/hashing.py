@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-PLATFORM_GENERATED_CONTENT_PATHS = frozenset({".deerflow/fork.json"})
+PLATFORM_GENERATED_CONTENT_PATHS = frozenset()
 
 
 def split_skill_md_frontmatter(content: str) -> tuple[dict, str]:

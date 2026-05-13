@@ -17,16 +17,11 @@ REQUIRED_GATEWAY_TABLES = frozenset(
         "workspaces",
         "threads",
         "agents",
-        "agents_skills",
+        "agent_skills",
         "skills",
-        "legacy_skills",
-        "skill_identity_migration_map",
-        "skill_definitions",
         "skill_versions",
         "skill_installations",
         "skill_releases",
-        "pending_skill_fork_claims",
-        "runtime_manifests",
     }
 )
 REQUIRED_GATEWAY_COLUMNS = {
@@ -80,14 +75,11 @@ REQUIRED_GATEWAY_COLUMNS = {
             "deleted_at",
         }
     ),
-    "agents_skills": frozenset(
+    "agent_skills": frozenset(
         {
             "id",
             "agent_id",
-            "skill_id",
-            "skill_install_id",
-            "system_skill_definition_id",
-            "system_skill_version_id",
+            "skill_installation_id",
             "display_order",
             "enabled",
             "created_at",
@@ -106,33 +98,8 @@ REQUIRED_GATEWAY_COLUMNS = {
             "deleted_at",
         }
     ),
-    "legacy_skills": frozenset(
-        {
-            "id",
-            "user_id",
-            "owner_user_id",
-            "name",
-            "display_name",
-            "description",
-            "file_path",
-            "skill_definition_id",
-            "created_at",
-            "updated_at",
-            "deleted_at",
-        }
-    ),
-    "skill_identity_migration_map": frozenset(
-        {
-            "old_skill_definition_id",
-            "skill_id",
-            "old_skill_id",
-            "migration_source",
-            "created_at",
-        }
-    ),
     "skill_releases": frozenset(
         {
-            "id",
             "skill_id",
             "version_number",
             "skill_name",
@@ -141,41 +108,20 @@ REQUIRED_GATEWAY_COLUMNS = {
             "description",
             "release_notes",
             "status",
-            "artifact_path",
             "publisher_user_id",
-            "source_skill_id",
-            "published_skill_id",
-            "skill_version_id",
             "published_at",
             "created_at",
             "updated_at",
         }
     ),
-    "skill_definitions": frozenset(
-        {
-            "id",
-            "name",
-            "display_name",
-            "description",
-            "source_type",
-            "source_identifier",
-            "owner_user_id",
-            "created_at",
-            "updated_at",
-            "deleted_at",
-        }
-    ),
     "skill_versions": frozenset(
         {
-            "id",
             "skill_id",
-            "skill_definition_id",
             "version_number",
             "source_package_version",
             "description",
             "content_hash",
             "file_manifest_hash",
-            "artifact_uri",
             "created_by_user_id",
             "created_at",
         }
@@ -187,49 +133,17 @@ REQUIRED_GATEWAY_COLUMNS = {
             "skill_id",
             "version_number",
             "status",
-            "skill_definition_id",
-            "installed_version_id",
-            "current_version_id",
             "created_at",
             "updated_at",
             "deleted_at",
         }
     ),
-    "pending_skill_fork_claims": frozenset(
-        {
-            "id",
-            "user_id",
-            "source_skill_definition_id",
-            "source_skill_version_id",
-            "claim_token_hash",
-            "status",
-            "source_snapshot",
-            "expires_at",
-            "claimed_at",
-            "created_at",
-            "updated_at",
-        }
-    ),
-    "runtime_manifests": frozenset(
-        {
-            "id",
-            "user_id",
-            "agent_id",
-            "agent_name",
-            "manifest_json",
-            "manifest_hash",
-            "created_at",
-        }
-    ),
 }
 
 REQUIRED_GATEWAY_COLUMN_SIGNATURES = {
+    ("threads", "agent_id"): {"udt_name": "int8", "is_nullable": "YES"},
     ("skills", "id"): {"udt_name": "uuid", "is_nullable": "NO"},
     ("skills", "owner_user_id"): {"udt_name": "int8", "is_nullable": "NO"},
-    ("legacy_skills", "id"): {"udt_name": "int8", "is_nullable": "NO"},
-    ("skill_identity_migration_map", "old_skill_definition_id"): {"udt_name": "int8", "is_nullable": "NO"},
-    ("skill_identity_migration_map", "skill_id"): {"udt_name": "uuid", "is_nullable": "NO"},
-    ("skill_identity_migration_map", "migration_source"): {"udt_name": "varchar", "is_nullable": "NO"},
     ("skill_versions", "skill_id"): {"udt_name": "uuid", "is_nullable": "NO"},
     ("skill_versions", "version_number"): {"udt_name": "int4", "is_nullable": "NO"},
     ("skill_installations", "skill_id"): {"udt_name": "uuid", "is_nullable": "NO"},
@@ -238,30 +152,20 @@ REQUIRED_GATEWAY_COLUMN_SIGNATURES = {
     ("skill_releases", "skill_id"): {"udt_name": "uuid", "is_nullable": "NO"},
     ("skill_releases", "version_number"): {"udt_name": "int4", "is_nullable": "NO"},
     ("skill_releases", "status"): {"udt_name": "varchar", "is_nullable": "NO"},
+    ("agent_skills", "skill_installation_id"): {"udt_name": "int8", "is_nullable": "NO"},
 }
 
 REQUIRED_GATEWAY_INDEXES = {
     "users": frozenset({"ix_users_external_auth_id"}),
     "skills": frozenset({"uq_skills_owner_name_active", "ix_skills_owner_user_id", "ix_skills_deleted_at"}),
-    "legacy_skills": frozenset({"ix_legacy_skills_skill_definition_id", "ix_legacy_skills_deleted_at"}),
-    "skill_identity_migration_map": frozenset({"ix_skill_identity_migration_map_skill_id", "ix_skill_identity_migration_map_old_skill_id"}),
     "skill_versions": frozenset({"ix_skill_versions_skill_id_created"}),
     "skill_installations": frozenset({"uq_skill_installations_user_skill_active", "ix_skill_installations_skill_version"}),
     "skill_releases": frozenset({"ix_skill_releases_status_skill_version"}),
+    "agent_skills": frozenset({"uq_agent_skills_agent_installation_active", "ix_agent_skills_skill_installation_id"}),
 }
 
 REQUIRED_GATEWAY_CONSTRAINTS = {
     "skills": frozenset({"skills_pkey", "fk_skills_owner_user_id_users"}),
-    "skill_identity_migration_map": frozenset(
-        {
-            "skill_identity_migration_map_pkey",
-            "fk_skill_identity_migration_map_old_skill_definition_id_skill_definitions",
-            "fk_skill_identity_migration_map_skill_id_skills",
-            "fk_skill_identity_migration_map_old_skill_id_legacy_skills",
-            "uq_skill_identity_migration_map_skill_id",
-            "uq_skill_identity_migration_map_migration_source",
-        }
-    ),
     "skill_versions": frozenset(
         {
             "fk_skill_versions_skill_id_skills",
@@ -279,6 +183,13 @@ REQUIRED_GATEWAY_CONSTRAINTS = {
         {
             "fk_skill_releases_skill_version_composite",
             "uq_skill_releases_skill_version",
+        }
+    ),
+    "agent_skills": frozenset(
+        {
+            "agent_skills_pkey",
+            "fk_agent_skills_agent_id_agents",
+            "fk_agent_skills_skill_installation_id_skill_installations",
         }
     ),
 }

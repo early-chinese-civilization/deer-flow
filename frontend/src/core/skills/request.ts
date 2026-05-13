@@ -24,14 +24,17 @@ export function buildSkillHubInstallRequest(
 export function buildSkillInstallUpdatePreviewRequest(
   baseUrl: string,
   skillName: string,
-  skillInstallId?: number | null,
+  skillInstallationId?: number | null,
 ): [string, RequestInit] {
   const url = new URL(
     buildSkillRoute(baseUrl, skillName, "update-install/preview"),
     "http://placeholder.local",
   );
-  if (skillInstallId != null) {
-    url.searchParams.set("skill_install_id", String(skillInstallId));
+  if (skillInstallationId != null) {
+    url.searchParams.set(
+      "skill_installation_id",
+      String(skillInstallationId),
+    );
   }
   const pathnameWithQuery = baseUrl
     ? url.toString().replace("http://placeholder.local", "")

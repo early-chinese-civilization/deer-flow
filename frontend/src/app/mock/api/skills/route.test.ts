@@ -10,8 +10,7 @@ type MockSkill = {
   description?: string | null;
   release_notes?: string | null;
   owner_display_name?: string | null;
-  skill_definition_id?: number | null;
-  skill_install_id?: number | null;
+  skill_installation_id?: number | null;
   current_platform_version?: number | null;
   latest_platform_version?: number | null;
   update_available?: boolean | null;
@@ -57,8 +56,8 @@ void test("mock Skills payload covers System, Community, and Personal states", a
     skills.some(
       (skill) =>
         skill.space === "personal" &&
-        skill.viewer_relation === "downloaded" &&
-        skill.skill_install_id != null &&
+        skill.viewer_relation === "installed" &&
+        skill.skill_installation_id != null &&
         skill.current_platform_version === 2,
     ),
   );
@@ -107,7 +106,7 @@ void test("mock Skills payload covers terminal identity, publisher, installer, a
     skills.some(
       (skill) =>
         skill.space === "personal" &&
-        skill.viewer_relation === "downloaded" &&
+        skill.viewer_relation === "installed" &&
         skill.owner_display_name === "Mina Park" &&
         skill.skill_id === "00000000-0000-0000-0000-000000000102",
     ),
@@ -142,6 +141,6 @@ void test("mock Skills user-facing text avoids forbidden internal terms", async 
 
   assert.doesNotMatch(
     userFacingText,
-    /public latest|custom|package version|artifact|Runtime Manifest|skill_definition_id|skill_install_id|source namespace/i,
+    /public latest|package version|artifact|Runtime Manifest|source namespace/i,
   );
 });

@@ -1,34 +1,30 @@
 export type SkillSpace = "system" | "community" | "personal";
-export type SkillSourceKind = "official" | "community" | "personal" | "fork";
+export type SkillSourceKind = "official" | "community" | "personal";
 export type SkillViewerRelation =
   | "system_available"
   | "official_available"
   | "community_available"
-  | "downloaded"
+  | "installed"
   | "authored"
   | "authored_published"
   | "authored_unpublished_changes"
-  | "update_available"
-  | "forked";
+  | "update_available";
 
 export interface Skill {
   skill_id?: string | null;
   version_number?: number | null;
   name: string;
   description: string;
-  category: "public" | "custom";
-  space?: SkillSpace | null;
-  source_kind?: SkillSourceKind | null;
-  viewer_relation?: SkillViewerRelation | null;
+  space: SkillSpace;
+  source_kind: SkillSourceKind;
+  viewer_relation: SkillViewerRelation;
   license: string | null;
   enabled: boolean;
   version?: string | null;
   platform_version?: number | null;
-  /** @deprecated Legacy compatibility field; do not use as Skill identity. */
-  skill_definition_id?: number | null;
   skill_definition_source_type?: string | null;
   skill_definition_source_identifier?: string | null;
-  skill_install_id?: number | null;
+  skill_installation_id?: number | null;
   current_platform_version?: number | null;
   installed_platform_version?: number | null;
   latest_platform_version?: number | null;
@@ -39,9 +35,6 @@ export interface Skill {
   release_status?: "published" | null;
   release_notes?: string | null;
   published_at?: string | null;
-  fork_source_skill_name?: string | null;
-  fork_source_owner_display_name?: string | null;
-  fork_source_platform_version?: number | null;
   owner_user_id?: number | null;
   owner_display_name?: string | null;
 }

@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.db.models import Agent, SkillDefinition, User
@@ -27,11 +27,9 @@ class AgentSkillMetadataResponse(BaseModel):
     """Installed skill binding metadata for Agent display surfaces."""
 
     name: str = Field(..., description="Skill name resolved from the bound install/current version")
-    skill_install_id: int | None = Field(default=None, description="Agent-bound SkillInstall ID")
-    skill_definition_id: int | None = Field(default=None, description="Stable SkillDefinition ID")
-    skill_version_id: int | None = Field(default=None, description="Current installed SkillVersion ID")
-    system_skill_definition_id: int | None = Field(default=None, description="Directly bound system SkillDefinition ID")
-    system_skill_version_id: int | None = Field(default=None, description="Directly bound system SkillVersion ID")
+    skill_installation_id: int | None = Field(default=None, description="Agent-bound Skill installation ID")
+    skill_id: str | None = Field(default=None, description="Terminal Skill UUID")
+    version_number: int | None = Field(default=None, description="Terminal Skill version number")
     current_platform_version: int | None = Field(default=None, description="Current installed platform version")
     source: Literal["system", "skillhub", "my_skills", "unknown"] = Field(default="unknown", description="Installed skill source enum for display")
     source_label: str = Field(default="Unknown source", description="Installed skill source label for display")
@@ -45,7 +43,6 @@ class AgentResponse(BaseModel):
 
     name: str = Field(..., description="Agent name (hyphen-case)")
     description: str = Field(default="", description="Agent description")
-    skills: list[str] | None = Field(default=None, description="Optional skills whitelist")
     skill_metadata: list[AgentSkillMetadataResponse] | None = Field(default=None, description="Installed skill binding metadata for display")
     soul: str | None = Field(default=None, description="SOUL.md content (included on GET /{name})")
 
@@ -59,23 +56,21 @@ class AgentsListResponse(BaseModel):
 class AgentCreateRequest(BaseModel):
     """Request body for creating a custom agent."""
 
+    model_config = ConfigDict(extra="allow")
+
     name: str = Field(..., description="Agent name (must match ^[A-Za-z0-9-]+$, stored as lowercase)")
     description: str = Field(default="", description="Agent description")
-    skills: list[str] | None = Field(default=None, description="Removed name-only binding field; submit skill_install_ids")
-    skill_install_ids: list[int] | None = Field(default=None, description="Optional install-backed skill binding IDs")
-    system_skill_version_ids: list[int] | None = Field(default=None, description="Removed direct system SkillVersion binding field")
-    system_skill_definition_ids: list[int] | None = Field(default=None, description="Removed direct system SkillDefinition binding field")
+    skill_installation_ids: list[int] | None = Field(default=None, description="Optional install-backed Skill installation IDs")
     soul: str = Field(default="", description="SOUL.md content - agent personality and behavioral guardrails")
 
 
 class AgentUpdateRequest(BaseModel):
     """Request body for updating a custom agent."""
 
+    model_config = ConfigDict(extra="allow")
+
     description: str | None = Field(default=None, description="Updated description")
-    skills: list[str] | None = Field(default=None, description="Removed name-only binding field; submit skill_install_ids")
-    skill_install_ids: list[int] | None = Field(default=None, description="Updated install-backed skill binding IDs")
-    system_skill_version_ids: list[int] | None = Field(default=None, description="Removed direct system SkillVersion binding field")
-    system_skill_definition_ids: list[int] | None = Field(default=None, description="Removed direct system SkillDefinition binding field")
+    skill_installation_ids: list[int] | None = Field(default=None, description="Updated install-backed Skill installation IDs")
     soul: str | None = Field(default=None, description="Updated SOUL.md content")
 
 
@@ -95,7 +90,7 @@ def _normalize_agent_name(name: str) -> str:
 
 def _active_skill_names(agent: Agent) -> list[str] | None:
     """Return ordered active skill names for an agent, or None when unrestricted."""
-    active_associations = [association for association in agent.agent_skills if association.deleted_at is None and association.enabled and (association.skill_install is not None or association.skill is not None)]
+    active_associations = [association for association in agent.agent_skills if association.deleted_at is None and association.enabled and association.skill_install is not None]
     if not active_associations:
         return None
 
@@ -106,8 +101,6 @@ def _active_skill_names(agent: Agent) -> list[str] | None:
             names.append(association.skill_install.definition.name)
         elif association.skill_install is not None and association.skill_install.current_version is not None and association.skill_install.current_version.definition is not None:
             names.append(association.skill_install.current_version.definition.name)
-        elif association.skill is not None:
-            names.append(association.skill.name)
     return names
 
 
@@ -125,13 +118,13 @@ def _skill_source_for_agent(agent: Agent, definition: SkillDefinition | None, te
     return "skillhub", owner_display_name or "SkillHub"
 
 
-def _active_skill_metadata(agent: Agent, *, latest_versions_by_definition_id: Mapping[int, int] | None = None) -> list[AgentSkillMetadataResponse] | None:
+def _active_skill_metadata(agent: Agent, *, latest_versions_by_skill_id: Mapping[str, int] | None = None) -> list[AgentSkillMetadataResponse] | None:
     """Return ordered display metadata for active agent skill bindings."""
-    active_associations = [association for association in agent.agent_skills if association.deleted_at is None and association.enabled and (association.skill_install is not None or association.skill is not None)]
+    active_associations = [association for association in agent.agent_skills if association.deleted_at is None and association.enabled and association.skill_install is not None]
     if not active_associations:
         return None
 
-    latest_versions_by_definition_id = latest_versions_by_definition_id or {}
+    latest_versions_by_skill_id = latest_versions_by_skill_id or {}
     active_associations.sort(key=lambda association: (association.display_order, association.id))
     metadata: list[AgentSkillMetadataResponse] = []
     for association in active_associations:
@@ -145,29 +138,26 @@ def _active_skill_metadata(agent: Agent, *, latest_versions_by_definition_id: Ma
         name = None
         if definition is not None:
             name = definition.name
-        elif association.skill is not None:
-            name = association.skill.name
         if name is None:
             name = "unknown"
 
-        skill_definition_id = definition.id if definition is not None else (current_version.skill_definition_id if current_version is not None else None)
         current_version_matches_install = install is not None and current_version is not None and current_version.id == install.current_version_id
         current_version_matches_definition = install is not None and current_version is not None and current_version.skill_definition_id == install.skill_definition_id
-        available = install_active and definition is not None and current_version_matches_install and current_version_matches_definition
-        latest_version_id = latest_versions_by_definition_id.get(skill_definition_id) if skill_definition_id is not None else None
+        current_version_matches_terminal = install is not None and current_version is not None and current_version.skill_id == install.skill_id and current_version.version_number == install.version_number
+        available = install_active and definition is not None and current_version_matches_install and current_version_matches_definition and current_version_matches_terminal
+        terminal_skill_id = str(install.skill_id) if install is not None and install.skill_id is not None else None
+        latest_version_number = latest_versions_by_skill_id.get(terminal_skill_id) if terminal_skill_id is not None else None
         update_available = None
-        if available and install is not None and latest_version_id is not None:
-            update_available = latest_version_id != install.current_version_id
+        if available and install is not None and latest_version_number is not None:
+            update_available = latest_version_number != install.version_number
         source, source_label = _skill_source_for_agent(agent, definition, install.skill if install is not None else None)
 
         metadata.append(
             AgentSkillMetadataResponse(
                 name=name,
-                skill_install_id=install.id if install is not None else None,
-                skill_definition_id=skill_definition_id,
-                skill_version_id=current_version.id if current_version is not None else None,
-                system_skill_definition_id=None,
-                system_skill_version_id=None,
+                skill_installation_id=install.id if install is not None else None,
+                skill_id=terminal_skill_id,
+                version_number=install.version_number if install is not None else None,
                 current_platform_version=current_version.version_number if current_version is not None else None,
                 source=source,
                 source_label=source_label,
@@ -179,9 +169,9 @@ def _active_skill_metadata(agent: Agent, *, latest_versions_by_definition_id: Ma
     return metadata
 
 
-def _collect_bound_definition_ids(agents: list[Agent]) -> set[int]:
-    """Collect definition IDs from active install-backed bindings."""
-    definition_ids: set[int] = set()
+def _collect_bound_skill_ids(agents: list[Agent]) -> set[str]:
+    """Collect terminal Skill IDs from active install-backed bindings."""
+    skill_ids: set[str] = set()
     for agent in agents:
         for association in agent.agent_skills:
             if association.deleted_at is not None or not association.enabled or association.skill_install is None:
@@ -189,103 +179,70 @@ def _collect_bound_definition_ids(agents: list[Agent]) -> set[int]:
             install = association.skill_install
             if install.deleted_at is not None:
                 continue
-            if install.skill_definition_id is not None:
-                definition_ids.add(install.skill_definition_id)
-    return definition_ids
+            if install.skill_id is not None:
+                skill_ids.add(str(install.skill_id))
+    return skill_ids
 
 
-async def _load_latest_version_ids_by_definition(db: AsyncSession, definition_ids: set[int]) -> dict[int, int]:
-    """Load latest published platform version IDs for update badges only."""
-    latest_versions_by_definition_id: dict[int, int] = {}
-    for definition_id in definition_ids:
-        release = await SkillReleaseRepository.get_latest_published_release_for_definition(db, skill_definition_id=definition_id)
-        if release is not None and release.skill_version_id is not None:
-            latest_versions_by_definition_id[definition_id] = release.skill_version_id
-    return latest_versions_by_definition_id
+async def _load_latest_version_numbers_by_skill(db: AsyncSession, skill_ids: set[str]) -> dict[str, int]:
+    """Load latest published platform version numbers for update badges only."""
+    latest_versions_by_skill_id: dict[str, int] = {}
+    for skill_id in skill_ids:
+        release = await SkillReleaseRepository.get_latest_published_release_for_skill(db, skill_id=skill_id)
+        if release is not None:
+            latest_versions_by_skill_id[skill_id] = release.version_number
+    return latest_versions_by_skill_id
 
 
 def _agent_to_response(
     agent: Agent,
     *,
     include_soul: bool = False,
-    latest_versions_by_definition_id: Mapping[int, int] | None = None,
+    latest_versions_by_skill_id: Mapping[str, int] | None = None,
 ) -> AgentResponse:
     """Convert a database agent row to the API response model."""
     return AgentResponse(
         name=agent.name,
         description=agent.description or "",
-        skills=_active_skill_names(agent),
-        skill_metadata=_active_skill_metadata(agent, latest_versions_by_definition_id=latest_versions_by_definition_id),
+        skill_metadata=_active_skill_metadata(agent, latest_versions_by_skill_id=latest_versions_by_skill_id),
         soul=agent.soul if include_soul else None,
     )
 
 
-async def _resolve_skill_install_ids(
+async def _resolve_skill_installation_ids_for_request(
     db: AsyncSession,
     *,
     user_id: int,
-    skill_names: list[str],
-) -> list[int]:
-    """Resolve request skill names to current-user install IDs."""
-    skill_install_ids: list[int] = []
-    seen_skill_names: set[str] = set()
-    for skill_name in skill_names:
-        if skill_name in seen_skill_names:
-            raise HTTPException(status_code=400, detail=f"Duplicate skill '{skill_name}'")
-        seen_skill_names.add(skill_name)
-        installs = await SkillInstallRepository.list_by_user_and_name(db, user_id=user_id, name=skill_name)
-        if not installs:
-            raise HTTPException(status_code=400, detail=f"Skill install '{skill_name}' not found")
-        if len(installs) > 1:
-            raise HTTPException(status_code=400, detail=f"Skill install '{skill_name}' is ambiguous; submit skill_install_ids instead")
-        install = installs[0]
-        skill_install_ids.append(install.id)
-    return skill_install_ids
-
-
-async def _resolve_skill_install_ids_for_request(
-    db: AsyncSession,
-    *,
-    user_id: int,
-    skill_install_ids: list[int] | None,
+    skill_installation_ids: list[int] | None,
     skill_names: list[str] | None,
 ) -> list[int]:
     """Resolve install IDs for terminal custom Agent bindings."""
     if skill_names is not None:
-        raise HTTPException(status_code=400, detail="Agent skill name bindings are removed. Submit skill_install_ids.")
-    if skill_install_ids is not None:
+        raise HTTPException(status_code=400, detail="Agent skill name bindings are removed. Submit skill_installation_ids.")
+    if skill_installation_ids is not None:
         resolved: list[int] = []
         seen_install_ids: set[int] = set()
-        for skill_install_id in skill_install_ids:
-            if skill_install_id in seen_install_ids:
-                raise HTTPException(status_code=400, detail=f"Duplicate skill install '{skill_install_id}'")
-            seen_install_ids.add(skill_install_id)
-            install = await SkillInstallRepository.get_by_id_for_user(db, user_id=user_id, skill_install_id=skill_install_id)
+        for skill_installation_id in skill_installation_ids:
+            if skill_installation_id in seen_install_ids:
+                raise HTTPException(status_code=400, detail=f"Duplicate skill installation '{skill_installation_id}'")
+            seen_install_ids.add(skill_installation_id)
+            install = await SkillInstallRepository.get_by_id_for_user(db, user_id=user_id, skill_installation_id=skill_installation_id)
             if install is None:
-                raise HTTPException(status_code=400, detail=f"Skill install '{skill_install_id}' not found")
+                raise HTTPException(status_code=400, detail=f"Skill installation '{skill_installation_id}' not found")
             resolved.append(install.id)
         return resolved
     return []
 
 
-async def _resolve_system_skill_version_ids_for_request(
-    db: AsyncSession,
-    *,
-    system_skill_version_ids: list[int] | None,
-    system_skill_definition_ids: list[int] | None,
-) -> list[int]:
-    """Reject removed direct system binding fields."""
-    if system_skill_version_ids is not None or system_skill_definition_ids is not None:
-        raise HTTPException(status_code=400, detail="Direct system Skill bindings are removed from custom Agents. Configure default_chat.system_skills or bind a skill_install_id.")
-    return []
-
-
 def _reject_removed_agent_binding_fields(request: AgentCreateRequest | AgentUpdateRequest) -> None:
     """Reject legacy Agent binding fields while preserving explicit 400 errors."""
-    if "skills" in request.model_fields_set:
-        raise HTTPException(status_code=400, detail="Agent skill name bindings are removed. Submit skill_install_ids.")
-    if "system_skill_version_ids" in request.model_fields_set or "system_skill_definition_ids" in request.model_fields_set:
-        raise HTTPException(status_code=400, detail="Direct system Skill bindings are removed from custom Agents. Configure default_chat.system_skills or bind a skill_install_id.")
+    extra_fields = set(request.model_extra or {})
+    if "skills" in extra_fields:
+        raise HTTPException(status_code=400, detail="Agent skill name bindings are removed. Submit skill_installation_ids.")
+    if "skill_install_ids" in extra_fields:
+        raise HTTPException(status_code=400, detail="skill_install_ids is removed. Submit skill_installation_ids.")
+    if "system_skill_version_ids" in extra_fields or "system_skill_definition_ids" in extra_fields:
+        raise HTTPException(status_code=400, detail="Direct system Skill bindings are removed from custom Agents. Configure default_chat.system_skills or bind a skill_installation_id.")
 
 
 @router.get(
@@ -301,8 +258,8 @@ async def list_agents(
 ) -> AgentsListResponse:
     try:
         agents = await AgentRepository.list_agents(db, current_user.id)
-        latest_versions_by_definition_id = await _load_latest_version_ids_by_definition(db, _collect_bound_definition_ids(agents))
-        return AgentsListResponse(agents=[_agent_to_response(agent, latest_versions_by_definition_id=latest_versions_by_definition_id) for agent in agents])
+        latest_versions_by_skill_id = await _load_latest_version_numbers_by_skill(db, _collect_bound_skill_ids(agents))
+        return AgentsListResponse(agents=[_agent_to_response(agent, latest_versions_by_skill_id=latest_versions_by_skill_id) for agent in agents])
     except Exception as e:
         logger.error(f"Failed to list agents: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list agents: {str(e)}")
@@ -343,8 +300,8 @@ async def get_agent(
         agent = await AgentRepository.get_agent_by_name(db, user_id=current_user.id, name=normalized_name)
         if agent is None:
             raise HTTPException(status_code=404, detail=f"Agent '{normalized_name}' not found")
-        latest_versions_by_definition_id = await _load_latest_version_ids_by_definition(db, _collect_bound_definition_ids([agent]))
-        return _agent_to_response(agent, include_soul=True, latest_versions_by_definition_id=latest_versions_by_definition_id)
+        latest_versions_by_skill_id = await _load_latest_version_numbers_by_skill(db, _collect_bound_skill_ids([agent]))
+        return _agent_to_response(agent, include_soul=True, latest_versions_by_skill_id=latest_versions_by_skill_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -384,14 +341,14 @@ async def create_agent_endpoint(
             commit=False,
         )
 
-        if request.skill_install_ids is not None:
-            skill_install_ids = await _resolve_skill_install_ids_for_request(
+        if request.skill_installation_ids is not None:
+            skill_installation_ids = await _resolve_skill_installation_ids_for_request(
                 db,
                 user_id=current_user.id,
-                skill_install_ids=request.skill_install_ids,
+                skill_installation_ids=request.skill_installation_ids,
                 skill_names=None,
             )
-            agent = await AgentRepository.replace_agent_skills(db, agent=agent, skill_ids=[], skill_install_ids=skill_install_ids, system_skill_version_ids=None, commit=True)
+            agent = await AgentRepository.replace_agent_skills(db, agent=agent, skill_ids=[], skill_installation_ids=skill_installation_ids, commit=True)
         else:
             await db.commit()
             refreshed = await AgentRepository.get_agent_by_id(db, agent.id)
@@ -400,8 +357,8 @@ async def create_agent_endpoint(
             agent = refreshed
 
         logger.info(f"Created agent '{normalized_name}' for user {current_user.id}")
-        latest_versions_by_definition_id = await _load_latest_version_ids_by_definition(db, _collect_bound_definition_ids([agent]))
-        return _agent_to_response(agent, include_soul=True, latest_versions_by_definition_id=latest_versions_by_definition_id)
+        latest_versions_by_skill_id = await _load_latest_version_numbers_by_skill(db, _collect_bound_skill_ids([agent]))
+        return _agent_to_response(agent, include_soul=True, latest_versions_by_skill_id=latest_versions_by_skill_id)
     except HTTPException:
         await db.rollback()
         raise
@@ -441,14 +398,14 @@ async def update_agent(
             commit=False,
         )
 
-        if "skill_install_ids" in request.model_fields_set:
-            skill_install_ids = await _resolve_skill_install_ids_for_request(
+        if "skill_installation_ids" in request.model_fields_set:
+            skill_installation_ids = await _resolve_skill_installation_ids_for_request(
                 db,
                 user_id=current_user.id,
-                skill_install_ids=request.skill_install_ids,
+                skill_installation_ids=request.skill_installation_ids,
                 skill_names=None,
             )
-            agent = await AgentRepository.replace_agent_skills(db, agent=agent, skill_ids=[], skill_install_ids=skill_install_ids, system_skill_version_ids=None, commit=True)
+            agent = await AgentRepository.replace_agent_skills(db, agent=agent, skill_ids=[], skill_installation_ids=skill_installation_ids, commit=True)
         else:
             await db.commit()
             refreshed = await AgentRepository.get_agent_by_id(db, agent.id)
@@ -457,8 +414,8 @@ async def update_agent(
             agent = refreshed
 
         logger.info(f"Updated agent '{normalized_name}' for user {current_user.id}")
-        latest_versions_by_definition_id = await _load_latest_version_ids_by_definition(db, _collect_bound_definition_ids([agent]))
-        return _agent_to_response(agent, include_soul=True, latest_versions_by_definition_id=latest_versions_by_definition_id)
+        latest_versions_by_skill_id = await _load_latest_version_numbers_by_skill(db, _collect_bound_skill_ids([agent]))
+        return _agent_to_response(agent, include_soul=True, latest_versions_by_skill_id=latest_versions_by_skill_id)
     except HTTPException:
         await db.rollback()
         raise

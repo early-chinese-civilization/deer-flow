@@ -7,6 +7,11 @@ import {
   getSkillHubInstallFallbackError,
 } from "./request";
 import type { Skill } from "./type";
+import type {
+  SkillSourceKind,
+  SkillSpace,
+  SkillViewerRelation,
+} from "./type";
 
 export interface SkillUploadCheckResponse {
   filename: string;
@@ -19,10 +24,6 @@ export interface SkillUploadCheckResponse {
   same_version: boolean;
   exists: boolean;
   message: string;
-  recognized_as?: "fork" | "original";
-  fork_source_name?: string | null;
-  fork_source_owner_display_name?: string | null;
-  fork_source_platform_version?: number | null;
   unchanged_from_source?: boolean;
 }
 
@@ -37,7 +38,6 @@ export interface SkillUploadResult {
   action?: "created" | "updated" | "skipped" | null;
   success: boolean;
   message: string;
-  recognized_as?: "fork" | "original" | null;
 }
 
 export interface SkillUploadResponse {
@@ -50,19 +50,17 @@ export interface SkillHubInstallRequest {
 }
 
 export interface SkillPublishRequest {
-  skill_definition_id?: number | null;
   release_notes?: string | null;
 }
 
 export interface SkillInstallUpdateRequest {
-  skill_install_id: number;
+  skill_installation_id: number;
   skill_id: string;
   version_number: number;
 }
 
 export interface SkillManagementIdentity {
-  skill_definition_id?: number | null;
-  skill_install_id?: number | null;
+  skill_installation_id?: number | null;
 }
 
 export interface SkillUpdateAffectedAgent {
@@ -72,7 +70,7 @@ export interface SkillUpdateAffectedAgent {
 
 export interface SkillInstallUpdatePreview {
   skill_name: string;
-  skill_install_id: number;
+  skill_installation_id: number;
   skill_id?: string | null;
   version_number?: number | null;
   current_platform_version: number;
@@ -87,6 +85,60 @@ export interface SkillInstallUpdatePreview {
   affected_agents: SkillUpdateAffectedAgent[];
 }
 
+type SkillApiResponse = Omit<
+  Skill,
+  "space" | "source_kind" | "viewer_relation" | "skill_installation_id"
+> & {
+  category?: "public" | "custom" | null;
+  space?: SkillSpace | null;
+  source_kind?: SkillSourceKind | "fork" | null;
+  viewer_relation?: SkillViewerRelation | "downloaded" | "forked" | null;
+  skill_installation_id?: number | null;
+  skill_install_id?: number | null;
+};
+
+function normalizeSkillFromApi(raw: SkillApiResponse): Skill {
+  const space =
+    raw.space ??
+    (raw.skill_definition_source_type === "legacy" ||
+    (raw.category === "public" && raw.owner_user_id == null)
+      ? "system"
+      : raw.category === "public"
+        ? "community"
+        : "personal");
+  const sourceKind =
+    raw.source_kind === "fork"
+      ? "personal"
+      : raw.source_kind ??
+        (space === "system"
+          ? "official"
+          : space === "personal" && raw.skill_installation_id == null
+            ? "personal"
+            : "community");
+  const viewerRelation =
+    raw.viewer_relation === "downloaded"
+      ? "installed"
+      : raw.viewer_relation === "forked"
+        ? "authored"
+        : raw.viewer_relation ??
+          (space === "system"
+            ? "system_available"
+            : space === "community"
+              ? "community_available"
+              : sourceKind === "personal"
+                ? "authored"
+                : "installed");
+
+  return {
+    ...raw,
+    space,
+    source_kind: sourceKind,
+    viewer_relation: viewerRelation,
+    skill_installation_id:
+      raw.skill_installation_id ?? raw.skill_install_id ?? null,
+  };
+}
+
 export async function loadSkills() {
   const response = await fetch(`${getBackendBaseURL()}/api/skills`, {
     credentials: "include",
@@ -94,8 +146,8 @@ export async function loadSkills() {
   if (!response.ok) {
     throw new Error(`Failed to load skills: ${response.statusText}`);
   }
-  const json = (await response.json()) as { skills: Skill[] };
-  return json.skills;
+  const json = (await response.json()) as { skills: SkillApiResponse[] };
+  return json.skills.map(normalizeSkillFromApi);
 }
 
 export async function enableSkill(
@@ -112,8 +164,7 @@ export async function enableSkill(
       },
       body: JSON.stringify({
         enabled,
-        skill_definition_id: identity.skill_definition_id ?? null,
-        skill_install_id: identity.skill_install_id ?? null,
+        skill_installation_id: identity.skill_installation_id ?? null,
       }),
       credentials: "include",
     },
@@ -129,14 +180,9 @@ export async function deleteSkill(
     `${getBackendBaseURL()}/api/skills/${encodeURIComponent(skillName)}`,
     "http://placeholder.local",
   );
-  if (identity.skill_definition_id != null) {
-    url.searchParams.set(
-      "skill_definition_id",
-      String(identity.skill_definition_id),
-    );
-  }
-  if (identity.skill_install_id != null) {
-    url.searchParams.set("skill_install_id", String(identity.skill_install_id));
+  const skillInstallationId = identity.skill_installation_id;
+  if (skillInstallationId != null) {
+    url.searchParams.set("skill_installation_id", String(skillInstallationId));
   }
   const requestUrl = getBackendBaseURL()
     ? url.toString().replace("http://placeholder.local", "")
@@ -229,18 +275,18 @@ export async function installSkillHubSkill(
     );
   }
 
-  return response.json() as Promise<Skill>;
+  return normalizeSkillFromApi((await response.json()) as SkillApiResponse);
 }
 
 export async function previewSkillInstallUpdate(
   skillName: string,
-  skillInstallId?: number | null,
+  skillInstallationId?: number | null,
 ): Promise<SkillInstallUpdatePreview> {
   const response = await fetch(
     ...buildSkillInstallUpdatePreviewRequest(
       getBackendBaseURL(),
       skillName,
-      skillInstallId,
+      skillInstallationId,
     ),
   );
 
@@ -307,7 +353,7 @@ export async function publishSkill(
     );
   }
 
-  return response.json() as Promise<Skill>;
+  return normalizeSkillFromApi((await response.json()) as SkillApiResponse);
 }
 
 export interface InstallSkillRequest {

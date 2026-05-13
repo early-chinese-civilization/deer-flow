@@ -26,17 +26,14 @@ export function useEnableSkill() {
     mutationFn: async ({
       skillName,
       enabled,
-      skillDefinitionId,
-      skillInstallId,
+      skillInstallationId,
     }: {
       skillName: string;
       enabled: boolean;
-      skillDefinitionId?: number | null;
-      skillInstallId?: number | null;
+      skillInstallationId?: number | null;
     }) => {
       await enableSkill(skillName, enabled, {
-        skill_definition_id: skillDefinitionId,
-        skill_install_id: skillInstallId,
+        skill_installation_id: skillInstallationId,
       });
     },
     onSuccess: () => {
@@ -50,16 +47,13 @@ export function useDeleteSkill() {
   return useMutation({
     mutationFn: async ({
       skillName,
-      skillDefinitionId,
-      skillInstallId,
+      skillInstallationId,
     }: {
       skillName: string;
-      skillDefinitionId?: number | null;
-      skillInstallId?: number | null;
+      skillInstallationId?: number | null;
     }) =>
       deleteSkill(skillName, {
-        skill_definition_id: skillDefinitionId,
-        skill_install_id: skillInstallId,
+        skill_installation_id: skillInstallationId,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["skills"] });
@@ -106,11 +100,16 @@ export function useInstallSkillHubSkill() {
 
 export function usePreviewSkillInstallUpdate(
   skillName: string | null,
-  skillInstallId?: number | null,
+  skillInstallationId?: number | null,
 ) {
   return useQuery({
-    queryKey: ["skills", "update-preview", skillName, skillInstallId ?? null],
-    queryFn: () => previewSkillInstallUpdate(skillName!, skillInstallId),
+    queryKey: [
+      "skills",
+      "update-preview",
+      skillName,
+      skillInstallationId ?? null,
+    ],
+    queryFn: () => previewSkillInstallUpdate(skillName!, skillInstallationId),
     enabled: skillName !== null,
     staleTime: 0,
   });
@@ -121,20 +120,25 @@ export function useConfirmSkillInstallUpdate() {
   return useMutation({
     mutationFn: async ({
       skillName,
-      skillInstallId,
+      skillInstallationId,
       skillId,
       versionNumber,
     }: {
       skillName: string;
-      skillInstallId: number;
+      skillInstallationId?: number;
       skillId: string;
       versionNumber: number;
-    }) =>
-      confirmSkillInstallUpdate(skillName, {
-        skill_install_id: skillInstallId,
+    }) => {
+      const resolvedSkillInstallationId = skillInstallationId;
+      if (resolvedSkillInstallationId == null) {
+        throw new Error("Skill installation ID is required.");
+      }
+      return confirmSkillInstallUpdate(skillName, {
+        skill_installation_id: resolvedSkillInstallationId,
         skill_id: skillId,
         version_number: versionNumber,
-      }),
+      });
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["skills"] });
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
@@ -147,15 +151,12 @@ export function usePublishSkill() {
   return useMutation({
     mutationFn: async ({
       skillName,
-      skillDefinitionId,
       releaseNotes,
     }: {
       skillName: string;
-      skillDefinitionId?: number | null;
       releaseNotes?: string | null;
     }) =>
       publishSkill(skillName, {
-        skill_definition_id: skillDefinitionId,
         release_notes: releaseNotes,
       }),
     onSuccess: () => {

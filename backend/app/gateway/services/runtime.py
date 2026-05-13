@@ -14,7 +14,7 @@ from langchain_core.messages import convert_to_messages
 
 from app.gateway.db.engine import get_db_session
 from app.gateway.db.models import User
-from app.gateway.db.repository import AgentRepository, RuntimeManifestResolutionError, ThreadRepository
+from app.gateway.db.repository import AgentRepository, RuntimeSkillResolutionError, ThreadRepository
 from app.gateway.deps import get_checkpointer, get_run_manager, get_store, get_stream_bridge
 from app.gateway.services.ownership import ThreadAccessRecord
 from app.gateway.services.thread_store import upsert_thread_record
@@ -97,14 +97,12 @@ async def _load_runtime_agent_payload(*, user_id: int, agent_name: str | None) -
                 agent_name=agent_name,
             )
             await db.commit()
-    except RuntimeManifestResolutionError as exc:
+    except RuntimeSkillResolutionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return {
         "user_id": bundle.user_id,
         "agent_name": bundle.agent_name,
-        "manifest_id": bundle.manifest_id,
-        "manifest_hash": bundle.manifest_hash,
         "memory": bundle.memory_json,
         "soul": bundle.soul,
         "skills": [

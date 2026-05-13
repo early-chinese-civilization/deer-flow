@@ -493,25 +493,18 @@ A standard Agent Skill is a structured capability module — a Markdown file tha
 
 Skills are loaded progressively — only when the task needs them, not all at once. This keeps the context window lean and makes DeerFlow work well even with token-sensitive models.
 
-When you install `.skill` archives through the Gateway, DeerFlow accepts standard optional frontmatter metadata such as `version`, `author`, and `compatibility` instead of rejecting otherwise valid external skills. If `version` is present, it must be a string; DeerFlow treats it as a user-facing package version, not as enforced SemVer. Upload conflict checks compare the current user's same-name custom skill by package version: same name and same version is a duplicate, while same name with a different version updates that user's current custom skill copy rather than creating a second active skill.
+The Skill version model is defined by `docs-qy/skills-new/**` and `DeerFlow数据库ER图.md`. A Skill is identified by `skill.id`, a runnable version by `(skill_id, version_number)`, and content is resolved from `.deer-flow/skills/{skill_id}/{version_number}/`. Published visibility is represented by `skill_releases`; installing a Community Skill records a `skill_installation` for an exact version and does not copy a public latest package.
 
-Custom skills can be published into the public catalog as the current public latest. Each publish creates an immutable system release record with a generated `release_version`, the optional package `version` from `SKILL.md`, and optional publish-event release notes entered in the Skills Gallery. The `skills` table still represents the current visible/installable copy used by list, download, and agent binding; release records answer which publish produced a public latest copy. The Skills Gallery shows package versions when available, falls back to release versions, and requires confirmation before publishing a custom skill as public latest.
+Default chat is not a hidden Agent. It uses platform `default_chat.system_skills` entries, while custom Agents bind installed Skills through `agent_skills.skill_installation_id`.
 
 Tools follow the same philosophy. DeerFlow comes with a core toolset — web search, web fetch, file operations, bash execution — and supports custom tools via MCP servers and Python functions. Swap anything. Add anything.
 
 Gateway-generated follow-up suggestions now normalize both plain-string model output and block/list-style rich content before parsing the JSON array response, so provider-specific content wrappers do not silently drop suggestions.
 
 ```
-# Paths inside the sandbox container
-/mnt/skills/public
-├── research/SKILL.md
-├── report-generation/SKILL.md
-├── slide-creation/SKILL.md
-├── web-page/SKILL.md
-└── image-generation/SKILL.md
-
-/mnt/skills/custom
-└── your-custom-skill/SKILL.md      ← yours
+# Terminal Skill content layout
+.deer-flow/skills/{skill_id}/{version_number}/
+└── SKILL.md
 ```
 
 #### Claude Code Integration

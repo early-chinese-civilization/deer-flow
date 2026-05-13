@@ -12,7 +12,7 @@ function preview(
 ): SkillInstallUpdatePreview {
   return {
     skill_name: "demo-skill",
-    skill_install_id: 301,
+    skill_installation_id: 301,
     skill_id: "12345678-1234-5678-1234-567812345678",
     version_number: 2,
     current_platform_version: 1,

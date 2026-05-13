@@ -63,6 +63,7 @@ import {
   getSkillDisplayContract,
   getSkillHubLatestPlatformVersion,
   getSkillInstallState,
+  getSkillInstallationId,
   getSkillPlatformVersion,
   getSkillWorkspaceCardState,
   isCommunitySkill,
@@ -111,7 +112,7 @@ export function SkillsGallery() {
   const [releaseNotes, setReleaseNotes] = useState("");
   const updatePreview = usePreviewSkillInstallUpdate(
     updateCandidate?.name ?? null,
-    updateCandidate?.skill_install_id ?? null,
+    updateCandidate ? getSkillInstallationId(updateCandidate) : null,
   );
   const updateDialogState = getSkillInstallUpdateDialogState(
     updatePreview.data ?? null,
@@ -201,7 +202,7 @@ export function SkillsGallery() {
           );
     }
     if (
-      display.viewerRelation === "downloaded" ||
+      display.viewerRelation === "installed" ||
       display.viewerRelation === "update_available"
     ) {
       return t.settings.skills.installedFromSource(
@@ -241,15 +242,14 @@ export function SkillsGallery() {
     }
     if (
       display.space === "personal" &&
-      (display.viewerRelation === "authored" ||
-        display.viewerRelation === "forked")
+      display.viewerRelation === "authored"
     ) {
       return t.settings.skills.mySkill;
     }
     if (action === "view-update" || installState === "update-available") {
       return t.settings.skills.updateAvailable;
     }
-    if (action === "view-personal" || display.viewerRelation === "downloaded") {
+    if (action === "view-personal" || display.viewerRelation === "installed") {
       return t.settings.skills.installedToPersonal;
     }
     return t.settings.skills.availableInCommunity;
@@ -352,8 +352,7 @@ export function SkillsGallery() {
     try {
       await deleteSkill.mutateAsync({
         skillName: skill.name,
-        skillDefinitionId: skill.skill_definition_id ?? null,
-        skillInstallId: skill.skill_install_id ?? null,
+        skillInstallationId: getSkillInstallationId(skill),
       });
       toast.success(`${skill.name} ${t.common.delete}`);
     } catch (error) {
@@ -399,11 +398,13 @@ export function SkillsGallery() {
     const targetVersionNumber =
       updatePreview.data?.version_number ??
       updatePreview.data?.target_platform_version;
-    const skillInstallId = updateCandidate?.skill_install_id;
+    const skillInstallationId = updateCandidate
+      ? getSkillInstallationId(updateCandidate)
+      : null;
     const updateSkillName = updateCandidate?.name;
     if (
       !targetSkillId ||
-      !skillInstallId ||
+      !skillInstallationId ||
       !updateSkillName ||
       targetVersionNumber == null
     ) {
@@ -413,7 +414,7 @@ export function SkillsGallery() {
     try {
       await confirmSkillUpdate.mutateAsync({
         skillName: updateSkillName,
-        skillInstallId,
+        skillInstallationId,
         skillId: targetSkillId,
         versionNumber: targetVersionNumber,
       });
@@ -434,7 +435,6 @@ export function SkillsGallery() {
     try {
       await publishSkill.mutateAsync({
         skillName: publishCandidate.name,
-        skillDefinitionId: publishCandidate.skill_definition_id ?? null,
         releaseNotes: releaseNotes.trim() || null,
       });
       toast.success(t.settings.skills.publishSuccess(publishCandidate.name));

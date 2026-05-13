@@ -1,12 +1,10 @@
 import asyncio
-import json
 import logging
 import re
 import shutil
 import tempfile
 import uuid
 import zipfile
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -14,13 +12,12 @@ from typing import Literal
 import yaml
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.db.models import Agent, PendingSkillForkClaim, SkillDefinition, SkillInstall, SkillRelease, SkillVersion, User
+from app.gateway.db.models import Agent, SkillDefinition, SkillInstall, SkillRelease, SkillVersion, User
 from app.gateway.db.models import LegacySkill as Skill
 from app.gateway.db.repository import (
-    PendingSkillForkClaimRepository,
     SkillDefinitionRepository,
     SkillInstallRepository,
     SkillReleaseRepository,
@@ -47,24 +44,17 @@ router = APIRouter(prefix="/api", tags=["skills"])
 ALLOWED_SKILL_FRONTMATTER_KEYS = ALLOWED_FRONTMATTER_PROPERTIES
 
 SkillSpace = Literal["system", "community", "personal"]
-SkillSourceKind = Literal["official", "community", "personal", "fork"]
+SkillSourceKind = Literal["official", "community", "personal"]
 SkillViewerRelation = Literal[
     "system_available",
     "official_available",
     "community_available",
-    "downloaded",
+    "installed",
     "authored",
     "authored_published",
     "authored_unpublished_changes",
     "update_available",
-    "forked",
 ]
-
-_FORK_SOURCE_VERSION_KEYS = ("source_version_id", "source_version", "skill_version_id", "skill_version")
-_FORK_SOURCE_VERSION_RE = re.compile(r"(?:^|[;,\s|])(?:source[_-]?version(?:[_-]?id)?|skill[_-]?version(?:[_-]?id)?)[:=#](\d+)(?:$|[;,\s|])")
-_FORK_METADATA_RELATIVE_PATH = Path(".deerflow") / "fork.json"
-_FORK_METADATA_KIND = "deerflow.skill.fork"
-_FORK_CLAIM_EXPIRY_DAYS = 90
 
 _SKILL_DOWNLOAD_REMOVED = "skill_download_removed"
 _SKILL_FORK_REMOVED = "skill_fork_removed"
@@ -74,6 +64,32 @@ _TERMINAL_IDENTITY_REQUIRED = "terminal_identity_required"
 
 def _coded_http_error(status_code: int, *, code: str, message: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code, "message": message})
+
+
+def _extra_request_fields(request: BaseModel | None) -> set[str]:
+    return set(getattr(request, "model_extra", None) or {})
+
+
+def _reject_removed_skill_identity_fields(request: BaseModel | None) -> None:
+    extra_fields = _extra_request_fields(request)
+    if "skill_install_id" in extra_fields:
+        raise _coded_http_error(
+            400,
+            code=_TERMINAL_IDENTITY_REQUIRED,
+            message="skill_install_id is removed. Submit skill_installation_id.",
+        )
+    if "skill_definition_id" in extra_fields:
+        raise _coded_http_error(
+            400,
+            code=_TERMINAL_IDENTITY_REQUIRED,
+            message="skill_definition_id is removed. Submit skill_installation_id when disambiguation is needed.",
+        )
+    if "skill_version_id" in extra_fields:
+        raise _coded_http_error(
+            400,
+            code=_TERMINAL_IDENTITY_REQUIRED,
+            message="skill_version_id is removed. Submit skill_id and version_number.",
+        )
 
 
 def _raise_removed_route(*, code: str, message: str, status_code: int = 410) -> None:
@@ -105,25 +121,6 @@ def _require_terminal_identity(*, skill_id: str | uuid.UUID | None, version_numb
     return terminal_skill_id, terminal_version_number
 
 
-@dataclass(frozen=True)
-class ParsedForkClaim:
-    """Fork claim payload carried inside an uploaded package."""
-
-    claim_id: int
-    claim_token: str
-    source_skill_definition_id: int | None
-    source_skill_version_id: int | None
-
-
-@dataclass(frozen=True)
-class ValidatedForkClaim:
-    """Server-validated fork claim used to classify uploaded Skill content."""
-
-    claim: PendingSkillForkClaim
-    source_version: SkillVersion
-    source_identifier: str
-
-
 class SkillResponse(BaseModel):
     """Response model for skill information."""
 
@@ -141,11 +138,7 @@ class SkillResponse(BaseModel):
     owner_display_name: str | None = Field(default=None, description="Publisher display name for public skills")
     version: str | None = Field(default=None, description="Platform-managed version number for the skill")
     platform_version: int | None = Field(default=None, description="Platform-managed immutable content version")
-    skill_definition_id: int | None = Field(default=None, description="Stable platform skill definition ID")
-    skill_definition_source_type: str | None = Field(default=None, description="Stable skill definition source namespace type")
-    skill_definition_source_identifier: str | None = Field(default=None, description="Stable skill definition source namespace identifier")
-    skill_version_id: int | None = Field(default=None, description="Immutable platform skill version ID")
-    skill_install_id: int | None = Field(default=None, description="Current user's install ID when installed")
+    skill_installation_id: int | None = Field(default=None, description="Current user's install relation ID when installed")
     current_platform_version: int | None = Field(default=None, description="Current installed platform version")
     installed_platform_version: int | None = Field(default=None, description="Initially installed platform version")
     latest_platform_version: int | None = Field(default=None, description="Newest published platform version available to this install")
@@ -156,10 +149,6 @@ class SkillResponse(BaseModel):
     release_status: str | None = Field(default=None, description="Release status")
     release_notes: str | None = Field(default=None, description="Optional notes attached to the publish event")
     published_at: str | None = Field(default=None, description="Release publish timestamp")
-    fork_source_skill_name: str | None = Field(default=None, description="Original source Skill name for forked rows")
-    fork_source_owner_display_name: str | None = Field(default=None, description="Original source author display name for forked rows")
-    fork_source_platform_version: int | None = Field(default=None, description="Original source platform version for forked rows")
-    fork_source_skill_version_id: int | None = Field(default=None, description="Original source SkillVersion ID for forked rows")
 
 
 def _display_name_for_user(user: User | None) -> str | None:
@@ -206,8 +195,6 @@ def _derive_skill_source_kind(
 ) -> SkillSourceKind:
     if _is_official_skill_source(skill, definition):
         return "official"
-    if definition is not None and definition.source_type == "fork":
-        return "fork"
     if space == "personal" and authored_by_current_user:
         return "personal"
     return "community"
@@ -223,9 +210,6 @@ def _derive_skill_viewer_relation(
     latest_skill_version: SkillVersion | None,
     update_available: bool | None,
 ) -> SkillViewerRelation:
-    if source_kind == "fork":
-        return "forked"
-
     if space == "system":
         return "system_available"
 
@@ -247,7 +231,7 @@ def _derive_skill_viewer_relation(
 
     if update_available is True:
         return "update_available"
-    return "downloaded"
+    return "installed"
 
 
 class SkillsListResponse(BaseModel):
@@ -259,15 +243,21 @@ class SkillsListResponse(BaseModel):
 class SkillUpdateRequest(BaseModel):
     """Request model for updating a skill."""
 
+    model_config = ConfigDict(extra="allow")
+
     enabled: bool = Field(..., description="Whether to enable or disable the skill")
-    skill_definition_id: int | None = Field(default=None, description="Selected SkillDefinition ID used to disambiguate same-name Skills")
-    skill_install_id: int | None = Field(default=None, description="Selected SkillInstall ID used to disambiguate same-name installed Skills")
+    skill_installation_id: int | None = Field(
+        default=None,
+        description="Selected Skill installation ID used to disambiguate same-name installed Skills",
+    )
 
 
 class SkillPublishRequest(BaseModel):
     """Request body for publishing the current installed SkillVersion to SkillHub."""
 
-    skill_definition_id: int | None = Field(default=None, description="Selected authored SkillDefinition ID used to disambiguate same-name Skills")
+    model_config = ConfigDict(extra="allow")
+
+    skill_installation_id: int | None = Field(default=None, description="Selected Skill installation ID used to disambiguate same-name Skills")
     release_notes: str | None = Field(
         default=None,
         max_length=4000,
@@ -278,13 +268,10 @@ class SkillPublishRequest(BaseModel):
 class SkillInstallRequest(BaseModel):
     """Request model for terminal platform install during the migration window."""
 
+    model_config = ConfigDict(extra="allow")
+
     skill_id: str | None = Field(default=None, description="Terminal Skill UUID to install")
     version_number: int | None = Field(default=None, description="Published terminal version number to install")
-    thread_id: str | None = Field(default=None, description="Removed archive-install field")
-    path: str | None = Field(default=None, description="Removed archive-install field")
-    skill_name: str | None = Field(default=None, description="Removed name-only install field")
-    skill_definition_id: int | None = Field(default=None, description="Removed legacy numeric install field")
-    skill_version_id: int | None = Field(default=None, description="Removed legacy numeric install field")
 
 
 class SkillInstallResponse(BaseModel):
@@ -308,11 +295,6 @@ class SkillUploadCheckResponse(BaseModel):
     same_version: bool = Field(default=False, description="Whether the uploaded canonical content matches an existing platform version")
     exists: bool = Field(..., description="Whether the current user already has this exact active skill version")
     message: str = Field(..., description="Check result message")
-    recognized_as: Literal["fork", "original"] = Field(default="original", description="How the upload will be classified when accepted")
-    fork_source_name: str | None = Field(default=None, description="Recognized fork source Skill name")
-    fork_source_owner_display_name: str | None = Field(default=None, description="Recognized fork source author display name")
-    fork_source_platform_version: int | None = Field(default=None, description="Recognized fork source platform version")
-    unchanged_from_source: bool = Field(default=False, description="Whether uploaded canonical content is unchanged from the fork source")
 
 
 class SkillUploadResult(BaseModel):
@@ -328,7 +310,6 @@ class SkillUploadResult(BaseModel):
     action: str | None = Field(default=None, description="Upload action: created, updated, or skipped")
     success: bool = Field(..., description="Whether the upload succeeded")
     message: str = Field(..., description="Upload result message")
-    recognized_as: Literal["fork", "original"] | None = Field(default=None, description="How the uploaded skill was classified")
 
 
 class SkillUploadResponse(BaseModel):
@@ -340,14 +321,7 @@ class SkillUploadResponse(BaseModel):
 class SkillDownloadCheckRequest(BaseModel):
     """Compatibility request body for checking whether a SkillHub install will conflict."""
 
-    owner_user_id: int | None = Field(
-        default=None,
-        description="Deprecated compatibility field. Public skill lookup now uses only skill_name.",
-    )
-    skill_definition_id: int | None = Field(
-        default=None,
-        description="Selected public SkillDefinition ID used to disambiguate same-name Community Skills.",
-    )
+    model_config = ConfigDict(extra="allow")
 
 
 class SkillDownloadCheckResponse(BaseModel):
@@ -361,37 +335,26 @@ class SkillDownloadCheckResponse(BaseModel):
 class SkillDownloadRequest(BaseModel):
     """Compatibility request body for installing a SkillHub skill."""
 
-    owner_user_id: int | None = Field(
-        default=None,
-        description="Deprecated compatibility field. Public skill lookup now uses only skill_name.",
-    )
-    skill_definition_id: int | None = Field(
-        default=None,
-        description="Selected public SkillDefinition ID used to disambiguate same-name Community Skills.",
-    )
-    overwrite: bool = Field(default=False, description="Whether to overwrite an existing same-name custom skill")
+    model_config = ConfigDict(extra="allow")
 
 
 class SkillForkPackageRequest(BaseModel):
     """Request body for exporting an editable fork package."""
 
-    owner_user_id: int | None = Field(
-        default=None,
-        description="Publisher owner used to disambiguate same-name Community Skills.",
-    )
-    skill_definition_id: int | None = Field(
-        default=None,
-        description="Selected public SkillDefinition ID used to disambiguate same-name Community Skills.",
-    )
+    model_config = ConfigDict(extra="allow")
 
 
 class SkillInstallUpdateRequest(BaseModel):
     """Request body for explicitly updating an installed skill."""
 
-    skill_install_id: int | None = Field(default=None, description="Selected SkillInstall ID used to disambiguate same-name installs")
+    model_config = ConfigDict(extra="allow")
+
+    skill_installation_id: int | None = Field(
+        default=None,
+        description="Selected Skill installation ID used to disambiguate same-name installs",
+    )
     skill_id: str | None = Field(default=None, description="Terminal Skill UUID for the update target")
     version_number: int | None = Field(default=None, description="Published terminal version number for the update target")
-    skill_version_id: int | None = Field(default=None, description="Removed legacy numeric update field")
 
 
 class SkillUpdateAffectedAgent(BaseModel):
@@ -405,7 +368,7 @@ class SkillInstallUpdatePreviewResponse(BaseModel):
     """Read-only preview for an installed Skill update."""
 
     skill_name: str = Field(..., description="Skill name")
-    skill_install_id: int = Field(..., description="Install ID that would be updated")
+    skill_installation_id: int = Field(..., description="Skill installation ID that would be updated")
     skill_id: str | None = Field(default=None, description="Target terminal Skill UUID when available")
     version_number: int | None = Field(default=None, description="Target terminal version number when available")
     current_platform_version: int = Field(..., description="Current installed platform version")
@@ -428,7 +391,6 @@ def _skill_to_response(
     skill_install: SkillInstall | None = None,
     latest_skill_version: SkillVersion | None = None,
     current_user_id: int | None = None,
-    fork_source_version: SkillVersion | None = None,
 ) -> SkillResponse:
     """Convert a database skill row to the API response model."""
     release_package_version = getattr(release, "package_version", None) if release is not None else None
@@ -443,7 +405,6 @@ def _skill_to_response(
     published_at = release_created_at.isoformat() if release_created_at is not None else None
     platform_version = skill_version.version_number if skill_version is not None else None
     definition = skill_version.definition if skill_version is not None and skill_version.definition is not None else skill.definition
-    definition_id = skill_version.skill_definition_id if skill_version is not None else skill.skill_definition_id
     current_platform_version = skill_install.current_version.version_number if skill_install is not None and skill_install.current_version is not None else None
     installed_platform_version = skill_install.installed_version.version_number if skill_install is not None and skill_install.installed_version is not None else current_platform_version
     latest_platform_version = latest_skill_version.version_number if latest_skill_version is not None else None
@@ -496,11 +457,7 @@ def _skill_to_response(
         owner_display_name=owner_display_name,
         version=str(platform_version) if platform_version is not None else None,
         platform_version=platform_version,
-        skill_definition_id=definition_id,
-        skill_definition_source_type=definition.source_type if definition is not None else None,
-        skill_definition_source_identifier=definition.source_identifier if definition is not None else None,
-        skill_version_id=skill_version.id if skill_version is not None else None,
-        skill_install_id=skill_install.id if skill_install is not None else None,
+        skill_installation_id=skill_install.id if skill_install is not None else None,
         current_platform_version=current_platform_version,
         installed_platform_version=installed_platform_version,
         latest_platform_version=latest_platform_version,
@@ -511,10 +468,6 @@ def _skill_to_response(
         release_status=release_status,
         release_notes=release_notes,
         published_at=published_at,
-        fork_source_skill_name=fork_source_version.definition.name if fork_source_version is not None and fork_source_version.definition is not None else None,
-        fork_source_owner_display_name=_display_name_for_source_version(fork_source_version),
-        fork_source_platform_version=fork_source_version.version_number if fork_source_version is not None else None,
-        fork_source_skill_version_id=fork_source_version.id if fork_source_version is not None else None,
     )
 
 
@@ -538,28 +491,11 @@ async def _release_skill_version(db: AsyncSession, release: SkillRelease | None)
     """Load the immutable version selected by a terminal release row."""
     if release is None:
         return None
-    version = release.skill_version
-    if version is not None and version.skill_id == release.skill_id and version.version_number == release.version_number:
-        return version
     return await SkillVersionRepository.get_by_skill_version(db, skill_id=release.skill_id, version_number=release.version_number)
 
 
 async def _skill_to_response_with_metadata(db: AsyncSession, skill: Skill, *, current_user_id: int | None = None) -> SkillResponse:
     """Convert a skill row to API response with best-effort version metadata."""
-    if skill.user_id is None and skill.id is not None:
-        release = await SkillReleaseRepository.get_latest_release_for_public_skill(db, published_skill_id=skill.id)
-        skill_version = await _release_skill_version(db, release)
-        install = (
-            await SkillInstallRepository.get_by_user_and_definition(
-                db,
-                user_id=current_user_id,
-                skill_definition_id=skill_version.skill_definition_id,
-            )
-            if current_user_id is not None and skill_version is not None
-            else None
-        )
-        fork_source_version = await _get_recorded_fork_source_version(db, skill_version.definition) if skill_version is not None and skill_version.definition is not None else None
-        return _skill_to_response(skill, release=release, skill_version=skill_version, skill_install=install, latest_skill_version=skill_version, current_user_id=current_user_id, fork_source_version=fork_source_version)
     install = None
     if skill.user_id is not None:
         if skill.skill_definition_id is not None:
@@ -571,14 +507,12 @@ async def _skill_to_response_with_metadata(db: AsyncSession, skill: Skill, *, cu
         else:
             install = await SkillInstallRepository.get_by_user_and_name(db, user_id=skill.user_id, name=skill.name)
     if install is not None:
-        latest_release = await SkillReleaseRepository.get_latest_published_release_for_definition(
+        latest_release = await SkillReleaseRepository.get_latest_published_release_for_skill(
             db,
-            skill_definition_id=install.skill_definition_id,
+            skill_id=install.skill_id,
         )
         latest_version = await _release_skill_version(db, latest_release)
-        definition = install.definition or (install.current_version.definition if install.current_version is not None else None)
-        fork_source_version = await _get_recorded_fork_source_version(db, definition) if definition is not None else None
-        return _skill_to_response(skill, release=latest_release, skill_version=install.current_version, skill_install=install, latest_skill_version=latest_version, current_user_id=current_user_id, fork_source_version=fork_source_version)
+        return _skill_to_response(skill, release=latest_release, skill_version=install.current_version, skill_install=install, latest_skill_version=latest_version, current_user_id=current_user_id)
     return _skill_to_response(skill, package_version=_extract_package_version_for_skill(skill), current_user_id=current_user_id)
 
 
@@ -597,14 +531,15 @@ async def _release_to_response(
         install = await SkillInstallRepository.get_by_user_and_skill_id(db, user_id=current_user_id, skill_id=version.skill_id)
 
     terminal_skill = release.skill
+    response_file_path = build_terminal_skill_version_relative_path(version.skill_id, version.version_number)
     response_skill = Skill(
-        id=release.published_skill_id,
+        id=None,
         user_id=None,
         owner_user_id=terminal_skill.owner_user_id if terminal_skill is not None else release.publisher_user_id,
         name=terminal_skill.name if terminal_skill is not None else release.skill_name,
         display_name=terminal_skill.display_name if terminal_skill is not None else release.skill_name,
         description=release.description,
-        file_path=version.artifact_uri,
+        file_path=response_file_path,
         skill_definition_id=version.skill_definition_id,
     )
     response_skill.definition = version.definition
@@ -670,7 +605,7 @@ def _validate_skill_directory(skill_dir: Path) -> tuple[str, str]:
     name = name.strip()
     if not name:
         raise ValueError("Missing 'name' in frontmatter")
-    if not __import__("re").match(r"^[a-z0-9-]+$", name):
+    if not re.match(r"^[a-z0-9-]+$", name):
         raise ValueError(f"Name '{name}' should be kebab-case (lowercase letters, digits, and hyphens only)")
     if name.startswith("-") or name.endswith("-") or "--" in name:
         raise ValueError(f"Name '{name}' cannot start/end with hyphen or contain consecutive hyphens")
@@ -777,6 +712,13 @@ def _resolve_skill_dir(file_path: str) -> Path:
     return resolve_skill_storage_dir(_get_skills_root_dir(), file_path)
 
 
+def _resolve_skill_version_dir(version: SkillVersion) -> Path:
+    """Resolve the terminal immutable version directory from DB identity."""
+    return _resolve_skill_dir(
+        build_terminal_skill_version_relative_path(version.skill_id, version.version_number)
+    )
+
+
 def _resolve_skill_record_dir(skill: Skill) -> Path:
     """Resolve a DB-backed skill record to its concrete directory."""
     raw_path = Path(skill.file_path)
@@ -823,7 +765,7 @@ async def _get_public_skill_by_name_compat(
     if not candidates:
         return None
     if len(candidates) > 1:
-        raise HTTPException(status_code=400, detail=f"Community Skill '{skill_name}' is ambiguous; submit skill_definition_id")
+        raise HTTPException(status_code=400, detail=f"Community Skill '{skill_name}' is ambiguous; use terminal skill_id and version_number")
     return candidates[0]
 
 
@@ -833,7 +775,7 @@ async def _get_user_skill_by_name_compat(db: AsyncSession, *, user_id: int, skil
     if not candidates:
         return None
     if len(candidates) > 1:
-        raise HTTPException(status_code=400, detail=f"Skill '{skill_name}' is ambiguous; submit skill_definition_id or skill_install_id")
+        raise HTTPException(status_code=400, detail=f"Skill '{skill_name}' is ambiguous; submit skill_installation_id")
     return candidates[0]
 
 
@@ -842,19 +784,12 @@ async def _get_user_skill_for_management(
     *,
     user_id: int,
     skill_name: str,
-    skill_definition_id: int | None = None,
-    skill_install_id: int | None = None,
+    skill_installation_id: int | None = None,
 ) -> Skill | None:
     """Resolve the selected My Skills row without collapsing same-name identities."""
-    if skill_install_id is not None:
-        install = await _get_update_install(db, user_id=user_id, skill_name=skill_name, skill_install_id=skill_install_id)
+    if skill_installation_id is not None:
+        install = await _get_update_install(db, user_id=user_id, skill_name=skill_name, skill_installation_id=skill_installation_id)
         return await SkillRepository.get_user_skill_by_definition(db, user_id=user_id, skill_definition_id=install.skill_definition_id)
-
-    if skill_definition_id is not None:
-        definition = await SkillDefinitionRepository.get_by_id(db, skill_definition_id=skill_definition_id)
-        if definition is None or definition.name != skill_name:
-            raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
-        return await SkillRepository.get_user_skill_by_definition(db, user_id=user_id, skill_definition_id=skill_definition_id)
 
     return await _get_user_skill_by_name_compat(db, user_id=user_id, skill_name=skill_name)
 
@@ -868,7 +803,7 @@ async def _delete_editable_skill_directory(skill: Skill) -> None:
 def _is_skill_version_artifact_available(version: SkillVersion) -> bool:
     """Return whether an immutable SkillVersion artifact can be used exactly."""
     try:
-        artifact_dir = _resolve_skill_dir(version.artifact_uri)
+        artifact_dir = _resolve_skill_version_dir(version)
     except Exception:
         return False
     return artifact_dir.is_dir() and (artifact_dir / "SKILL.md").is_file()
@@ -914,7 +849,7 @@ async def _get_single_install_by_name(
     if not installs:
         raise HTTPException(status_code=404, detail=f"Skill install '{skill_name}' not found")
     if len(installs) > 1:
-        raise HTTPException(status_code=400, detail=f"Skill install '{skill_name}' is ambiguous; submit a skill_install_id-aware request")
+        raise HTTPException(status_code=400, detail=f"Skill install '{skill_name}' is ambiguous; submit a skill_installation_id-aware request")
     install = installs[0]
     if install.current_version is None:
         raise HTTPException(status_code=409, detail=f"Skill install '{skill_name}' has no current version")
@@ -926,18 +861,18 @@ async def _get_update_install(
     *,
     user_id: int,
     skill_name: str,
-    skill_install_id: int | None,
+    skill_installation_id: int | None,
 ) -> SkillInstall:
     """Resolve an installed Skill for update, preferring stable install identity."""
-    if skill_install_id is None:
+    if skill_installation_id is None:
         return await _get_single_install_by_name(db, user_id=user_id, skill_name=skill_name)
 
-    install = await SkillInstallRepository.get_by_id_for_user(db, user_id=user_id, skill_install_id=skill_install_id)
+    install = await SkillInstallRepository.get_by_id_for_user(db, user_id=user_id, skill_installation_id=skill_installation_id)
     if install is None:
-        raise HTTPException(status_code=404, detail=f"Skill install '{skill_install_id}' not found")
+        raise HTTPException(status_code=404, detail=f"Skill installation '{skill_installation_id}' not found")
     definition = install.definition or (install.current_version.definition if install.current_version is not None else None)
     if definition is None or definition.name != skill_name:
-        raise HTTPException(status_code=404, detail=f"Skill install '{skill_install_id}' not found for '{skill_name}'")
+        raise HTTPException(status_code=404, detail=f"Skill installation '{skill_installation_id}' not found for '{skill_name}'")
     if install.current_version is None:
         raise HTTPException(status_code=409, detail=f"Skill install '{skill_name}' has no current version")
     return install
@@ -949,31 +884,24 @@ def _definition_is_publishable_by_user(definition: SkillDefinition, *, user_id: 
         return False
     if definition.source_type == "user":
         return definition.source_identifier == str(user_id)
-    return definition.source_type == "fork"
+    return False
 
 
-async def _resolve_publish_definition_or_reject_downloaded(
+async def _resolve_publish_definition_or_reject_installed_community(
     db: AsyncSession,
     *,
     user_id: int,
     skill_name: str,
-    skill_definition_id: int | None = None,
 ) -> SkillDefinition | None:
-    """Resolve the current user's publishable definition, or reject downloaded same-name installs."""
-    if skill_definition_id is not None:
-        definition = await SkillDefinitionRepository.get_by_id(db, skill_definition_id=skill_definition_id)
-        if definition is None or definition.name != skill_name:
-            raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
-        if not _definition_is_publishable_by_user(definition, user_id=user_id):
-            raise HTTPException(status_code=403, detail=f"Skill '{skill_name}' was downloaded from Community Space. Create your own version before publishing it.")
-        return definition
-
+    """Resolve the current user's publishable definition, or reject installed community same-name installs."""
     definition = await SkillDefinitionRepository.get_by_name_and_owner(db, name=skill_name, owner_user_id=user_id)
     if definition is not None:
+        if not _definition_is_publishable_by_user(definition, user_id=user_id):
+            raise HTTPException(status_code=403, detail=f"Skill '{skill_name}' was installed from Community Space. Create your own version before publishing it.")
         return definition
 
     publishable_definitions: list[SkillDefinition] = []
-    downloaded_install_found = False
+    installed_community_skill_found = False
     for install in await SkillInstallRepository.list_by_user_and_name(db, user_id=user_id, name=skill_name):
         definition = install.definition or (install.current_version.definition if install.current_version is not None else None)
         if definition is None:
@@ -981,72 +909,16 @@ async def _resolve_publish_definition_or_reject_downloaded(
         if _definition_is_publishable_by_user(definition, user_id=user_id):
             publishable_definitions.append(definition)
         else:
-            downloaded_install_found = True
+            installed_community_skill_found = True
 
     unique_publishable = {definition.id: definition for definition in publishable_definitions if definition.id is not None}
     if len(unique_publishable) == 1:
         return next(iter(unique_publishable.values()))
     if len(unique_publishable) > 1:
-        raise HTTPException(status_code=400, detail=f"Skill '{skill_name}' has multiple authored definitions; submit a definition-aware publish request")
-    if downloaded_install_found:
-        raise HTTPException(status_code=403, detail=f"Skill '{skill_name}' was downloaded from Community Space. Create your own version before publishing it.")
+        raise HTTPException(status_code=400, detail=f"Skill '{skill_name}' has multiple authored definitions; submit skill_installation_id")
+    if installed_community_skill_found:
+        raise HTTPException(status_code=403, detail=f"Skill '{skill_name}' was installed from Community Space. Create your own version before publishing it.")
     return None
-
-
-def _parse_recorded_source_version_id(source_identifier: str | None) -> int | None:
-    """Extract a recorded source SkillVersion ID from fork attribution when present."""
-    if not source_identifier:
-        return None
-    source_identifier = source_identifier.strip()
-    if not source_identifier:
-        return None
-
-    try:
-        parsed_identifier = json.loads(source_identifier)
-    except json.JSONDecodeError:
-        parsed_identifier = None
-    if isinstance(parsed_identifier, dict):
-        for key in _FORK_SOURCE_VERSION_KEYS:
-            raw_value = parsed_identifier.get(key)
-            if raw_value is None:
-                continue
-            try:
-                source_version_id = int(raw_value)
-            except (TypeError, ValueError):
-                continue
-            return source_version_id if source_version_id > 0 else None
-
-    match = _FORK_SOURCE_VERSION_RE.search(source_identifier)
-    if match is None:
-        return None
-    source_version_id = int(match.group(1))
-    return source_version_id if source_version_id > 0 else None
-
-
-async def _get_recorded_fork_source_version(db: AsyncSession, definition: SkillDefinition) -> SkillVersion | None:
-    """Load the source version recorded by a fork definition, if current attribution encodes one."""
-    if definition.source_type != "fork":
-        return None
-    source_version_id = _parse_recorded_source_version_id(definition.source_identifier)
-    if source_version_id is None:
-        return None
-    return await SkillVersionRepository.get_by_id(db, skill_version_id=source_version_id)
-
-
-async def _reject_unchanged_fork_publish(
-    db: AsyncSession,
-    *,
-    definition: SkillDefinition,
-    current_version: SkillVersion,
-) -> None:
-    """Hard-block an attributed fork whose current content is exactly unchanged from its source."""
-    source_version = await _get_recorded_fork_source_version(db, definition)
-    if source_version is None:
-        return
-    same_file_manifest = bool(current_version.file_manifest_hash) and current_version.file_manifest_hash == source_version.file_manifest_hash
-    same_content = bool(current_version.content_hash) and current_version.content_hash == source_version.content_hash
-    if same_file_manifest or same_content:
-        raise HTTPException(status_code=409, detail=f"Skill '{definition.name}' is unchanged from its source version. Modify it before publishing to Community Space.")
 
 
 def _affected_agent_to_response(agent: Agent) -> SkillUpdateAffectedAgent:
@@ -1058,20 +930,20 @@ async def _build_skill_update_preview(
     *,
     skill_name: str,
     current_user: User,
-    skill_install_id: int | None = None,
+    skill_installation_id: int | None = None,
     install: SkillInstall | None = None,
     target_version: SkillVersion | None = None,
     target_release: SkillRelease | None = None,
 ) -> SkillInstallUpdatePreviewResponse:
     """Build a read-only update preview for the current user's install."""
     if install is None:
-        install = await _get_update_install(db, user_id=current_user.id, skill_name=skill_name, skill_install_id=skill_install_id)
+        install = await _get_update_install(db, user_id=current_user.id, skill_name=skill_name, skill_installation_id=skill_installation_id)
 
     release = target_release
     if target_version is None:
-        release = await SkillReleaseRepository.get_latest_published_release_for_definition(
+        release = await SkillReleaseRepository.get_latest_published_release_for_skill(
             db,
-            skill_definition_id=install.skill_definition_id,
+            skill_id=install.skill_id,
         )
         target_version = await _release_skill_version(db, release)
     elif target_version.skill_id != install.skill_id:
@@ -1082,7 +954,7 @@ async def _build_skill_update_preview(
         for agent in await SkillRepository.list_bound_agents_for_install(
             db,
             user_id=current_user.id,
-            skill_install_id=install.id,
+            skill_installation_id=install.id,
         )
     ]
 
@@ -1092,7 +964,7 @@ async def _build_skill_update_preview(
         if not current_artifact_available:
             return SkillInstallUpdatePreviewResponse(
                 skill_name=skill_name,
-                skill_install_id=install.id,
+                skill_installation_id=install.id,
                 skill_id=str(install.skill_id or install.current_version.skill_id) if (install.skill_id or install.current_version.skill_id) is not None else None,
                 version_number=None,
                 current_platform_version=install.current_version.version_number,
@@ -1105,7 +977,7 @@ async def _build_skill_update_preview(
             )
         return SkillInstallUpdatePreviewResponse(
             skill_name=skill_name,
-            skill_install_id=install.id,
+            skill_installation_id=install.id,
             skill_id=str(install.skill_id or install.current_version.skill_id) if (install.skill_id or install.current_version.skill_id) is not None else None,
             version_number=None,
             current_platform_version=install.current_version.version_number,
@@ -1135,7 +1007,7 @@ async def _build_skill_update_preview(
 
     return SkillInstallUpdatePreviewResponse(
         skill_name=skill_name,
-        skill_install_id=install.id,
+        skill_installation_id=install.id,
         skill_id=str(target_version.skill_id) if target_version.skill_id is not None else None,
         version_number=target_version.version_number,
         current_platform_version=install.current_version.version_number,
@@ -1166,14 +1038,14 @@ def _hash_skill_directory(skill_dir: Path) -> tuple[str, str]:
     return hash_skill_directory(skill_dir)
 
 
-def _build_version_artifact_uri(*, skill_id: str, version_number: int) -> str:
-    """Build the temporary compatibility artifact_uri from terminal identity."""
+def _build_version_relative_path(*, skill_id: str, version_number: int) -> str:
+    """Build the terminal version content path from immutable identity."""
     return build_terminal_skill_version_relative_path(skill_id, version_number)
 
 
 def _copy_version_artifact(
     source_dir: Path,
-    artifact_uri: str,
+    version_relative_path: str,
     *,
     expected_content_hash: str,
     expected_file_manifest_hash: str,
@@ -1181,7 +1053,7 @@ def _copy_version_artifact(
     """Copy a skill directory into an immutable terminal version path."""
     if not source_dir.exists() or not source_dir.is_dir():
         raise ValueError(f"Skill directory '{source_dir}' does not exist")
-    target_dir = _resolve_skill_dir(artifact_uri)
+    target_dir = _resolve_skill_dir(version_relative_path)
     if target_dir.exists():
         if not target_dir.is_dir():
             raise ValueError("Skill version destination already exists and is not a directory")
@@ -1195,98 +1067,6 @@ def _copy_version_artifact(
     if actual_content_hash != expected_content_hash or actual_file_manifest_hash != expected_file_manifest_hash:
         shutil.rmtree(target_dir, ignore_errors=True)
         raise ValueError("Skill version destination failed hash verification")
-
-
-def _load_uploaded_fork_claim(skill_dir: Path) -> ParsedForkClaim | None:
-    """Read the optional fork claim sidecar from an extracted Skill package."""
-    claim_path = skill_dir / _FORK_METADATA_RELATIVE_PATH
-    if not claim_path.exists():
-        return None
-    try:
-        raw_claim = json.loads(claim_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError("Invalid fork claim metadata") from exc
-    if not isinstance(raw_claim, dict) or raw_claim.get("kind") != _FORK_METADATA_KIND:
-        raise ValueError("Invalid fork claim metadata")
-
-    raw_claim_id = raw_claim.get("claim_id")
-    raw_token = raw_claim.get("claim_token")
-    try:
-        claim_id = int(raw_claim_id)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("Invalid fork claim metadata") from exc
-    if claim_id <= 0 or not isinstance(raw_token, str) or not raw_token.strip():
-        raise ValueError("Invalid fork claim metadata")
-
-    def optional_int(value: object) -> int | None:
-        if value is None:
-            return None
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            return None
-        return parsed if parsed > 0 else None
-
-    return ParsedForkClaim(
-        claim_id=claim_id,
-        claim_token=raw_token,
-        source_skill_definition_id=optional_int(raw_claim.get("source_skill_definition_id")),
-        source_skill_version_id=optional_int(raw_claim.get("source_skill_version_id")),
-    )
-
-
-def _build_fork_source_identifier(*, claim: PendingSkillForkClaim, source_version: SkillVersion) -> str:
-    """Build the compact, server-authored fork source namespace identifier."""
-    payload = {
-        "source_version_id": source_version.id,
-        "source_definition_id": source_version.skill_definition_id,
-        "fork_claim_id": claim.id,
-    }
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
-
-
-async def _validate_uploaded_fork_claim(
-    db: AsyncSession,
-    *,
-    parsed_claim: ParsedForkClaim | None,
-    user_id: int,
-) -> ValidatedForkClaim | None:
-    """Validate a package-carried fork claim against server-side state."""
-    if parsed_claim is None:
-        return None
-
-    now = datetime.now(UTC)
-    claim = await PendingSkillForkClaimRepository.get_valid_claim(
-        db,
-        claim_id=parsed_claim.claim_id,
-        user_id=user_id,
-        claim_token=parsed_claim.claim_token,
-        now=now,
-    )
-    if claim is None or claim.source_version is None:
-        raise ValueError("Fork claim is invalid or expired. Create a new editable copy, then upload again.")
-
-    source_version = claim.source_version
-    if parsed_claim.source_skill_version_id is not None and parsed_claim.source_skill_version_id != source_version.id:
-        raise ValueError("Fork claim source does not match the exported Skill package")
-    if parsed_claim.source_skill_definition_id is not None and parsed_claim.source_skill_definition_id != source_version.skill_definition_id:
-        raise ValueError("Fork claim source does not match the exported Skill package")
-
-    return ValidatedForkClaim(
-        claim=claim,
-        source_version=source_version,
-        source_identifier=_build_fork_source_identifier(claim=claim, source_version=source_version),
-    )
-
-
-def _fork_source_message_parts(validated_claim: ValidatedForkClaim | None) -> tuple[str | None, str | None, int | None]:
-    if validated_claim is None:
-        return None, None, None
-    source_version = validated_claim.source_version
-    source_definition = source_version.definition
-    source_name = source_definition.name if source_definition is not None else None
-    source_owner = _display_name_for_source_version(source_version)
-    return source_name, source_owner, source_version.version_number
 
 
 def _delete_skill_directory(target_dir: Path) -> None:
@@ -1358,23 +1138,15 @@ async def _ensure_skill_version_from_dir(
     description: str,
     source_package_version: str | None,
     skill_dir: Path,
-    definition_source_type: str | None = None,
-    definition_source_identifier: str | None = None,
 ) -> tuple[SkillVersion, bool, SkillDefinition]:
     """Create or reuse the platform SkillVersion for canonical skill content."""
     content_hash, file_manifest_hash = _hash_skill_directory(skill_dir)
-    definition_kwargs = {}
-    if definition_source_type is not None:
-        definition_kwargs["source_type"] = definition_source_type
-    if definition_source_identifier is not None:
-        definition_kwargs["source_identifier"] = definition_source_identifier
     definition = await SkillDefinitionRepository.get_or_create(
         db,
         name=skill_name,
         display_name=skill_name,
         description=description,
         owner_user_id=user_id,
-        **definition_kwargs,
     )
     existing_version = await SkillVersionRepository.get_by_definition_and_hash(
         db,
@@ -1387,14 +1159,14 @@ async def _ensure_skill_version_from_dir(
     latest = await SkillVersionRepository.get_latest_for_definition(db, skill_definition_id=definition.id)
     next_number = 1 if latest is None else latest.version_number + 1
     terminal_skill = await TerminalSkillRepository.ensure_for_legacy_definition(db, definition=definition)
-    artifact_uri = _build_version_artifact_uri(
+    version_relative_path = _build_version_relative_path(
         skill_id=str(terminal_skill.id),
         version_number=next_number,
     )
     await asyncio.to_thread(
         _copy_version_artifact,
         skill_dir,
-        artifact_uri,
+        version_relative_path,
         expected_content_hash=content_hash,
         expected_file_manifest_hash=file_manifest_hash,
     )
@@ -1405,13 +1177,12 @@ async def _ensure_skill_version_from_dir(
         description=description,
         content_hash=content_hash,
         file_manifest_hash=file_manifest_hash,
-        artifact_uri=artifact_uri,
         created_by_user_id=user_id,
     )
     return version, True, definition
 
 
-async def _parse_uploaded_skill_archive(upload_file: UploadFile) -> tuple[str, str, str | None, Path, tempfile.TemporaryDirectory[str], ParsedForkClaim | None]:
+async def _parse_uploaded_skill_archive(upload_file: UploadFile) -> tuple[str, str, str | None, Path, tempfile.TemporaryDirectory[str]]:
     """Persist, extract, and validate an uploaded skill archive."""
     if not upload_file.filename:
         raise ValueError("Uploaded file must have a filename")
@@ -1432,105 +1203,10 @@ async def _parse_uploaded_skill_archive(upload_file: UploadFile) -> tuple[str, s
         skill_dir = _resolve_skill_root_dir(extracted_dir)
         skill_name, _ = _validate_skill_directory(skill_dir)
         package_version = _extract_package_version_from_dir(skill_dir)
-        fork_claim = _load_uploaded_fork_claim(skill_dir)
-        return upload_file.filename, skill_name, package_version, skill_dir, temp_dir, fork_claim
+        return upload_file.filename, skill_name, package_version, skill_dir, temp_dir
     except Exception:
         temp_dir.cleanup()
         raise
-
-
-async def _get_download_source_skill(
-    db: AsyncSession,
-    *,
-    skill_name: str,
-    owner_user_id: int | None,
-    skill_definition_id: int | None = None,
-) -> Skill | None:
-    """Resolve the selected public catalog row by source owner when supplied."""
-    if skill_definition_id is not None:
-        skill = await SkillRepository.get_public_skill_by_definition(
-            db,
-            skill_definition_id=skill_definition_id,
-        )
-        if skill is None or skill.name != skill_name:
-            return None
-        return skill
-    return await _get_public_skill_by_name_compat(
-        db,
-        skill_name=skill_name,
-        owner_user_id=owner_user_id,
-    )
-
-
-def _source_kind_for_public_skill(source_skill: Skill, source_version: SkillVersion) -> SkillSourceKind:
-    definition = source_version.definition
-    if _is_official_skill_source(source_skill, definition):
-        return "official"
-    if definition is not None and definition.source_type == "fork":
-        return "fork"
-    return "community"
-
-
-def _reject_system_skill_action(source_skill: Skill, source_version: SkillVersion, *, action: str) -> None:
-    """Reject install/export actions that do not apply to directly usable System Skills."""
-    if _source_kind_for_public_skill(source_skill, source_version) != "official":
-        return
-    if action == "install":
-        raise HTTPException(status_code=400, detail="System Skills are directly usable and cannot be installed to My Skills")
-    if action == "download":
-        raise HTTPException(status_code=400, detail="System Skills cannot be downloaded as editable packages")
-    raise HTTPException(status_code=400, detail="System Skill action is not supported")
-
-
-def _build_fork_claim_metadata(
-    *,
-    claim: PendingSkillForkClaim,
-    claim_token: str,
-    source_skill: Skill,
-    source_version: SkillVersion,
-    source_kind: SkillSourceKind,
-    expires_at: datetime,
-) -> dict[str, object]:
-    source_definition = source_version.definition
-    source_owner_display_name = _display_name_for_source_version(source_version) or _display_name_for_user(source_skill.owner_user)
-    return {
-        "schema_version": 1,
-        "kind": _FORK_METADATA_KIND,
-        "claim_id": claim.id,
-        "claim_token": claim_token,
-        "source_skill_definition_id": source_version.skill_definition_id,
-        "source_skill_version_id": source_version.id,
-        "source_name": source_definition.name if source_definition is not None else source_skill.name,
-        "source_owner_display_name": source_owner_display_name,
-        "source_kind": source_kind,
-        "source_platform_version": source_version.version_number,
-        "source_content_hash": source_version.content_hash,
-        "source_file_manifest_hash": source_version.file_manifest_hash,
-        "issued_at": claim.created_at.isoformat(),
-        "expires_at": expires_at.isoformat(),
-    }
-
-
-def _write_fork_package_archive(source_dir: Path, destination_zip: Path, *, skill_name: str, fork_metadata: dict[str, object]) -> None:
-    """Write an editable source ZIP with a server-verifiable fork claim sidecar."""
-    root = skill_name
-    sidecar_relative = f"{root}/{_FORK_METADATA_RELATIVE_PATH.as_posix()}"
-    with zipfile.ZipFile(destination_zip, "w", compression=zipfile.ZIP_DEFLATED) as zip_ref:
-        for path in sorted(item for item in source_dir.rglob("*") if item.is_file()):
-            relative = path.relative_to(source_dir).as_posix()
-            archive_name = f"{root}/{relative}"
-            if archive_name == sidecar_relative:
-                continue
-            zip_ref.write(path, archive_name)
-        zip_ref.writestr(
-            sidecar_relative,
-            json.dumps(fork_metadata, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        )
-
-
-def _download_filename_for_fork_package(*, skill_name: str, platform_version: int) -> str:
-    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", skill_name).strip("-") or "skill"
-    return f"{safe_name}-editable-copy-v{platform_version}.zip"
 
 
 @router.post(
@@ -1546,19 +1222,9 @@ async def check_skill_upload(
 ) -> SkillUploadCheckResponse:
     temp_dir: tempfile.TemporaryDirectory[str] | None = None
     try:
-        filename, skill_name, package_version, skill_dir, temp_dir, parsed_fork_claim = await _parse_uploaded_skill_archive(file)
+        filename, skill_name, package_version, skill_dir, temp_dir = await _parse_uploaded_skill_archive(file)
         content_hash, _ = _hash_skill_directory(skill_dir)
-        validated_claim = await _validate_uploaded_fork_claim(db, parsed_claim=parsed_fork_claim, user_id=current_user.id)
-        definition = (
-            await SkillDefinitionRepository.get_by_identity(
-                db,
-                name=skill_name,
-                source_type="fork",
-                source_identifier=validated_claim.source_identifier,
-            )
-            if validated_claim is not None
-            else await SkillDefinitionRepository.get_by_name_and_owner(db, name=skill_name, owner_user_id=current_user.id)
-        )
+        definition = await SkillDefinitionRepository.get_by_name_and_owner(db, name=skill_name, owner_user_id=current_user.id)
         existing_version = None
         latest_version = None
         if definition is not None:
@@ -1590,11 +1256,6 @@ async def check_skill_upload(
             message = f"Skill '{skill_name}' will create platform version {platform_version}"
         else:
             message = "Skill content is available as a new platform version"
-        if validated_claim is not None:
-            source_name, source_owner, source_platform_version = _fork_source_message_parts(validated_claim)
-            message = f"Skill '{skill_name}' will be added as a fork of '{source_name or 'source Skill'}'"
-        else:
-            source_name, source_owner, source_platform_version = None, None, None
         return SkillUploadCheckResponse(
             filename=filename,
             skill_name=skill_name,
@@ -1606,11 +1267,6 @@ async def check_skill_upload(
             same_version=same_version,
             exists=exists,
             message=message,
-            recognized_as="fork" if validated_claim is not None else "original",
-            fork_source_name=source_name,
-            fork_source_owner_display_name=source_owner,
-            fork_source_platform_version=source_platform_version,
-            unchanged_from_source=bool(validated_claim is not None and content_hash == validated_claim.source_version.content_hash),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -1640,8 +1296,7 @@ async def upload_skills(
     for upload_file in files:
         temp_dir: tempfile.TemporaryDirectory[str] | None = None
         try:
-            filename, skill_name, package_version, skill_dir, temp_dir, parsed_fork_claim = await _parse_uploaded_skill_archive(upload_file)
-            validated_claim = await _validate_uploaded_fork_claim(db, parsed_claim=parsed_fork_claim, user_id=current_user.id)
+            filename, skill_name, package_version, skill_dir, temp_dir = await _parse_uploaded_skill_archive(upload_file)
             description = _extract_frontmatter(skill_dir / "SKILL.md").get("description", "")
             if not isinstance(description, str):
                 description = ""
@@ -1654,8 +1309,6 @@ async def upload_skills(
                 description=description,
                 source_package_version=package_version,
                 skill_dir=skill_dir,
-                definition_source_type="fork" if validated_claim is not None else None,
-                definition_source_identifier=validated_claim.source_identifier if validated_claim is not None else None,
             )
             existing_install = await SkillInstallRepository.get_by_user_and_definition(
                 db,
@@ -1690,7 +1343,6 @@ async def upload_skills(
                         action="skipped",
                         success=True,
                         message=f"Skill '{skill_name}' platform version {version.version_number} already exists",
-                        recognized_as="fork" if validated_claim is not None else "original",
                     )
                 )
                 await db.rollback()
@@ -1709,7 +1361,6 @@ async def upload_skills(
                         action="skipped",
                         success=False,
                         message=f"Skill '{skill_name}' target directory already exists",
-                        recognized_as="fork" if validated_claim is not None else "original",
                     )
                 )
                 await db.rollback()
@@ -1741,9 +1392,6 @@ async def upload_skills(
                 )
                 action = "created"
 
-            if validated_claim is not None:
-                await PendingSkillForkClaimRepository.mark_claimed(db, claim=validated_claim.claim, now=datetime.now(UTC))
-
             current_user_id = current_user.id
             skill_definition_id = version.skill_definition_id
             skill_id = str(version.skill_id) if version.skill_id is not None else None
@@ -1767,7 +1415,6 @@ async def upload_skills(
                     action=action,
                     success=True,
                     message=(f"Skill installed at platform version {refreshed_install.current_version.version_number}" if refreshed_install is not None and refreshed_install.current_version is not None else "Skill uploaded successfully"),
-                    recognized_as="fork" if validated_claim is not None else "original",
                 )
             )
         except ValueError as exc:
@@ -1800,7 +1447,7 @@ async def upload_skills(
     "/skills/{skill_name}/fork-package",
     response_class=FileResponse,
     summary="Download Editable Fork Package",
-    description="Export a published Skill as an editable ZIP with a server-verifiable fork claim.",
+    description="Removed legacy editable fork export route.",
 )
 async def download_skill_fork_package(
     skill_name: str,
@@ -1863,22 +1510,17 @@ async def update_skill_install(
     db: AsyncSession = Depends(get_db),
 ) -> SkillInstallUpdatePreviewResponse:
     try:
-        if request is None or request.skill_install_id is None:
+        _reject_removed_skill_identity_fields(request)
+        if request is None or request.skill_installation_id is None:
             raise _coded_http_error(
                 400,
                 code=_TERMINAL_IDENTITY_REQUIRED,
-                message="Update requires skill_install_id, skill_id, and version_number.",
-            )
-        if request.skill_version_id is not None:
-            raise _coded_http_error(
-                400,
-                code=_TERMINAL_IDENTITY_REQUIRED,
-                message="skill_version_id updates are removed. Submit skill_install_id, skill_id, and version_number.",
+                message="Update requires skill_installation_id, skill_id, and version_number.",
             )
         skill_id, version_number = _require_terminal_identity(skill_id=request.skill_id, version_number=request.version_number)
-        install = await SkillInstallRepository.get_by_id_for_user(db, user_id=current_user.id, skill_install_id=request.skill_install_id)
+        install = await SkillInstallRepository.get_by_id_for_user(db, user_id=current_user.id, skill_installation_id=request.skill_installation_id)
         if install is None:
-            raise HTTPException(status_code=404, detail=f"Skill install '{request.skill_install_id}' not found")
+            raise HTTPException(status_code=404, detail=f"Skill installation '{request.skill_installation_id}' not found")
         if install.skill_id != skill_id:
             raise HTTPException(status_code=404, detail=f"Published Skill version '{skill_id}:{version_number}' not found for this install")
         release = await SkillReleaseRepository.get_published_release_by_skill_version(
@@ -1910,7 +1552,7 @@ async def update_skill_install(
             )
 
         await db.commit()
-        refreshed_install = await SkillInstallRepository.get_by_id_for_user(db, user_id=current_user.id, skill_install_id=install.id)
+        refreshed_install = await SkillInstallRepository.get_by_id_for_user(db, user_id=current_user.id, skill_installation_id=install.id)
         if refreshed_install is None:
             raise HTTPException(status_code=500, detail=f"Failed to load updated install for '{skill_name}'")
         return await _build_skill_update_preview(
@@ -1938,12 +1580,12 @@ async def update_skill_install(
 )
 async def preview_skill_install_update(
     skill_name: str,
-    skill_install_id: int | None = None,
+    skill_installation_id: int | None = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SkillInstallUpdatePreviewResponse:
     try:
-        return await _build_skill_update_preview(db, skill_name=skill_name, current_user=current_user, skill_install_id=skill_install_id)
+        return await _build_skill_update_preview(db, skill_name=skill_name, current_user=current_user, skill_installation_id=skill_installation_id)
     except HTTPException:
         raise
     except Exception as exc:
@@ -1966,15 +1608,29 @@ async def publish_skill(
     phase = "validate_custom_skill"
     release_version: str | None = None
     try:
+        _reject_removed_skill_identity_fields(request)
         _log_publish_phase(phase=phase, skill_name=skill_name, publisher_user_id=current_user.id)
-        definition = await _resolve_publish_definition_or_reject_downloaded(
-            db,
-            user_id=current_user.id,
-            skill_name=skill_name,
-            skill_definition_id=request.skill_definition_id if request is not None else None,
-        )
-        if definition is None:
-            raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+        install: SkillInstall | None = None
+        if request is not None and request.skill_installation_id is not None:
+            install = await _get_update_install(
+                db,
+                user_id=current_user.id,
+                skill_name=skill_name,
+                skill_installation_id=request.skill_installation_id,
+            )
+            definition = install.definition or (install.current_version.definition if install.current_version is not None else None)
+            if definition is None:
+                raise HTTPException(status_code=409, detail=f"Skill '{skill_name}' has no installed platform definition")
+            if not _definition_is_publishable_by_user(definition, user_id=current_user.id):
+                raise HTTPException(status_code=403, detail=f"Skill '{skill_name}' was installed from Community Space. Create your own version before publishing it.")
+        else:
+            definition = await _resolve_publish_definition_or_reject_installed_community(
+                db,
+                user_id=current_user.id,
+                skill_name=skill_name,
+            )
+            if definition is None:
+                raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
         custom_skill = await _get_user_skill_by_definition_or_legacy(
             db,
             user_id=current_user.id,
@@ -1983,17 +1639,17 @@ async def publish_skill(
         )
         if custom_skill is None:
             raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
-        install = await SkillInstallRepository.get_by_user_and_definition(
-            db,
-            user_id=current_user.id,
-            skill_definition_id=definition.id,
-        )
+        if install is None:
+            install = await SkillInstallRepository.get_by_user_and_definition(
+                db,
+                user_id=current_user.id,
+                skill_definition_id=definition.id,
+            )
         if install is None or install.current_version is None:
             raise HTTPException(status_code=409, detail=f"Skill '{skill_name}' has no installed platform version")
         current_version = install.current_version
-        await _reject_unchanged_fork_publish(db, definition=definition, current_version=current_version)
 
-        source_dir = _resolve_skill_dir(current_version.artifact_uri)
+        source_dir = _resolve_skill_version_dir(current_version)
         publish_metadata = _extract_publish_metadata(source_dir, expected_name=skill_name)
         release_notes = _normalize_release_notes(request.release_notes if request is not None else None)
 
@@ -2005,11 +1661,7 @@ async def publish_skill(
             package_version=current_version.source_package_version,
             description=publish_metadata["description"],
             release_notes=release_notes,
-            artifact_path=current_version.artifact_uri,
             publisher_user_id=current_user.id,
-            source_skill_id=custom_skill.id,
-            published_skill_id=None,
-            skill_version_id=current_version.id,
             skill_id=current_version.skill_id,
             version_number=current_version.version_number,
             commit=False,
@@ -2018,8 +1670,7 @@ async def publish_skill(
         phase = "commit_publish"
         _log_publish_phase(phase=phase, skill_name=skill_name, publisher_user_id=current_user.id, release_version=release_version)
         await db.commit()
-        fork_source_version = await _get_recorded_fork_source_version(db, definition)
-        return _skill_to_response(custom_skill, release=release, skill_version=current_version, skill_install=install, current_user_id=current_user.id, fork_source_version=fork_source_version)
+        return _skill_to_response(custom_skill, release=release, skill_version=current_version, skill_install=install, current_user_id=current_user.id)
     except HTTPException as exc:
         await db.rollback()
         if exc.status_code >= 500:
@@ -2098,12 +1749,12 @@ async def update_skill(
     db: AsyncSession = Depends(get_db),
 ) -> SkillResponse:
     try:
+        _reject_removed_skill_identity_fields(request)
         user_skill = await _get_user_skill_for_management(
             db,
             user_id=current_user.id,
             skill_name=skill_name,
-            skill_definition_id=request.skill_definition_id,
-            skill_install_id=request.skill_install_id,
+            skill_installation_id=request.skill_installation_id,
         )
         if user_skill is not None:
             user_skill.updated_at = datetime.now(UTC)
@@ -2131,8 +1782,7 @@ async def update_skill(
 )
 async def delete_skill(
     skill_name: str,
-    skill_definition_id: int | None = None,
-    skill_install_id: int | None = None,
+    skill_installation_id: int | None = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -2141,15 +1791,10 @@ async def delete_skill(
             db,
             user_id=current_user.id,
             skill_name=skill_name,
-            skill_definition_id=skill_definition_id,
-            skill_install_id=skill_install_id,
+            skill_installation_id=skill_installation_id,
         )
         if user_skill is not None:
-            bound_agent_names = await SkillRepository.list_bound_agent_names_for_skill(
-                db,
-                user_id=current_user.id,
-                skill_id=user_skill.id,
-            )
+            bound_agent_names: list[str] = []
             if user_skill.skill_definition_id is not None:
                 install = await SkillInstallRepository.get_by_user_and_definition(
                     db,
@@ -2162,7 +1807,7 @@ async def delete_skill(
                         for agent in await SkillRepository.list_bound_agents_for_install(
                             db,
                             user_id=current_user.id,
-                            skill_install_id=install.id,
+                            skill_installation_id=install.id,
                         )
                     )
             if bound_agent_names:
@@ -2199,12 +1844,13 @@ async def install_skill(
     db: AsyncSession = Depends(get_db),
 ) -> SkillResponse:
     try:
-        if request.thread_id is not None or request.path is not None:
+        extra_fields = _extra_request_fields(request)
+        if "thread_id" in extra_fields or "path" in extra_fields:
             _raise_removed_route(
                 code=_ARCHIVE_INSTALL_REMOVED,
                 message="Archive install has been removed. Use upload/create to create a Skill from an archive.",
             )
-        if request.skill_name is not None or request.skill_definition_id is not None or request.skill_version_id is not None:
+        if extra_fields & {"skill_name", "skill_definition_id", "skill_version_id", "skill_install_id"}:
             raise _coded_http_error(
                 400,
                 code=_TERMINAL_IDENTITY_REQUIRED,

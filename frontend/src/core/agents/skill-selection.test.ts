@@ -9,7 +9,7 @@ const {
   getAgentSkillSelectionGroups,
   getMetadataDisplaySummary,
   getMetadataSelectionKey,
-  getSelectionInstallIds,
+  getSelectionSkillInstallationIds,
   getSelectionSkillNames,
   getSkillDisplaySummary,
   getSkillSelectionKey,
@@ -27,16 +27,15 @@ function skill(overrides: Partial<Skill>): Skill {
   return {
     name: "demo-skill",
     description: "Demo skill",
-    category: "custom",
+    space: "personal",
+    source_kind: "community",
+    viewer_relation: "installed",
     license: null,
     enabled: true,
     skill_id: "12345678-1234-5678-1234-567812345678",
     version_number: 1,
-    skill_install_id: 201,
-    skill_definition_id: 101,
+    skill_installation_id: 201,
     current_platform_version: 1,
-    source_kind: "community",
-    viewer_relation: "downloaded",
     owner_display_name: "Demo Publisher",
     ...overrides,
   };
@@ -45,8 +44,7 @@ function skill(overrides: Partial<Skill>): Skill {
 function metadata(overrides: Partial<AgentSkillMetadata>): AgentSkillMetadata {
   return {
     name: "demo-skill",
-    skill_install_id: 201,
-    skill_definition_id: 101,
+    skill_installation_id: 201,
     current_platform_version: 1,
     source: "skillhub",
     source_label: "Demo Publisher",
@@ -135,14 +133,12 @@ void test("Agent Skill selection rows do not expose package version fallback", (
 void test("same-name different-source installed Skills remain separate and submit install IDs", () => {
   const alice = skill({
     name: "same-skill",
-    skill_install_id: 201,
-    skill_definition_id: 101,
+    skill_installation_id: 201,
     owner_display_name: "Alice",
   });
   const bob = skill({
     name: "same-skill",
-    skill_install_id: 202,
-    skill_definition_id: 102,
+    skill_installation_id: 202,
     owner_display_name: "Bob",
   });
   const selection = [getSkillSelectionKey(alice), getSkillSelectionKey(bob)];
@@ -152,7 +148,7 @@ void test("same-name different-source installed Skills remain separate and submi
     getSkillDisplaySummary(alice, labels).sourceLabel,
     getSkillDisplaySummary(bob, labels).sourceLabel,
   );
-  assert.deepEqual(getSelectionInstallIds(selection), [201, 202]);
+  assert.deepEqual(getSelectionSkillInstallationIds(selection), [201, 202]);
   assert.deepEqual(getSelectionSkillNames(selection), []);
 });
 
@@ -160,28 +156,23 @@ void test("Agent Skill selection exposes only install-backed My Skills", () => {
   const installed = skill({
     name: "same-skill",
     space: "personal",
-    skill_install_id: 201,
-    skill_definition_id: 101,
+    skill_installation_id: 201,
     owner_display_name: "Alice",
   });
   const system = skill({
     name: "same-skill",
-    category: "public",
     space: "system",
     source_kind: "official",
     viewer_relation: "system_available",
-    skill_install_id: null,
-    skill_definition_id: 501,
+    skill_installation_id: null,
     current_platform_version: 3,
     owner_display_name: null,
   });
   const communityNotInstalled = skill({
     name: "community-only",
-    category: "public",
     space: "community",
     viewer_relation: "community_available",
-    skill_install_id: null,
-    skill_definition_id: 601,
+    skill_installation_id: null,
     owner_display_name: "Community Author",
   });
 
@@ -202,14 +193,12 @@ void test("System Skill rows are unavailable for custom Agent selection", () => 
   assert.deepEqual(
     getSkillDisplaySummary(
       skill({
-        category: "public",
         space: "system",
         source_kind: "official",
         viewer_relation: "system_available",
-        skill_install_id: null,
+        skill_installation_id: null,
         skill_id: "12345678-1234-5678-1234-567812345679",
         version_number: 3,
-        skill_definition_id: 502,
         current_platform_version: null,
         owner_display_name: null,
       }),
@@ -228,9 +217,9 @@ void test("System Skill rows are unavailable for custom Agent selection", () => 
 });
 
 void test("Agent Skill selections never submit name-only fallback values", () => {
-  const selection = ["unavailable:legacy-skill", "install:201"];
+  const selection = ["unavailable:missing-skill", "install:201"];
 
-  assert.deepEqual(getSelectionInstallIds(selection), [201]);
+  assert.deepEqual(getSelectionSkillInstallationIds(selection), [201]);
   assert.deepEqual(getSelectionSkillNames(selection), []);
 });
 
@@ -252,7 +241,7 @@ void test("Agent metadata summaries use platform version and hide internal ident
     unavailable: false,
   });
   assert.equal(
-    getMetadataSelectionKey(metadata({ skill_install_id: null })),
+    getMetadataSelectionKey(metadata({ skill_installation_id: null })),
     "unavailable:demo-skill",
   );
 });
@@ -260,8 +249,7 @@ void test("Agent metadata summaries use platform version and hide internal ident
 void test("System Agent metadata is display-only and unavailable for custom Agent resubmit", () => {
   const summary = getMetadataDisplaySummary(
     metadata({
-      skill_install_id: null,
-      skill_definition_id: 501,
+      skill_installation_id: null,
       current_platform_version: 3,
       source: "system",
       source_label: "",

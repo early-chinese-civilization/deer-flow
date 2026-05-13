@@ -60,7 +60,7 @@ void test("builds read-only Skill install update preview request", () => {
 
   assert.match(
     url,
-    /\/api\/skills\/demo-skill\/update-install\/preview\?skill_install_id=301$/,
+    /\/api\/skills\/demo-skill\/update-install\/preview\?skill_installation_id=301$/,
   );
   assert.equal(init.method, "GET");
   assert.equal(init.credentials, "include");
@@ -69,14 +69,14 @@ void test("builds read-only Skill install update preview request", () => {
 
 void test("builds Skill install update confirm request for selected version", () => {
   const [url, init] = buildSkillInstallUpdateConfirmRequest("", "demo-skill", {
-    skill_install_id: 301,
+    skill_installation_id: 301,
     skill_id: "12345678-1234-5678-1234-567812345678",
     version_number: 2,
   });
 
   assert.match(url, /\/api\/skills\/demo-skill\/update-install$/);
   assert.deepEqual(JSON.parse(String(init.body)), {
-    skill_install_id: 301,
+    skill_installation_id: 301,
     skill_id: "12345678-1234-5678-1234-567812345678",
     version_number: 2,
   });

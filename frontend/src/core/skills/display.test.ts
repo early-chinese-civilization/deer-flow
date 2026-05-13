@@ -26,10 +26,13 @@ function skillId(value: number): string {
 }
 
 function skill(overrides: Partial<Skill>): Skill {
+  const hasInstall = overrides.skill_installation_id != null;
   return {
     name: "demo-skill",
     description: "Demo skill",
-    category: "public",
+    space: hasInstall ? "personal" : "community",
+    source_kind: "community",
+    viewer_relation: hasInstall ? "installed" : "community_available",
     license: null,
     enabled: true,
     ...overrides,
@@ -63,21 +66,17 @@ void test("prefers platform version fields over source package metadata", () => 
 
 void test("derives SkillHub installed state from matching My Skills row", () => {
   const publicSkill = skill({
-    category: "public",
     space: "community",
     source_kind: "community",
     viewer_relation: "community_available",
     skill_id: skillId(10),
     version_number: 2,
-    skill_definition_id: 10,
     platform_version: 2,
   });
   const installedSkill = skill({
-    category: "custom",
     skill_id: skillId(10),
     version_number: 1,
-    skill_definition_id: 10,
-    skill_install_id: 20,
+    skill_installation_id: 20,
     platform_version: 1,
   });
 
@@ -104,7 +103,6 @@ void test("classifies explicit Skills viewer relation matrix", () => {
         viewer_relation: "system_available",
         skill_id: skillId(10),
         version_number: 1,
-        skill_definition_id: 10,
       }),
       expected: {
         space: "system",
@@ -121,7 +119,6 @@ void test("classifies explicit Skills viewer relation matrix", () => {
         viewer_relation: "community_available",
         skill_id: skillId(11),
         version_number: 1,
-        skill_definition_id: 11,
       }),
       expected: {
         space: "community",
@@ -138,7 +135,6 @@ void test("classifies explicit Skills viewer relation matrix", () => {
         viewer_relation: "authored_published",
         skill_id: skillId(12),
         version_number: 1,
-        skill_definition_id: 12,
       }),
       expected: {
         space: "community",
@@ -148,30 +144,27 @@ void test("classifies explicit Skills viewer relation matrix", () => {
       },
     },
     {
-      name: "downloaded personal",
+      name: "installed personal",
       skill: skill({
-        category: "custom",
         space: "personal",
         source_kind: "community",
-        viewer_relation: "downloaded",
-        skill_install_id: 20,
-        skill_definition_id: 13,
+        viewer_relation: "installed",
+        skill_installation_id: 20,
       }),
       expected: {
         space: "personal",
         sourceKind: "community",
-        viewerRelation: "downloaded",
+        viewerRelation: "installed",
         identityKey: "install:20",
       },
     },
     {
       name: "authored personal",
       skill: skill({
-        category: "custom",
         space: "personal",
         source_kind: "personal",
         viewer_relation: "authored",
-        skill_install_id: 21,
+        skill_installation_id: 21,
       }),
       expected: {
         space: "personal",
@@ -183,11 +176,10 @@ void test("classifies explicit Skills viewer relation matrix", () => {
     {
       name: "authored published",
       skill: skill({
-        category: "custom",
         space: "personal",
         source_kind: "personal",
         viewer_relation: "authored_published",
-        skill_install_id: 22,
+        skill_installation_id: 22,
       }),
       expected: {
         space: "personal",
@@ -199,11 +191,10 @@ void test("classifies explicit Skills viewer relation matrix", () => {
     {
       name: "authored unpublished changes",
       skill: skill({
-        category: "custom",
         space: "personal",
         source_kind: "personal",
         viewer_relation: "authored_unpublished_changes",
-        skill_install_id: 23,
+        skill_installation_id: 23,
       }),
       expected: {
         space: "personal",
@@ -213,29 +204,27 @@ void test("classifies explicit Skills viewer relation matrix", () => {
       },
     },
     {
-      name: "forked",
+      name: "authored personal copy",
       skill: skill({
-        category: "custom",
         space: "personal",
-        source_kind: "fork",
-        viewer_relation: "forked",
-        skill_install_id: 24,
+        source_kind: "personal",
+        viewer_relation: "authored",
+        skill_installation_id: 24,
       }),
       expected: {
         space: "personal",
-        sourceKind: "fork",
-        viewerRelation: "forked",
+        sourceKind: "personal",
+        viewerRelation: "authored",
         identityKey: "install:24",
       },
     },
     {
       name: "update available",
       skill: skill({
-        category: "custom",
         space: "personal",
         source_kind: "community",
         viewer_relation: "update_available",
-        skill_install_id: 25,
+        skill_installation_id: 25,
       }),
       expected: {
         space: "personal",
@@ -251,38 +240,6 @@ void test("classifies explicit Skills viewer relation matrix", () => {
   }
 });
 
-void test("keeps legacy relation fallback centralized", () => {
-  assert.deepEqual(
-    getSkillDisplayContract(
-      skill({
-        category: "public",
-        owner_user_id: null,
-      }),
-    ),
-    {
-      space: "system",
-      sourceKind: "official",
-      viewerRelation: "system_available",
-      identityKey: "legacy:system:official:system:demo-skill",
-    },
-  );
-
-  assert.deepEqual(
-    getSkillDisplayContract(
-      skill({
-        category: "custom",
-        skill_install_id: 20,
-      }),
-    ),
-    {
-      space: "personal",
-      sourceKind: "community",
-      viewerRelation: "downloaded",
-      identityKey: "install:20",
-    },
-  );
-});
-
 void test("normalizes official Community compatibility rows into System surface", () => {
   const officialCompatibilityRow = skill({
     space: "community",
@@ -290,7 +247,6 @@ void test("normalizes official Community compatibility rows into System surface"
     viewer_relation: "official_available",
     skill_id: skillId(40),
     version_number: 1,
-    skill_definition_id: 40,
     platform_version: 1,
   });
 
@@ -311,7 +267,7 @@ void test("uses explicit API update state when provided", () => {
   assert.equal(
     getSkillInstallState(
       skill({
-        skill_install_id: 20,
+        skill_installation_id: 20,
         current_platform_version: 2,
         latest_platform_version: 2,
         update_available: true,
@@ -326,31 +282,25 @@ void test("preserves same-name different-source identity", () => {
     name: "same-skill",
     skill_id: skillId(100),
     version_number: 1,
-    skill_definition_id: 100,
     owner_user_id: 8,
   });
   const publicB = skill({
     name: "same-skill",
     skill_id: skillId(101),
     version_number: 1,
-    skill_definition_id: 101,
     owner_user_id: 9,
   });
   const installedA = skill({
-    category: "custom",
     name: "same-skill",
     skill_id: skillId(100),
     version_number: 1,
-    skill_definition_id: 100,
-    skill_install_id: 200,
+    skill_installation_id: 200,
   });
   const installedB = skill({
-    category: "custom",
     name: "same-skill",
     skill_id: skillId(101),
     version_number: 1,
-    skill_definition_id: 101,
-    skill_install_id: 201,
+    skill_installation_id: 201,
   });
 
   assert.equal(getSkillIdentityKey(publicA), `skill:${skillId(100)}:v1`);
@@ -385,18 +335,15 @@ void test("uses terminal Skill identity for Community rows", () => {
     viewer_relation: "update_available",
     skill_id: skillId(100),
     version_number: 2,
-    skill_definition_id: 100,
-    skill_install_id: 200,
+    skill_installation_id: 200,
   });
   const personalRow = skill({
-    category: "custom",
     space: "personal",
     source_kind: "community",
     viewer_relation: "update_available",
     skill_id: skillId(100),
     version_number: 1,
-    skill_definition_id: 100,
-    skill_install_id: 200,
+    skill_installation_id: 200,
   });
 
   assert.equal(getSkillIdentityKey(communityRow), `skill:${skillId(100)}:v2`);
@@ -415,7 +362,6 @@ void test("detects self-authored Community listings from explicit relation", () 
         space: "community",
         source_kind: "community",
         viewer_relation: "authored_published",
-        skill_definition_id: 300,
       }),
     ),
     true,
@@ -424,12 +370,10 @@ void test("detects self-authored Community listings from explicit relation", () 
 
 void test("classifies authored Personal Space upload with version and publish state", () => {
   const authored = skill({
-    category: "custom",
     space: "personal",
     source_kind: "personal",
     viewer_relation: "authored",
-    skill_install_id: 700,
-    skill_definition_id: 600,
+    skill_installation_id: 700,
     platform_version: 1,
   });
 
@@ -445,12 +389,10 @@ void test("classifies authored Personal Space upload with version and publish st
 
 void test("published authored Personal Space rows have no no-op manage action", () => {
   const published = skill({
-    category: "custom",
     space: "personal",
     source_kind: "personal",
     viewer_relation: "authored_published",
-    skill_install_id: 702,
-    skill_definition_id: 701,
+    skill_installation_id: 702,
     current_platform_version: 2,
   });
 
@@ -468,7 +410,6 @@ void test("treats publisher's own Community listing as discovery-only", () => {
     space: "community",
     source_kind: "community",
     viewer_relation: "authored_published",
-    skill_definition_id: 701,
     platform_version: 1,
   });
 
@@ -491,7 +432,6 @@ void test("separates System Skills from Community install rows", () => {
     owner_display_name: "official",
     skill_id: skillId(801),
     version_number: 2,
-    skill_definition_id: 801,
     platform_version: 2,
   });
   const userCommunity = skill({
@@ -501,7 +441,6 @@ void test("separates System Skills from Community install rows", () => {
     owner_display_name: "Demo Publisher",
     skill_id: skillId(802),
     version_number: 3,
-    skill_definition_id: 802,
     platform_version: 3,
   });
 
@@ -522,49 +461,41 @@ void test("separates System Skills from Community install rows", () => {
 
 void test("installed Community rows are matched by terminal Skill identity", () => {
   const community = skill({
-    category: "public",
     space: "community",
     source_kind: "community",
     viewer_relation: "community_available",
     skill_id: skillId(10),
     version_number: 1,
-    skill_definition_id: 10,
   });
   const installed = skill({
-    category: "custom",
     space: "personal",
     source_kind: "community",
-    viewer_relation: "downloaded",
+    viewer_relation: "installed",
     skill_id: skillId(10),
     version_number: 1,
-    skill_definition_id: 10,
-    skill_install_id: 20,
+    skill_installation_id: 20,
   });
 
   assert.equal(getSkillInstallState(community, installed), "installed");
 });
 
-void test("renders legacy downloaded relation as installed Community state", () => {
+void test("renders installed relation as Community state", () => {
   const currentInstalled = skill({
-    category: "custom",
     space: "personal",
     source_kind: "community",
-    viewer_relation: "downloaded",
+    viewer_relation: "installed",
     owner_display_name: "Demo Publisher",
-    skill_definition_id: 899,
-    skill_install_id: 898,
+    skill_installation_id: 898,
     current_platform_version: 2,
     latest_platform_version: 2,
     update_available: false,
   });
   const updateAvailable = skill({
-    category: "custom",
     space: "personal",
     source_kind: "community",
     viewer_relation: "update_available",
     owner_display_name: "Demo Publisher",
-    skill_definition_id: 900,
-    skill_install_id: 901,
+    skill_installation_id: 901,
     current_platform_version: 1,
     latest_platform_version: 2,
     update_available: true,
@@ -589,25 +520,23 @@ void test("renders legacy downloaded relation as installed Community state", () 
   assert.equal(skillMatchesWorkspaceSegment(updateAvailable, "updates"), true);
 });
 
-void test("treats legacy fork relation as authored Personal row", () => {
-  const forked = skill({
-    category: "custom",
+void test("treats authored relation as Personal row", () => {
+  const authored = skill({
     space: "personal",
-    source_kind: "fork",
-    viewer_relation: "forked",
+    source_kind: "personal",
+    viewer_relation: "authored",
     owner_display_name: "Original Publisher",
-    skill_definition_id: 902,
-    skill_install_id: 903,
+    skill_installation_id: 903,
     current_platform_version: 1,
   });
 
-  assert.deepEqual(getSkillWorkspaceCardState(forked), {
+  assert.deepEqual(getSkillWorkspaceCardState(authored), {
     role: "authored",
     primaryAction: "publish",
     segments: ["all", "authored"],
   });
-  assert.equal(skillMatchesWorkspaceSegment(forked, "authored"), true);
-  assert.equal(skillMatchesWorkspaceSegment(forked, "installed"), false);
+  assert.equal(skillMatchesWorkspaceSegment(authored, "authored"), true);
+  assert.equal(skillMatchesWorkspaceSegment(authored, "installed"), false);
 });
 
 void test("keeps same-name Community cards distinguishable without user-facing IDs", () => {
@@ -619,7 +548,6 @@ void test("keeps same-name Community cards distinguishable without user-facing I
     owner_display_name: "Alice",
     skill_id: skillId(1000),
     version_number: 1,
-    skill_definition_id: 1000,
   });
   const bob = skill({
     name: "same-skill",
@@ -629,7 +557,6 @@ void test("keeps same-name Community cards distinguishable without user-facing I
     owner_display_name: "Bob",
     skill_id: skillId(1001),
     version_number: 1,
-    skill_definition_id: 1001,
   });
 
   assert.notEqual(getSkillIdentityKey(alice), getSkillIdentityKey(bob));
@@ -648,7 +575,6 @@ void test("filters Community Space by first-class Skill name and author fields",
     owner_display_name: "official",
     skill_id: skillId(1100),
     version_number: 1,
-    skill_definition_id: 1100,
   });
   const community = skill({
     name: "deck-builder",
@@ -658,18 +584,16 @@ void test("filters Community Space by first-class Skill name and author fields",
     owner_display_name: "Avery Chen",
     skill_id: skillId(1101),
     version_number: 1,
-    skill_definition_id: 1101,
   });
-  const downloaded = skill({
+  const installedCommunity = skill({
     name: "market-scan",
     space: "community",
     source_kind: "community",
-    viewer_relation: "downloaded",
+    viewer_relation: "installed",
     owner_display_name: "Mina Park",
     skill_id: skillId(1102),
     version_number: 1,
-    skill_definition_id: 1102,
-    skill_install_id: 2102,
+    skill_installation_id: 2102,
   });
   const updateAvailable = skill({
     name: "analysis-runner",
@@ -679,8 +603,7 @@ void test("filters Community Space by first-class Skill name and author fields",
     owner_display_name: "Update Publisher",
     skill_id: skillId(1103),
     version_number: 2,
-    skill_definition_id: 1103,
-    skill_install_id: 2103,
+    skill_installation_id: 2103,
     current_platform_version: 1,
     latest_platform_version: 2,
     update_available: true,
@@ -693,7 +616,6 @@ void test("filters Community Space by first-class Skill name and author fields",
     owner_display_name: "Alice",
     skill_id: skillId(1104),
     version_number: 1,
-    skill_definition_id: 1104,
   });
   const sameNameBob = skill({
     name: "duplicate-skill",
@@ -703,28 +625,25 @@ void test("filters Community Space by first-class Skill name and author fields",
     owner_display_name: "Bob",
     skill_id: skillId(1105),
     version_number: 1,
-    skill_definition_id: 1105,
   });
-  const personalDownloaded = skill({
+  const personalInstalled = skill({
     name: "deck-builder",
-    category: "custom",
     space: "personal",
     source_kind: "community",
-    viewer_relation: "downloaded",
+    viewer_relation: "installed",
     owner_display_name: "Avery Chen",
     skill_id: skillId(1101),
     version_number: 1,
-    skill_definition_id: 1101,
-    skill_install_id: 2101,
+    skill_installation_id: 2101,
   });
   const rows = [
     system,
     community,
-    downloaded,
+    installedCommunity,
     updateAvailable,
     sameNameAlice,
     sameNameBob,
-    personalDownloaded,
+    personalInstalled,
   ];
 
   assert.deepEqual(
@@ -737,7 +656,7 @@ void test("filters Community Space by first-class Skill name and author fields",
   );
   assert.deepEqual(
     rows.filter((row) => skillMatchesCommunitySearch(row, "market")),
-    [downloaded],
+    [installedCommunity],
   );
   assert.deepEqual(
     rows.filter((row) => skillMatchesCommunitySearch(row, "update publisher")),
@@ -753,13 +672,13 @@ void test("filters Community Space by first-class Skill name and author fields",
   );
   assert.deepEqual(
     rows.filter((row) => skillMatchesCommunitySearch(row, "community")),
-    [community, downloaded, updateAvailable, sameNameAlice, sameNameBob],
+    [community, installedCommunity, updateAvailable, sameNameAlice, sameNameBob],
   );
   assert.deepEqual(
     [
       system,
       community,
-      downloaded,
+      installedCommunity,
       updateAvailable,
       sameNameAlice,
       sameNameBob,
@@ -828,7 +747,6 @@ void test("reports not-installed when no install identity or version exists", ()
   assert.equal(
     getSkillInstallState(
       skill({
-        category: "public",
         platform_version: 1,
       }),
     ),

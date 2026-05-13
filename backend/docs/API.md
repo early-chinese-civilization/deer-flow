@@ -280,40 +280,44 @@ Content-Type: application/json
 
 ### Skills
 
-Skills use two related persistence concepts:
+The terminal Skill model is documented in `docs-qy/skills-new/**` and `DeerFlow数据库ER图.md`.
 
-- `skills` rows are the current visible/installable copies: user-owned custom skills and public latest catalog skills.
-- `skill_releases` rows are immutable publish records. They track which publish produced a public latest skill copy.
-
-`package_version` comes from `SKILL.md` frontmatter `version` and is optional, non-unique, and not SemVer-enforced. If present, it must be a string. `release_version` is system-generated and immutable.
+- `skill.id` is the stable Skill identity.
+- `(skill_id, version_number)` is the runnable version identity.
+- Skill content is derived from `.deer-flow/skills/{skill_id}/{version_number}/`; path fields are not runtime truth.
+- `skill_releases(skill_id, version_number, status)` controls discovery, install, and update visibility.
+- `skill_installations.id` is the user's install relation for custom Agent binding.
+- Default chat uses `config.yaml` `default_chat.system_skills` and does not create install or Agent binding rows.
 
 #### Skill Response Shape
 
-Skill responses include version metadata when available:
+Skill responses expose terminal identity and display metadata:
 
 ```json
 {
   "name": "pdf-processing",
   "description": "Handle PDF documents efficiently",
-  "category": "public",
+  "space": "community",
+  "source_kind": "community",
+  "viewer_relation": "community_available",
   "enabled": true,
   "license": "MIT",
-  "version": "1.2.0",
-  "package_version": "1.2.0",
-  "release_version": "rel_9b5e0b9a2b6d4e7a9f1c2d3e4f5a6b7c",
+  "skill_id": "12345678-1234-5678-1234-567812345678",
+  "version_number": 2,
+  "platform_version": 2,
   "release_status": "published",
   "release_notes": "Fix prompt routing and clarify browser tool usage.",
   "published_at": "2026-04-28T08:00:00+00:00",
-  "owner_user_id": 42,
+  "skill_installation_id": null,
   "owner_display_name": "Alice"
 }
 ```
 
-For legacy public skills without a release record, `version`, `package_version`, `release_version`, `release_status`, `release_notes`, and `published_at` are `null`. For custom skills, `package_version` is read from that custom copy's `SKILL.md` when available.
+Legacy compatibility fields may appear during migration, but clients should use terminal identity fields for install, update, display, and Agent binding decisions.
 
 #### List Skills
 
-Get the current user's custom skills plus public latest skills.
+Get visible System, Community, and My Skills rows with terminal identity metadata.
 
 ```http
 GET /api/skills
@@ -326,16 +330,18 @@ GET /api/skills
     {
       "name": "pdf-processing",
       "description": "Handle PDF documents efficiently",
-      "category": "public",
+      "space": "community",
+      "source_kind": "community",
+      "viewer_relation": "community_available",
       "enabled": true,
       "license": "MIT",
-      "version": "1.2.0",
-      "package_version": "1.2.0",
-      "release_version": "rel_9b5e0b9a2b6d4e7a9f1c2d3e4f5a6b7c",
+      "skill_id": "12345678-1234-5678-1234-567812345678",
+      "version_number": 2,
+      "platform_version": 2,
       "release_status": "published",
       "release_notes": "Fix prompt routing and clarify browser tool usage.",
       "published_at": "2026-04-28T08:00:00+00:00",
-      "owner_user_id": 42,
+      "skill_installation_id": null,
       "owner_display_name": "Alice"
     }
   ]
@@ -348,11 +354,11 @@ GET /api/skills
 GET /api/skills/{skill_name}
 ```
 
-The Gateway prefers the current user's custom copy when one exists; otherwise it returns public latest. The response uses the same `SkillResponse` shape as list.
+The response uses the same terminal `SkillResponse` shape as list. Same-name rows are distinguished by `skill_id` and, for My Skills binding, `skill_installation_id`.
 
 #### Check Skill Upload
 
-Check whether an uploaded `.skill` ZIP conflicts with the current user's installed package version. Same-name, same-version uploads are treated as duplicates. Same-name, different-version uploads are allowed and update the current custom skill copy instead of creating a second active skill row.
+Check whether an uploaded Skill package can create or reuse an immutable platform version. Upload validation must not execute fork claim sidecar behavior.
 
 ```http
 POST /api/skills/check-upload
@@ -377,7 +383,7 @@ Content-Type: multipart/form-data
 
 #### Upload Skills
 
-Upload one or more custom skill ZIP archives.
+Upload one or more authored Skill packages.
 
 ```http
 POST /api/skills/uploads
@@ -386,13 +392,13 @@ Content-Type: multipart/form-data
 
 **Request Body:**
 - `files`: one or more ZIP archives
-- `overwrite_names`: optional repeated form field naming custom skills that may be overwritten
+- `overwrite_names`: optional repeated form field naming authored Skills that may be overwritten during migration-window compatibility
 
-Gateway upload validation accepts standard optional frontmatter keys (`version`, `author`, `compatibility`) and rejects non-string `version` values with a 400 detail. When a user uploads the same skill name with a different package version, DeerFlow replaces that user's current custom copy in place and keeps only one active same-name skill. Same-name same-version uploads are rejected unless the client explicitly sends that name in `overwrite_names` to force a reinstall.
+Gateway upload validation accepts supported `SKILL.md` metadata, but platform versioning is owned by DeerFlow. New content writes to `.deer-flow/skills/{skill_id}/{version_number}/` and must not overwrite older version directories.
 
 #### Publish Custom Skill
 
-Publish the current user's custom skill as public latest.
+Publish a concrete Skill version.
 
 ```http
 POST /api/skills/{skill_name}/publish
@@ -406,58 +412,20 @@ Optional request body:
 }
 ```
 
-`release_notes` is publish-event metadata stored on the immutable release record. The package version still comes from `SKILL.md` and is not edited through the publish request.
+`release_notes` is publish-event metadata stored on the release record. The published version is the exact `(skill_id, version_number)` selected by the backend.
 
 Publish flow:
-1. Validate the current user's custom skill and parse `SKILL.md` metadata.
-2. Copy the custom skill artifact to the public latest storage path.
-3. Soft-delete previous active public rows for the same skill name.
-4. Create the new public latest `skills` row.
-5. Create a `skill_releases` record with generated `release_version`, optional `package_version`, and optional `release_notes`.
-6. Commit once and return the version-aware `SkillResponse`.
+1. Validate the current user's authored Skill and the exact immutable version.
+2. Ensure `.deer-flow/skills/{skill_id}/{version_number}/SKILL.md` exists.
+3. Create or update `skill_releases(skill_id, version_number, status)`.
+4. Commit once and return the terminal `SkillResponse`.
 
 User-visible behavior:
-- Missing custom skill returns 404.
+- Missing authored Skill returns 404.
 - Invalid metadata returns 400 with actionable detail.
-- System failures return a generic 500 detail. Publish phase logs include skill name, publisher user ID, phase, release_version when known, and sanitized error type/message.
-- In-process failures before commit roll back DB changes and restore the previous public artifact directory when possible.
+- System failures return a generic 500 detail with sanitized server-side logs.
 
-#### Check Skill Download
-
-Check whether downloading public latest would overwrite the current user's custom skill.
-
-```http
-POST /api/skills/{skill_name}/check-download
-Content-Type: application/json
-```
-
-**Request Body:**
-```json
-{
-  "owner_user_id": null
-}
-```
-
-`owner_user_id` is accepted for compatibility but public lookup uses the skill name.
-
-#### Download Public Skill
-
-Copy public latest into the current user's custom skills.
-
-```http
-POST /api/skills/{skill_name}/download
-Content-Type: application/json
-```
-
-**Request Body:**
-```json
-{
-  "owner_user_id": null,
-  "overwrite": false
-}
-```
-
-If a same-name custom skill exists and `overwrite` is false, the endpoint returns 409. On success, the response includes the source public latest release/package metadata when available.
+Download, check-download, fork-package, and archive install flows are removed terminal behaviors. Migration-window route stubs should fail before copy, fork, or archive extraction work.
 
 #### Update Skill
 
@@ -473,7 +441,7 @@ Content-Type: application/json
 }
 ```
 
-For user-owned custom skills, this refreshes the current skill row. Public skills are read-only.
+Updates authored Skill metadata or enabled state for rows owned by the current user. Runtime version identity remains `(skill_id, version_number)`.
 
 #### Delete Skill
 
@@ -481,11 +449,11 @@ For user-owned custom skills, this refreshes the current skill row. Public skill
 DELETE /api/skills/{skill_name}
 ```
 
-Soft-deletes the current user's custom skill. Public skills cannot be deleted, and custom skills currently bound to an agent return 409.
+Soft-deletes the current user's authored Skill or install relation when allowed. Skills currently bound to an Agent through `agent_skills.skill_installation_id` return 409.
 
-#### Install Skill
+#### Install Published Skill
 
-Install a skill from a `.skill` file already present in a thread's user-data path.
+Install an exact published Skill version for the current user.
 
 ```http
 POST /api/skills/install
@@ -495,17 +463,18 @@ Content-Type: application/json
 **Request Body:**
 ```json
 {
-  "thread_id": "abc123",
-  "path": "mnt/user-data/outputs/my-skill.skill"
+  "skill_id": "12345678-1234-5678-1234-567812345678",
+  "version_number": 2
 }
 ```
 
 **Response:**
 ```json
 {
-  "success": true,
-  "skill_name": "my-skill",
-  "message": "Skill installed successfully"
+  "name": "pdf-processing",
+  "skill_id": "12345678-1234-5678-1234-567812345678",
+  "version_number": 2,
+  "skill_installation_id": 201
 }
 ```
 

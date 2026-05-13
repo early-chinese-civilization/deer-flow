@@ -33,25 +33,6 @@ export type SkillWorkspacePrimaryAction =
   | "publish-update"
   | "none";
 
-const SKILL_SPACES = ["system", "community", "personal"] as const;
-const SKILL_SOURCE_KINDS = [
-  "official",
-  "community",
-  "personal",
-  "fork",
-] as const;
-const SKILL_VIEWER_RELATIONS = [
-  "system_available",
-  "official_available",
-  "community_available",
-  "downloaded",
-  "authored",
-  "authored_published",
-  "authored_unpublished_changes",
-  "update_available",
-  "forked",
-] as const;
-
 export interface SkillDisplayContract {
   space: SkillSpace;
   sourceKind: SkillSourceKind;
@@ -65,83 +46,14 @@ export interface SkillWorkspaceCardState {
   segments: SkillWorkspaceSegment[];
 }
 
-function isSkillSpace(value: unknown): value is SkillSpace {
-  return SKILL_SPACES.includes(value as SkillSpace);
-}
-
-function isSkillSourceKind(value: unknown): value is SkillSourceKind {
-  return SKILL_SOURCE_KINDS.includes(value as SkillSourceKind);
-}
-
-function isSkillViewerRelation(value: unknown): value is SkillViewerRelation {
-  return SKILL_VIEWER_RELATIONS.includes(value as SkillViewerRelation);
-}
-
-function getLegacySkillSpace(skill: Skill): SkillSpace {
-  if (
-    skill.skill_definition_source_type === "legacy" ||
-    (skill.category === "public" && skill.owner_user_id == null)
-  ) {
-    return "system";
-  }
-  return skill.category === "public" ? "community" : "personal";
-}
-
-function getLegacySkillSourceKind(
-  skill: Skill,
-  space: SkillSpace,
-): SkillSourceKind {
-  if (space === "system") {
-    return "official";
-  }
-  if (
-    (space === "community" && skill.owner_user_id == null) ||
-    skill.skill_definition_source_type === "legacy"
-  ) {
-    return "official";
-  }
-  if (space === "personal") {
-    return skill.skill_install_id != null ? "community" : "personal";
-  }
-  return "community";
-}
-
-function getLegacySkillViewerRelation(
-  skill: Skill,
-  space: SkillSpace,
-  sourceKind: SkillSourceKind,
-): SkillViewerRelation {
-  if (space === "system" || sourceKind === "official") {
-    return "system_available";
-  }
-  if (sourceKind === "fork") {
-    return "authored";
-  }
-  if (skill.update_available === true) {
-    return "update_available";
-  }
-  if (space === "community") {
-    return "community_available";
-  }
-  if (skill.skill_install_id != null && sourceKind !== "personal") {
-    return "downloaded";
-  }
-  if (skill.release_status === "published") {
-    return "authored_published";
-  }
-  return "authored";
+export function getSkillInstallationId(skill: Skill): number | null {
+  return skill.skill_installation_id ?? null;
 }
 
 export function getSkillDisplayContract(skill: Skill): SkillDisplayContract {
-  const explicitSpace = isSkillSpace(skill.space)
-    ? skill.space
-    : getLegacySkillSpace(skill);
-  const sourceKind = isSkillSourceKind(skill.source_kind)
-    ? skill.source_kind
-    : getLegacySkillSourceKind(skill, explicitSpace);
-  const viewerRelation = isSkillViewerRelation(skill.viewer_relation)
-    ? skill.viewer_relation
-    : getLegacySkillViewerRelation(skill, explicitSpace, sourceKind);
+  const explicitSpace = skill.space;
+  const sourceKind = skill.source_kind;
+  const viewerRelation = skill.viewer_relation;
   const space =
     sourceKind === "official" ||
     viewerRelation === "official_available" ||
@@ -158,23 +70,18 @@ export function getSkillDisplayContract(skill: Skill): SkillDisplayContract {
 }
 
 export function getSkillIdentityKey(skill: Skill): string {
-  const explicitSpace = isSkillSpace(skill.space)
-    ? skill.space
-    : getLegacySkillSpace(skill);
-  const explicitSourceKind = isSkillSourceKind(skill.source_kind)
-    ? skill.source_kind
-    : getLegacySkillSourceKind(skill, explicitSpace);
-  const explicitViewerRelation = isSkillViewerRelation(skill.viewer_relation)
-    ? skill.viewer_relation
-    : getLegacySkillViewerRelation(skill, explicitSpace, explicitSourceKind);
+  const explicitSpace = skill.space;
+  const explicitSourceKind = skill.source_kind;
+  const explicitViewerRelation = skill.viewer_relation;
   const space =
     explicitSourceKind === "official" ||
     explicitViewerRelation === "official_available" ||
     explicitViewerRelation === "system_available"
       ? "system"
       : explicitSpace;
-  if (space === "personal" && skill.skill_install_id != null) {
-    return `install:${skill.skill_install_id}`;
+  const skillInstallationId = getSkillInstallationId(skill);
+  if (space === "personal" && skillInstallationId != null) {
+    return `install:${skillInstallationId}`;
   }
   if (skill.skill_id && skill.version_number != null) {
     return `skill:${skill.skill_id}:v${skill.version_number}`;
@@ -182,8 +89,8 @@ export function getSkillIdentityKey(skill: Skill): string {
   if (skill.skill_id) {
     return `skill:${skill.skill_id}`;
   }
-  if (skill.skill_install_id != null) {
-    return `install:${skill.skill_install_id}`;
+  if (skillInstallationId != null) {
+    return `install:${skillInstallationId}`;
   }
   return `legacy:${space}:${explicitSourceKind}:${skill.owner_user_id ?? "system"}:${skill.name}`;
 }
@@ -205,8 +112,7 @@ export function isAuthoredSkillRelation(skill: Skill): boolean {
   return (
     relation === "authored" ||
     relation === "authored_published" ||
-    relation === "authored_unpublished_changes" ||
-    relation === "forked"
+    relation === "authored_unpublished_changes"
   );
 }
 
@@ -223,7 +129,7 @@ export function isInstalledCommunitySkillRelation(skill: Skill): boolean {
   const display = getSkillDisplayContract(skill);
   return (
     display.space === "personal" &&
-    (display.viewerRelation === "downloaded" ||
+    (display.viewerRelation === "installed" ||
       display.viewerRelation === "update_available")
   );
 }
@@ -279,20 +185,11 @@ export function getSkillWorkspaceCardState(
     };
   }
 
-  if (display.viewerRelation === "downloaded") {
+  if (display.viewerRelation === "installed") {
     segments.add("installed");
     return {
       role: "installed",
       primaryAction: "none",
-      segments: Array.from(segments),
-    };
-  }
-
-  if (display.viewerRelation === "forked") {
-    segments.add("authored");
-    return {
-      role: "authored",
-      primaryAction: "publish",
       segments: Array.from(segments),
     };
   }
@@ -443,7 +340,7 @@ export function findInstalledSkillForSkillHubItem(
   skills: Skill[],
 ): Skill | null {
   if (!isCommunitySkill(skill)) {
-    return skill.skill_install_id ? skill : null;
+    return getSkillInstallationId(skill) ? skill : null;
   }
 
   const bySkillId =
@@ -452,7 +349,7 @@ export function findInstalledSkillForSkillHubItem(
           (candidate) =>
             isPersonalSkill(candidate) &&
             candidate.skill_id === skill.skill_id &&
-            candidate.skill_install_id != null,
+            getSkillInstallationId(candidate) != null,
         )
       : undefined;
   if (bySkillId) {
@@ -480,8 +377,8 @@ export function getSkillInstallState(
   const installedVersion = getInstalledPlatformVersion(skill, installedSkill);
   const latestVersion = getSkillHubLatestPlatformVersion(skill);
   const isInstalled =
-    skill.skill_install_id != null ||
-    installedSkill?.skill_install_id != null ||
+    getSkillInstallationId(skill) != null ||
+    (installedSkill ? getSkillInstallationId(installedSkill) != null : false) ||
     installedVersion != null;
 
   if (!isInstalled) {

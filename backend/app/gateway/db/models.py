@@ -5,9 +5,9 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint, and_, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy.orm import DeclarativeBase, foreign, relationship
 
 INTERNAL_SYSTEM_EXTERNAL_AUTH_ID = "system:deerflow"
 
@@ -314,7 +314,6 @@ class LegacySkill(Base):
     user = relationship("User", back_populates="legacy_skills", foreign_keys=[user_id])
     owner_user = relationship("User", foreign_keys=[owner_user_id])
     definition = relationship("SkillDefinition", foreign_keys=[skill_definition_id], back_populates="legacy_skills")
-    agent_skills = relationship("AgentSkill", back_populates="skill", cascade="all, delete-orphan")
     source_releases = relationship("SkillRelease", foreign_keys="SkillRelease.source_skill_id", back_populates="source_skill")
     published_releases = relationship("SkillRelease", foreign_keys="SkillRelease.published_skill_id", back_populates="published_skill")
     terminal_identity_mappings = relationship("SkillIdentityMigrationMap", back_populates="legacy_skill")
@@ -466,7 +465,6 @@ class SkillVersion(Base):
     description = Column(Text, nullable=True, comment="Description captured from this version")
     content_hash = Column(String(128), nullable=False, comment="Canonical content hash excluding source package version")
     file_manifest_hash = Column(String(128), nullable=False, comment="Raw file manifest hash")
-    artifact_uri = Column(String(500), nullable=False, comment="Immutable artifact filesystem path")
     created_by_user_id = Column(
         BigInteger,
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -483,7 +481,15 @@ class SkillVersion(Base):
     skill = relationship("Skill", back_populates="versions", foreign_keys=[skill_id])
     definition = relationship("SkillDefinition", back_populates="versions")
     created_by_user = relationship("User", foreign_keys=[created_by_user_id])
-    releases = relationship("SkillRelease", back_populates="skill_version", foreign_keys="SkillRelease.skill_version_id")
+    releases = relationship(
+        "SkillRelease",
+        back_populates="skill_version",
+        primaryjoin=lambda: and_(
+            SkillVersion.skill_id == foreign(SkillRelease.skill_id),
+            SkillVersion.version_number == foreign(SkillRelease.version_number),
+        ),
+        viewonly=True,
+    )
     installs_current = relationship("SkillInstallation", foreign_keys="SkillInstallation.current_version_id", back_populates="current_version")
     installs_initial = relationship("SkillInstallation", foreign_keys="SkillInstallation.installed_version_id", back_populates="installed_version")
 
@@ -610,7 +616,6 @@ class SkillRelease(Base):
     description = Column(Text, nullable=True, comment="Skill description at publish time")
     release_notes = Column(Text, nullable=True, comment="Optional notes for this publish event")
     status = Column(String(50), nullable=False, default="published", comment="Release status")
-    artifact_path = Column(String(500), nullable=False, comment="Published artifact filesystem path")
     publisher_user_id = Column(
         BigInteger,
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -627,13 +632,7 @@ class SkillRelease(Base):
         BigInteger,
         ForeignKey("legacy_skills.id", ondelete="SET NULL"),
         nullable=True,
-        comment="Legacy public latest skill row produced by this release",
-    )
-    skill_version_id = Column(
-        BigInteger,
-        ForeignKey("skill_versions.id", ondelete="RESTRICT"),
-        nullable=True,
-        comment="Legacy SkillVersion row ID compatibility reference",
+        comment="Legacy public row compatibility reference; not terminal release identity",
     )
     published_at = Column(DateTime(timezone=True), nullable=True, comment="Published at")
     created_at = Column(
@@ -654,7 +653,16 @@ class SkillRelease(Base):
     publisher_user = relationship("User", foreign_keys=[publisher_user_id])
     source_skill = relationship("LegacySkill", foreign_keys=[source_skill_id], back_populates="source_releases")
     published_skill = relationship("LegacySkill", foreign_keys=[published_skill_id], back_populates="published_releases")
-    skill_version = relationship("SkillVersion", back_populates="releases", foreign_keys=[skill_version_id])
+    skill_version = relationship(
+        "SkillVersion",
+        back_populates="releases",
+        primaryjoin=lambda: and_(
+            foreign(SkillRelease.skill_id) == SkillVersion.skill_id,
+            foreign(SkillRelease.version_number) == SkillVersion.version_number,
+        ),
+        viewonly=True,
+        uselist=False,
+    )
 
     __table_args__ = (
         ForeignKeyConstraint(
@@ -666,69 +674,15 @@ class SkillRelease(Base):
         UniqueConstraint("skill_id", "version_number", name="uq_skill_releases_skill_version"),
         Index("ix_skill_releases_skill_name_created", "skill_name", "created_at"),
         Index("ix_skill_releases_published_skill_id", "published_skill_id"),
-        Index("ix_skill_releases_skill_version_id", "skill_version_id"),
         Index("ix_skill_releases_status_skill_version", "status", "skill_id", "version_number"),
         Index("ix_skill_releases_status", "status"),
     )
 
 
-class PendingSkillForkClaim(Base):
-    """Server-side claim that authorizes a later local upload as a fork."""
-
-    __tablename__ = "pending_skill_fork_claims"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="Pending fork claim ID")
-    user_id = Column(
-        BigInteger,
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        comment="User that requested the fork package",
-    )
-    source_skill_definition_id = Column(
-        BigInteger,
-        ForeignKey("skill_definitions.id", ondelete="CASCADE"),
-        nullable=False,
-        comment="Source SkillDefinition selected for fork",
-    )
-    source_skill_version_id = Column(
-        BigInteger,
-        ForeignKey("skill_versions.id", ondelete="CASCADE"),
-        nullable=False,
-        comment="Source SkillVersion selected for fork",
-    )
-    claim_token_hash = Column(String(128), nullable=False, comment="SHA-256 hash of the package-carried claim token")
-    status = Column(String(32), nullable=False, default="pending", comment="pending, claimed, expired, or revoked")
-    source_snapshot = Column(JSONB(astext_type=Text()), nullable=False, default=dict, comment="Display/source metadata captured when exporting")
-    expires_at = Column(DateTime(timezone=True), nullable=False, comment="Claim expiry")
-    claimed_at = Column(DateTime(timezone=True), nullable=True, comment="First successful upload claim timestamp")
-    created_at = Column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(UTC),
-        comment="Created at",
-    )
-    updated_at = Column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
-        comment="Updated at",
-    )
-
-    user = relationship("User", foreign_keys=[user_id])
-    source_definition = relationship("SkillDefinition", foreign_keys=[source_skill_definition_id])
-    source_version = relationship("SkillVersion", foreign_keys=[source_skill_version_id])
-
-    __table_args__ = (
-        Index("ix_pending_skill_fork_claims_user_status", "user_id", "status", "expires_at"),
-        Index("ix_pending_skill_fork_claims_source_version", "source_skill_version_id"),
-    )
-
-
 class AgentSkill(Base):
-    """Many-to-many relationship between agents and legacy Skill bridge rows."""
+    """Custom Agent binding to a user-owned Skill installation."""
 
-    __tablename__ = "agents_skills"
+    __tablename__ = "agent_skills"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True, comment="Association ID")
     agent_id = Column(
@@ -737,29 +691,12 @@ class AgentSkill(Base):
         nullable=False,
         comment="Agent ID",
     )
-    skill_id = Column(
-        BigInteger,
-        ForeignKey("legacy_skills.id", ondelete="CASCADE"),
-        nullable=True,
-        comment="Legacy skill ID",
-    )
-    skill_install_id = Column(
+    skill_installation_id = Column(
+        "skill_installation_id",
         BigInteger,
         ForeignKey("skill_installations.id", ondelete="CASCADE"),
-        nullable=True,
-        comment="Compatibility column for terminal skill_installations.id",
-    )
-    system_skill_definition_id = Column(
-        BigInteger,
-        ForeignKey("skill_definitions.id", ondelete="RESTRICT"),
-        nullable=True,
-        comment="Direct system SkillDefinition binding for platform-provided skills",
-    )
-    system_skill_version_id = Column(
-        BigInteger,
-        ForeignKey("skill_versions.id", ondelete="RESTRICT"),
-        nullable=True,
-        comment="Direct system SkillVersion binding resolved by runtime manifest",
+        nullable=False,
+        comment="Terminal skill_installations.id binding column",
     )
     display_order = Column(Integer, nullable=False, default=0, comment="Display order")
     enabled = Column(Boolean, nullable=False, default=True, comment="Enabled flag")
@@ -772,60 +709,24 @@ class AgentSkill(Base):
     deleted_at = Column(DateTime(timezone=True), nullable=True, comment="Soft delete timestamp")
 
     agent = relationship("Agent", back_populates="agent_skills")
-    skill = relationship("LegacySkill", back_populates="agent_skills")
     skill_install = relationship("SkillInstallation", back_populates="agent_skills")
-    system_skill_definition = relationship("SkillDefinition", foreign_keys=[system_skill_definition_id])
-    system_skill_version = relationship("SkillVersion", foreign_keys=[system_skill_version_id])
-
-    @property
-    def skill_installation_id(self) -> int | None:
-        """Terminal name for the install-backed Agent binding column."""
-        return self.skill_install_id
-
-    @skill_installation_id.setter
-    def skill_installation_id(self, value: int | None) -> None:
-        self.skill_install_id = value
 
     __table_args__ = (
-        CheckConstraint(
-            "skill_id IS NOT NULL OR skill_install_id IS NOT NULL OR system_skill_version_id IS NOT NULL",
-            name="ck_agents_skills_has_skill_or_install",
-        ),
-        CheckConstraint(
-            "system_skill_version_id IS NULL OR system_skill_definition_id IS NOT NULL",
-            name="ck_agents_skills_system_version_has_definition",
-        ),
         Index(
-            "uq_agents_skills_active",
+            "uq_agent_skills_agent_installation_active",
             "agent_id",
-            "skill_id",
+            "skill_installation_id",
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
-        Index(
-            "uq_agents_skill_installs_active",
-            "agent_id",
-            "skill_install_id",
-            unique=True,
-            postgresql_where=text("deleted_at IS NULL AND skill_install_id IS NOT NULL"),
-        ),
-        Index(
-            "uq_agents_system_skill_versions_active",
-            "agent_id",
-            "system_skill_version_id",
-            unique=True,
-            postgresql_where=text("deleted_at IS NULL AND system_skill_version_id IS NOT NULL"),
-        ),
-        Index("ix_agents_skills_agent_id", "agent_id"),
-        Index("ix_agents_skills_skill_id", "skill_id"),
-        Index("ix_agents_skills_skill_install_id", "skill_install_id"),
-        Index("ix_agents_skills_system_skill_version_id", "system_skill_version_id"),
-        Index("ix_agents_skills_deleted_at", "deleted_at"),
+        Index("ix_agent_skills_agent_id", "agent_id"),
+        Index("ix_agent_skills_skill_installation_id", "skill_installation_id"),
+        Index("ix_agent_skills_deleted_at", "deleted_at"),
     )
 
 
 class RuntimeManifest(Base):
-    """Persisted run-level manifest snapshot for runtime skill authorization."""
+    """Persisted audit snapshot generated from already-resolved runtime Skill descriptors."""
 
     __tablename__ = "runtime_manifests"
 
@@ -833,12 +734,12 @@ class RuntimeManifest(Base):
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
-        comment="Runtime manifest ID",
+        comment="Runtime descriptor audit snapshot ID",
     )
     user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, comment="Runtime user ID")
     agent_id = Column(BigInteger, ForeignKey("agents.id", ondelete="SET NULL"), nullable=True, comment="Resolved agent ID")
     agent_name = Column(String(255), nullable=True, comment="Resolved agent name")
-    manifest_json = Column(JSONB(astext_type=Text()), nullable=False, default=dict, comment="Manifest payload")
+    manifest_json = Column(JSONB(astext_type=Text()), nullable=False, default=dict, comment="Resolved descriptor audit payload")
     manifest_hash = Column(String(128), nullable=False, comment="Deterministic audit hash of manifest_json")
     created_at = Column(
         DateTime(timezone=True),

@@ -58,9 +58,7 @@ deer-flow/
 │   └── docs/                  # Documentation
 ├── frontend/                   # Next.js frontend application
 └── skills/                     # Agent skills directory
-    ├── public/                # Public/system catalog skills
-    ├── <user_id>/             # User-private skill copies
-    └── local/                 # Standalone client installs
+    └── {skill_id}/{version_number}/  # Terminal immutable Skill versions
 ```
 
 ## Important Development Guidelines
@@ -212,7 +210,7 @@ FastAPI application on port 8001 with health check at `GET /health`.
 | **Auth** (`/api/auth`) | Shared `ecc-auth` SDK routes for `login`, `callback`, `me`, `refresh`, `logout`; the router is created during app construction after config/.env loading, the app also installs the shared auth-session middleware so dependency-based refresh can persist rotated cookies on custom responses, the backend depends on published `ecc-auth>=0.1.3`, callback identity is resolved through Keycloak `/userinfo` to avoid backend clock-skew `iat`/`nbf` rejection on freshly issued tokens, Gateway business deps still project `AuthIdentity -> User`, `/me` is JWKS-first, explicit logout sets `kc_logout_marker` to block silent refresh re-login, `DEER_FLOW_DEV_SYNTHETIC_AUTH=1` can replace the external Keycloak router with a development-only synthetic identity only when `DEER_FLOW_SERVER_MODE=dev`/`NODE_ENV=development`; the synthetic identity is still projected into the local `users` table so skills, uploads, threads, agents, and memory keep user ownership semantics, and legacy handwritten Keycloak/PKCE/cookie helper modules are no longer part of the runtime path |
 | **Models** (`/api/models`) | `GET /` - list models; `GET /{name}` - model details |
 | **MCP** (`/api/mcp`) | `GET /config` - get config; `PUT /config` - update config (saves to extensions_config.json) |
-| **Skills** (`/api/skills`) | `GET /` - list visible skills with version metadata; `GET /{name}` - details; `PUT /{name}` - refresh/update current user skill; `POST /install` - install from `.skill` archive into the authenticated user's private skill path; `POST /{name}/publish` - publish a user-owned skill version to SkillHub with optional release notes; `POST /{name}/download` remains a legacy route name for install/add-to-My-Skills semantics where applicable; `POST /check-upload` / `POST /{name}/check-download` - conflict checks. Optional SKILL.md frontmatter includes `version`, `author`, `compatibility`; non-string `version` is rejected. New write paths do not create `custom/<skill_name>`; existing `custom/` content is legacy compatibility only. |
+| **Skills** (`/api/skills`) | Terminal Skill surfaces follow `docs-qy/skills-new/**`: `skill.id` is the Skill identity, `(skill_id, version_number)` is the version identity, `POST /install` installs an exact published version, update confirm payloads use `skill_installation_id + skill_id + version_number`, and removed download/check-download/fork/archive-install paths must not perform copy or fork behavior. |
 | **Memory** (`/api/memory`) | `GET /` - memory data; `POST /reload` - force reload; `GET /config` - config; `GET /status` - config + data |
 | **Uploads** (`/api/workspaces/{workspace_id}/uploads`) | `POST /` - upload workspace files (auto-converts PDF/PPT/Excel/Word, mirrors into the bound thread when `thread_id` is provided); `GET /list` - list canonical workspace files plus a nested tree; `DELETE /` - delete by JSON body (`filename`, optional `object_key`) |
 | **Threads** (`/api/threads/{id}`) | `DELETE /` - remove DeerFlow-managed local thread data after LangGraph thread deletion; unexpected failures are logged server-side and return a generic 500 detail |
@@ -286,13 +284,12 @@ Proxied through nginx: `/api/langgraph/*` → Gateway-backed LangGraph runtime, 
 
 ### Skills System (`packages/harness/deerflow/skills/`)
 
-- **Location**: `deer-flow/skills/{public,<user_id>,local}/`; `custom/` is legacy compatibility only
-- **Format**: Directory with `SKILL.md` (YAML frontmatter: `name`, `description`, `license`, `allowed-tools`, optional `version`, `author`, `compatibility`)
-- **Loading**: `load_skills()` recursively scans public and private skill directories for `SKILL.md`, parses metadata including optional package version/author/compatibility, and reads enabled state from extensions_config.json. Existing `custom/` directories are loaded with a warning for standalone compatibility only.
-- **Injection**: Enabled skills listed in agent system prompt with container paths. Runtime injection still uses current skill copy metadata (`name`, `description`, `file_path`, `virtual_path`) and does not pin historical release versions.
-- **Installation**: `POST /api/skills/install` extracts `.skill` ZIP archive to the current user's private skills directory; standalone `DeerFlowClient.install_skill()` writes to `local/<skill_name>`
-- **Publishing**: `POST /api/skills/{name}/publish` validates the current user's owned skill version, publishes it to SkillHub/public release metadata, creates an immutable `skill_releases` row, then commits once. The system-generated `release_version` is for audit/ordering; the optional package `version` from `SKILL.md` is for display and is not SemVer-enforced. Optional `release_notes` belong to the publish event and are stored on `skill_releases`, not in `SKILL.md`. In-process publish failures roll back DB work and restore the previous public artifact directory when possible.
-- **Release persistence**: `skills` rows continue to answer “which current copy is visible/downloadable/bindable”; `skill_releases` rows answer “which publish produced this public latest copy.” Legacy public skills without release rows remain listable and downloadable with null version fields.
+- **Location**: `.deer-flow/skills/{skill_id}/{version_number}/`; paths are derived from terminal identity and are not stored as runtime truth.
+- **Format**: Each immutable version directory contains `SKILL.md`; package metadata may be parsed for display but does not define the platform version.
+- **Loading**: runtime descriptors must come from default-chat config or `agent_skills -> skill_installations -> skill_versions`, not public/custom directory scans or Runtime Manifest JSON.
+- **Installation**: `POST /api/skills/install` records a `skill_installation` for an exact published `(skill_id, version_number)`.
+- **Publishing**: publish first ensures the immutable `skill_version` content directory, then creates or updates `skill_releases(skill_id, version_number, status)`.
+- **Agent binding**: custom Agents bind through `agent_skills.skill_installation_id`; default chat uses `config.yaml` `default_chat.system_skills` and creates no install rows.
 
 ### Model Factory (`packages/harness/deerflow/models/factory.py`)
 

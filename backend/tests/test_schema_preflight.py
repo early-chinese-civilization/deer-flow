@@ -195,7 +195,7 @@ async def test_assert_gateway_schema_ready_requires_agent_skill_install_column()
 
     tables = _all_required_tables()
     columns = _complete_columns(*(table for table in tables if table != "alembic_version"))
-    columns["agents_skills"] = tuple(column for column in columns["agents_skills"] if column != "skill_install_id")
+    columns["agent_skills"] = tuple(column for column in columns["agent_skills"] if column != "skill_installation_id")
     engine = SimpleNamespace(
         connect=lambda: _FakeConnectContext(
             _FakeConnection(
@@ -206,28 +206,28 @@ async def test_assert_gateway_schema_ready_requires_agent_skill_install_column()
         )
     )
 
-    with pytest.raises(RuntimeError, match="Missing columns: agents_skills.skill_install_id"):
+    with pytest.raises(RuntimeError, match="Missing columns: agent_skills.skill_installation_id"):
         await assert_gateway_schema_ready(engine)
 
 
 @pytest.mark.anyio
-async def test_assert_gateway_schema_ready_requires_agent_system_skill_columns():
+async def test_assert_gateway_schema_ready_requires_thread_agent_id_nullable():
     from app.gateway.db.schema_preflight import assert_gateway_schema_ready
 
-    tables = _all_required_tables()
-    columns = _complete_columns(*(table for table in tables if table != "alembic_version"))
-    columns["agents_skills"] = tuple(column for column in columns["agents_skills"] if column != "system_skill_version_id")
+    column_signatures = _complete_column_signatures()
+    column_signatures[("threads", "agent_id")] = {"udt_name": "int8", "is_nullable": "NO"}
     engine = SimpleNamespace(
         connect=lambda: _FakeConnectContext(
             _FakeConnection(
-                tables=tables,
-                revisions=["7d3a2b1c0e9f"],
-                columns=columns,
+                tables=_all_required_tables(),
+                revisions=["e5f6a7b8c9d0"],
+                columns=_complete_columns(*REQUIRED_GATEWAY_TABLES),
+                column_signatures=column_signatures,
             )
         )
     )
 
-    with pytest.raises(RuntimeError, match="Missing columns: agents_skills.system_skill_version_id"):
+    with pytest.raises(RuntimeError, match="threads.agent_id is_nullable expected YES"):
         await assert_gateway_schema_ready(engine)
 
 
@@ -273,24 +273,21 @@ async def test_assert_gateway_schema_ready_requires_terminal_skill_version_skill
 
 
 @pytest.mark.anyio
-async def test_assert_gateway_schema_ready_requires_identity_map_constraints():
+async def test_assert_gateway_schema_ready_does_not_require_legacy_skill_tables():
     from app.gateway.db.schema_preflight import assert_gateway_schema_ready
 
-    constraints = _complete_constraints()
-    constraints["skill_identity_migration_map"] = tuple(constraint for constraint in constraints["skill_identity_migration_map"] if constraint != "uq_skill_identity_migration_map_skill_id")
+    tables = [table for table in _all_required_tables() if table not in {"legacy_skills", "skill_definitions", "skill_identity_migration_map", "runtime_manifests"}]
     engine = SimpleNamespace(
         connect=lambda: _FakeConnectContext(
             _FakeConnection(
-                tables=_all_required_tables(),
+                tables=tables,
                 revisions=["8a6f1b2c3d4e"],
                 columns=_complete_columns(*REQUIRED_GATEWAY_TABLES),
-                constraints=constraints,
             )
         )
     )
 
-    with pytest.raises(RuntimeError, match="skill_identity_migration_map.uq_skill_identity_migration_map_skill_id"):
-        await assert_gateway_schema_ready(engine)
+    await assert_gateway_schema_ready(engine)
 
 
 @pytest.mark.anyio

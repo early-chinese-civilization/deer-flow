@@ -473,7 +473,6 @@ async def test_runtime_agent_bundle_without_agent_name_loads_default_chat_system
         description="System skill",
         content_hash="content-hash",
         file_manifest_hash=file_manifest_hash,
-        artifact_uri="artifacts/skills/10/v1/system-skill",
     )
 
     class _FakeDb:
@@ -504,7 +503,7 @@ async def test_runtime_agent_bundle_without_agent_name_loads_default_chat_system
     bundle = await AgentRepository.get_runtime_agent_bundle(_FakeDb(), user_id=9, agent_name=None)
 
     assert bundle.agent_name is None
-    assert bundle.manifest_id is None
+    assert not hasattr(bundle, "manifest_id")
     assert bundle.skills[0].name == "system-skill"
     assert bundle.skills[0].skill_id == str(skill_id)
     assert bundle.skills[0].version_number == 1
@@ -535,8 +534,6 @@ async def test_runtime_agent_payload_serializes_terminal_skill_descriptor(monkey
         memory_json={"facts": []},
         soul="Probe soul",
         skills=[descriptor],
-        manifest_id="manifest-id",
-        manifest_hash="manifest-hash",
     )
     db = SimpleNamespace(commit=AsyncMock())
 
@@ -562,7 +559,8 @@ async def test_runtime_agent_payload_serializes_terminal_skill_descriptor(monkey
             "virtual_path": f"/mnt/skills/probe-skill--{skill_id}-v2/SKILL.md",
         }
     ]
-    assert "manifest_id" in payload
+    assert "manifest_id" not in payload
+    assert "manifest_hash" not in payload
     assert "artifact_uri" not in payload["skills"][0]
     assert "file_path" not in payload["skills"][0]
     assert "skill_version_id" not in payload["skills"][0]
@@ -593,7 +591,6 @@ async def test_runtime_agent_bundle_uses_install_composite_identity_not_current_
         description="Probe v1",
         content_hash="hash-v1",
         file_manifest_hash="stale-hash",
-        artifact_uri="artifacts/skills/10/v1/probe-skill",
     )
     terminal_v2 = SkillVersion(
         id=102,
@@ -605,7 +602,6 @@ async def test_runtime_agent_bundle_uses_install_composite_identity_not_current_
         description="Probe v2",
         content_hash="hash-v2",
         file_manifest_hash=v2_file_manifest_hash,
-        artifact_uri="artifacts/skills/10/v2/probe-skill",
     )
     install = SkillInstall(
         id=201,
@@ -621,7 +617,7 @@ async def test_runtime_agent_bundle_uses_install_composite_identity_not_current_
         current_version=stale_v1,
     )
     agent = Agent(id=501, user_id=22, name="probe-agent", soul="probe")
-    agent.agent_skills = [AgentSkill(id=601, agent_id=agent.id, skill_install_id=install.id, skill_install=install, display_order=0, enabled=True)]
+    agent.agent_skills = [AgentSkill(id=601, agent_id=agent.id, skill_installation_id=install.id, skill_install=install, display_order=0, enabled=True)]
 
     monkeypatch.setattr("app.gateway.db.repository.MemoryRepository.get_memory_by_user_id", AsyncMock(return_value=None))
     monkeypatch.setattr("app.gateway.db.repository.AgentRepository.get_agent_by_name", AsyncMock(return_value=agent))
@@ -656,7 +652,7 @@ async def test_runtime_agent_bundle_uses_install_composite_identity_not_current_
 @pytest.mark.anyio
 async def test_runtime_agent_bundle_rejects_legacy_artifacts_root_when_terminal_root_missing(tmp_path, monkeypatch):
     from app.gateway.db.models import Agent, AgentSkill, Skill, SkillDefinition, SkillInstall, SkillVersion, User
-    from app.gateway.db.repository import AgentRepository, RuntimeManifestResolutionError
+    from app.gateway.db.repository import AgentRepository, RuntimeSkillResolutionError
     from deerflow.skills.hashing import hash_skill_file_manifest
 
     skill_id = uuid4()
@@ -678,7 +674,6 @@ async def test_runtime_agent_bundle_rejects_legacy_artifacts_root_when_terminal_
         description="Probe v1",
         content_hash="hash-v1",
         file_manifest_hash=legacy_hash,
-        artifact_uri="artifacts/skills/10/v1/probe-skill",
     )
     install = SkillInstall(
         id=201,
@@ -694,7 +689,7 @@ async def test_runtime_agent_bundle_rejects_legacy_artifacts_root_when_terminal_
         current_version=version,
     )
     agent = Agent(id=501, user_id=22, name="probe-agent", soul="probe")
-    agent.agent_skills = [AgentSkill(id=601, agent_id=agent.id, skill_install_id=install.id, skill_install=install, display_order=0, enabled=True)]
+    agent.agent_skills = [AgentSkill(id=601, agent_id=agent.id, skill_installation_id=install.id, skill_install=install, display_order=0, enabled=True)]
 
     monkeypatch.setattr("app.gateway.db.repository.MemoryRepository.get_memory_by_user_id", AsyncMock(return_value=None))
     monkeypatch.setattr("app.gateway.db.repository.AgentRepository.get_agent_by_name", AsyncMock(return_value=agent))
@@ -704,13 +699,13 @@ async def test_runtime_agent_bundle_rejects_legacy_artifacts_root_when_terminal_
         lambda: SimpleNamespace(skills=SimpleNamespace(container_path="/mnt/skills", get_skills_path=lambda: tmp_path / "skills")),
     )
 
-    with pytest.raises(RuntimeManifestResolutionError, match="terminal storage root is missing"):
+    with pytest.raises(RuntimeSkillResolutionError, match="terminal storage root is missing"):
         await AgentRepository.get_runtime_agent_bundle(SimpleNamespace(), user_id=22, agent_name="probe-agent")
 
 
 @pytest.mark.anyio
 async def test_runtime_agent_bundle_missing_agent_hard_fails(monkeypatch):
-    from app.gateway.db.repository import AgentRepository, RuntimeManifestResolutionError
+    from app.gateway.db.repository import AgentRepository, RuntimeSkillResolutionError
 
     fake_db = object()
     monkeypatch.setattr(
@@ -722,7 +717,7 @@ async def test_runtime_agent_bundle_missing_agent_hard_fails(monkeypatch):
         "get_agent_by_name",
         AsyncMock(return_value=None),
     )
-    with pytest.raises(RuntimeManifestResolutionError, match="ghost-agent"):
+    with pytest.raises(RuntimeSkillResolutionError, match="ghost-agent"):
         await AgentRepository.get_runtime_agent_bundle(fake_db, user_id=9, agent_name="ghost-agent")
 
 

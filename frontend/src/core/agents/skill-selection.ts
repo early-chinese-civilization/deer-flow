@@ -1,4 +1,7 @@
-import { getSkillDisplayContract } from "../skills/display";
+import {
+  getSkillDisplayContract,
+  getSkillInstallationId,
+} from "../skills/display";
 import type { Skill } from "../skills/type";
 
 import type { AgentSkillMetadata } from "./types";
@@ -71,7 +74,7 @@ export function getAgentSkillSelectionGroups(
 
   for (const skill of skills) {
     const display = getSkillDisplayContract(skill);
-    if (display.space === "personal" && skill.skill_install_id != null) {
+    if (display.space === "personal" && getSkillInstallationId(skill) != null) {
       mySkills.push(skill);
     }
   }
@@ -82,8 +85,9 @@ export function getAgentSkillSelectionGroups(
 }
 
 export function getSkillSelectionKey(skill: Skill): string {
-  if (skill.skill_install_id != null) {
-    return `install:${skill.skill_install_id}`;
+  const skillInstallationId = getSkillInstallationId(skill);
+  if (skillInstallationId != null) {
+    return `install:${skillInstallationId}`;
   }
   if (skill.skill_id && skill.version_number != null) {
     return `unavailable:${skill.skill_id}:v${skill.version_number}`;
@@ -92,13 +96,14 @@ export function getSkillSelectionKey(skill: Skill): string {
 }
 
 export function getMetadataSelectionKey(skill: AgentSkillMetadata): string {
-  if (skill.skill_install_id != null) {
-    return `install:${skill.skill_install_id}`;
+  const skillInstallationId = skill.skill_installation_id;
+  if (skillInstallationId != null) {
+    return `install:${skillInstallationId}`;
   }
   return `unavailable:${skill.name}`;
 }
 
-export function getSelectionInstallIds(selection: string[]): number[] {
+export function getSelectionSkillInstallationIds(selection: string[]): number[] {
   const installIds: number[] = [];
   for (const value of selection) {
     if (!value.startsWith("install:")) {
@@ -111,6 +116,9 @@ export function getSelectionInstallIds(selection: string[]): number[] {
   }
   return installIds;
 }
+
+/** @deprecated Use `getSelectionSkillInstallationIds`. */
+export const getSelectionInstallIds = getSelectionSkillInstallationIds;
 
 export function getSelectionSkillNames(selection: string[]): string[] {
   void selection;
@@ -128,14 +136,14 @@ export function getSkillSourceLabel(
   if (
     skill.source_kind === "official" ||
     skill.skill_definition_source_type === "legacy" ||
-    (skill.category === "public" && skill.owner_user_id == null)
+    getSkillDisplayContract(skill).space === "system"
   ) {
     return labels.official;
   }
-  if (skill.source_kind === "personal" || skill.source_kind === "fork") {
+  if (getSkillDisplayContract(skill).space === "personal") {
     return labels.mySkills;
   }
-  if (skill.category === "public") {
+  if (getSkillDisplayContract(skill).space === "community") {
     return labels.skillhub;
   }
   return labels.mySkills;
@@ -166,8 +174,9 @@ export function getSkillDisplaySummary(
   labels: AgentSkillSourceLabels & { unavailableVersion: string },
 ): AgentSkillDisplaySummary {
   const platformVersion = getSkillSelectionPlatformVersion(skill);
+  const skillInstallationId = getSkillInstallationId(skill);
   const unavailable =
-    skill.skill_install_id == null ||
+    skillInstallationId == null ||
     skill.skill_id == null ||
     platformVersion == null;
   return {

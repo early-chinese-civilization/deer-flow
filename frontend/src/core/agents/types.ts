@@ -4,8 +4,7 @@ export type AgentSkillStatus = "available" | "unavailable";
 
 export interface AgentSkillMetadata {
   name: string;
-  skill_install_id: number | null;
-  skill_definition_id: number | null;
+  skill_installation_id: number | null;
   current_platform_version: number | null;
   source: AgentSkillSource;
   source_label: string;
@@ -55,12 +54,12 @@ export interface AgentDraftPatchRequest {
 export interface CreateAgentRequest {
   name: string;
   description?: string;
-  skill_install_ids?: number[] | null;
+  skill_installation_ids?: number[] | null;
   soul?: string;
 }
 
 export interface UpdateAgentRequest {
   description?: string | null;
-  skill_install_ids?: number[] | null;
+  skill_installation_ids?: number[] | null;
   soul?: string | null;
 }

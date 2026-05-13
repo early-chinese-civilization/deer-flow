@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -20,7 +20,6 @@ from app.gateway.db.models import (
     AgentSkill,
     LegacySkill,
     Memory,
-    PendingSkillForkClaim,
     RuntimeManifest,
     Skill,
     SkillDefinition,
@@ -57,12 +56,10 @@ class RuntimeAgentBundle:
     memory_json: dict[str, Any]
     soul: str | None
     skills: list[RuntimeSkillDescriptor]
-    manifest_id: str | None = None
-    manifest_hash: str | None = None
 
 
-class RuntimeManifestResolutionError(RuntimeError):
-    """Raised when an agent runtime manifest cannot be resolved exactly."""
+class RuntimeSkillResolutionError(RuntimeError):
+    """Raised when runtime Skill descriptors cannot be resolved exactly."""
 
 
 def build_skill_definition_source(owner_user_id: int | None) -> tuple[str, str]:
@@ -105,7 +102,7 @@ def _get_skills_container_path() -> str:
 
 
 def build_runtime_manifest_hash(manifest_json: dict[str, Any]) -> str:
-    """Return the deterministic audit hash for a Runtime Manifest payload."""
+    """Return the deterministic audit hash for a derived runtime descriptor snapshot."""
     canonical_payload = json.dumps(manifest_json, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
     return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
 
@@ -119,7 +116,7 @@ def _ensure_terminal_skill_integrity(
 ) -> str:
     """Fail runtime resolution if the terminal Skill version root is missing or drifted."""
     if not expected_file_manifest_hash:
-        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' is missing file manifest hash")
+        raise RuntimeSkillResolutionError(f"Skill '{skill_name}' is missing file manifest hash")
     try:
         from deerflow.config import get_app_config
 
@@ -127,14 +124,14 @@ def _ensure_terminal_skill_integrity(
         skills_root = get_app_config().skills.get_skills_path()
         artifact_dir = resolve_terminal_skill_version_dir(skills_root, skill_id, version_number)
     except Exception as exc:
-        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' terminal storage root cannot be resolved") from exc
+        raise RuntimeSkillResolutionError(f"Skill '{skill_name}' terminal storage root cannot be resolved") from exc
     if not artifact_dir.exists() or not artifact_dir.is_dir():
-        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' terminal storage root is missing: {terminal_relative_path}")
+        raise RuntimeSkillResolutionError(f"Skill '{skill_name}' terminal storage root is missing: {terminal_relative_path}")
     if not (artifact_dir / "SKILL.md").exists():
-        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' terminal storage root is missing SKILL.md: {terminal_relative_path}")
+        raise RuntimeSkillResolutionError(f"Skill '{skill_name}' terminal storage root is missing SKILL.md: {terminal_relative_path}")
     actual_file_manifest_hash = hash_skill_file_manifest(artifact_dir)
     if actual_file_manifest_hash != expected_file_manifest_hash:
-        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' terminal storage file manifest hash mismatch")
+        raise RuntimeSkillResolutionError(f"Skill '{skill_name}' terminal storage file manifest hash mismatch")
     return terminal_relative_path
 
 
@@ -436,12 +433,9 @@ class AgentRepository:
     @staticmethod
     def _with_agent_skills(stmt):
         return stmt.options(
-            selectinload(Agent.agent_skills).selectinload(AgentSkill.skill),
             selectinload(Agent.agent_skills).selectinload(AgentSkill.skill_install).selectinload(SkillInstall.skill).selectinload(Skill.owner_user),
             selectinload(Agent.agent_skills).selectinload(AgentSkill.skill_install).selectinload(SkillInstall.definition).selectinload(SkillDefinition.owner_user),
             selectinload(Agent.agent_skills).selectinload(AgentSkill.skill_install).selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
-            selectinload(Agent.agent_skills).selectinload(AgentSkill.system_skill_definition).selectinload(SkillDefinition.owner_user),
-            selectinload(Agent.agent_skills).selectinload(AgentSkill.system_skill_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
         )
 
     @staticmethod
@@ -497,11 +491,11 @@ class AgentRepository:
         """Project an install-backed terminal Skill version into runtime metadata."""
         terminal_skill_id = _as_optional_uuid(install.skill_id)
         if terminal_skill_id is None:
-            raise RuntimeManifestResolutionError(f"Skill install {install.id} is missing terminal skill_id")
+            raise RuntimeSkillResolutionError(f"Skill install {install.id} is missing terminal skill_id")
         if isinstance(install.version_number, bool) or not isinstance(install.version_number, int) or install.version_number <= 0:
-            raise RuntimeManifestResolutionError(f"Skill install {install.id} is missing terminal version_number")
+            raise RuntimeSkillResolutionError(f"Skill install {install.id} is missing terminal version_number")
         if version.skill_id != terminal_skill_id or version.version_number != install.version_number:
-            raise RuntimeManifestResolutionError(f"Skill install {install.id} points to a version from another terminal Skill version")
+            raise RuntimeSkillResolutionError(f"Skill install {install.id} points to a version from another terminal Skill version")
 
         terminal_skill = install.skill or version.skill
         definition = install.definition or version.definition
@@ -526,10 +520,10 @@ class AgentRepository:
         """Project a configured default-chat terminal Skill version into runtime metadata."""
         terminal_skill_id = _as_optional_uuid(version.skill_id)
         if terminal_skill_id is None:
-            raise RuntimeManifestResolutionError("Default chat system Skill version is missing terminal skill_id")
+            raise RuntimeSkillResolutionError("Default chat system Skill version is missing terminal skill_id")
         definition = explicit_definition or version.definition
         if not is_system_owned_skill(version.skill):
-            raise RuntimeManifestResolutionError(f"Skill {version.skill_id} is not owned by the internal system user")
+            raise RuntimeSkillResolutionError(f"Skill {version.skill_id} is not owned by the internal system user")
         display_name = _runtime_skill_display_name(terminal_skill=version.skill, definition=definition, skill_id=terminal_skill_id)
         _ensure_terminal_skill_integrity(
             skill_id=terminal_skill_id,
@@ -554,18 +548,18 @@ class AgentRepository:
 
             configured_skills = get_app_config().default_chat.system_skills
         except Exception as exc:
-            raise RuntimeManifestResolutionError("Default chat system Skill config cannot be loaded") from exc
+            raise RuntimeSkillResolutionError("Default chat system Skill config cannot be loaded") from exc
 
         descriptors: list[RuntimeSkillDescriptor] = []
         seen_versions: set[tuple[uuid.UUID, int]] = set()
         for entry in configured_skills:
             key = (entry.skill_id, entry.version_number)
             if key in seen_versions:
-                raise RuntimeManifestResolutionError(f"Duplicate default chat system Skill version ({entry.skill_id}, {entry.version_number})")
+                raise RuntimeSkillResolutionError(f"Duplicate default chat system Skill version ({entry.skill_id}, {entry.version_number})")
             seen_versions.add(key)
             version = await SkillVersionRepository.get_by_skill_version(db, skill_id=entry.skill_id, version_number=entry.version_number)
             if version is None:
-                raise RuntimeManifestResolutionError(f"Default chat system Skill version ({entry.skill_id}, {entry.version_number}) not found")
+                raise RuntimeSkillResolutionError(f"Default chat system Skill version ({entry.skill_id}, {entry.version_number}) not found")
             descriptors.append(AgentRepository._build_runtime_system_skill_descriptor(version))
         return descriptors
 
@@ -577,16 +571,13 @@ class AgentRepository:
         for association in active_associations:
             if association.skill_install is not None:
                 if association.skill_install.deleted_at is not None:
-                    raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
+                    raise RuntimeSkillResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
                 if association.skill_install.status != "active":
-                    raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
+                    raise RuntimeSkillResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
                 if agent.user_id is None or association.skill_install.user_id != agent.user_id:
-                    raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding owned by another user")
+                    raise RuntimeSkillResolutionError(f"Agent '{agent.name}' has a skill binding owned by another user")
                 continue
-            if association.system_skill_version is not None or association.system_skill_version_id is not None:
-                raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a direct system skill binding; use default_chat.system_skills or an install-backed binding")
-            else:
-                raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
+            raise RuntimeSkillResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
         return active_associations
 
     @staticmethod
@@ -596,15 +587,15 @@ class AgentRepository:
         for association in AgentRepository._active_runtime_skill_associations(agent):
             install = association.skill_install
             if install is None:
-                raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
+                raise RuntimeSkillResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
             terminal_skill_id = _as_optional_uuid(install.skill_id)
             if terminal_skill_id is None:
-                raise RuntimeManifestResolutionError(f"Skill install {install.id} is missing terminal skill_id")
+                raise RuntimeSkillResolutionError(f"Skill install {install.id} is missing terminal skill_id")
             if isinstance(install.version_number, bool) or not isinstance(install.version_number, int) or install.version_number <= 0:
-                raise RuntimeManifestResolutionError(f"Skill install {install.id} is missing terminal version_number")
+                raise RuntimeSkillResolutionError(f"Skill install {install.id} is missing terminal version_number")
             version = await SkillVersionRepository.get_by_skill_version(db, skill_id=terminal_skill_id, version_number=install.version_number)
             if version is None:
-                raise RuntimeManifestResolutionError(f"Skill install {install.id} terminal Skill version ({terminal_skill_id}, {install.version_number}) not found")
+                raise RuntimeSkillResolutionError(f"Skill install {install.id} terminal Skill version ({terminal_skill_id}, {install.version_number}) not found")
             descriptors.append(AgentRepository._build_runtime_skill_descriptor(install, version))
         return descriptors
 
@@ -615,7 +606,7 @@ class AgentRepository:
         for association in AgentRepository._active_runtime_skill_associations(agent):
             install = association.skill_install
             if install is None or install.current_version is None:
-                raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
+                raise RuntimeSkillResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
             descriptors.append(AgentRepository._build_runtime_skill_descriptor(install, install.current_version))
         return descriptors
 
@@ -676,10 +667,10 @@ class AgentRepository:
 
         agent = await AgentRepository.get_agent_by_name(db, user_id=user_id, name=normalized_agent_name)
         if agent is None:
-            raise RuntimeManifestResolutionError(f"Agent '{normalized_agent_name}' not found")
+            raise RuntimeSkillResolutionError(f"Agent '{normalized_agent_name}' not found")
 
         skills = await AgentRepository._resolve_active_runtime_skills(db, agent)
-        manifest = await AgentRepository._create_runtime_manifest(db, user_id=user_id, agent=agent, skills=skills)
+        await AgentRepository._create_runtime_manifest(db, user_id=user_id, agent=agent, skills=skills)
 
         return RuntimeAgentBundle(
             user_id=user_id,
@@ -687,8 +678,6 @@ class AgentRepository:
             memory_json=memory_json,
             soul=agent.soul,
             skills=skills,
-            manifest_id=str(manifest.id),
-            manifest_hash=manifest.manifest_hash,
         )
 
     @staticmethod
@@ -742,15 +731,12 @@ class AgentRepository:
         *,
         agent: Agent,
         skill_ids: list[int],
-        skill_install_ids: list[int] | None = None,
-        system_skill_version_ids: list[int] | None = None,
+        skill_installation_ids: list[int] | None = None,
         commit: bool = True,
     ) -> Agent:
         """Replace the agent's active skill associations with the provided skills."""
         if skill_ids:
             raise ValueError("Custom Agent skill bindings must use skill_installation IDs")
-        if system_skill_version_ids:
-            raise ValueError("Direct system Skill bindings are removed from custom Agent paths")
         reloaded_agent = await AgentRepository.get_agent_by_id(db, agent.id)
         if reloaded_agent is None:
             raise ValueError(f"Agent {agent.id} disappeared before skill replacement")
@@ -762,19 +748,18 @@ class AgentRepository:
             if association.deleted_at is None:
                 association.deleted_at = now
 
-        install_ids = skill_install_ids if skill_install_ids is not None else []
+        install_ids = skill_installation_ids if skill_installation_ids is not None else []
         seen_install_ids: set[int] = set()
         for install_id in install_ids:
             if install_id in seen_install_ids:
                 raise ValueError(f"Duplicate skill installation {install_id}")
             seen_install_ids.add(install_id)
-            install = await SkillInstallRepository.get_by_id_for_user(db, user_id=reloaded_agent.user_id, skill_install_id=install_id)
+            install = await SkillInstallRepository.get_by_id_for_user(db, user_id=reloaded_agent.user_id, skill_installation_id=install_id)
             if install is None or install.status != "active" or install.deleted_at is not None:
                 raise ValueError(f"Skill installation {install_id} is not available for this Agent")
             association = AgentSkill(
                 agent_id=reloaded_agent.id,
-                skill_id=None,
-                skill_install_id=install.id,
+                skill_installation_id=install.id,
                 display_order=len(seen_install_ids) - 1,
                 enabled=True,
             )
@@ -1044,15 +1029,11 @@ class SkillVersionRepository:
         description: str | None,
         content_hash: str,
         file_manifest_hash: str,
-        artifact_uri: str,
         created_by_user_id: int | None,
     ) -> SkillVersion:
         latest = await SkillVersionRepository.get_latest_for_definition(db, skill_definition_id=definition.id)
         next_number = 1 if latest is None else latest.version_number + 1
         terminal_skill = await TerminalSkillRepository.ensure_for_legacy_definition(db, definition=definition)
-        terminal_artifact_uri = build_terminal_skill_version_relative_path(terminal_skill.id, next_number)
-        if artifact_uri != terminal_artifact_uri:
-            raise ValueError("SkillVersion artifact_uri must be derived from skill_id and version_number")
         version = SkillVersion(
             skill_id=terminal_skill.id,
             skill_definition_id=definition.id,
@@ -1061,7 +1042,6 @@ class SkillVersionRepository:
             description=description,
             content_hash=content_hash,
             file_manifest_hash=file_manifest_hash,
-            artifact_uri=terminal_artifact_uri,
             created_by_user_id=created_by_user_id,
         )
         db.add(version)
@@ -1177,7 +1157,7 @@ class SkillInstallRepository:
         db: AsyncSession,
         *,
         user_id: int,
-        skill_install_id: int,
+        skill_installation_id: int,
     ) -> SkillInstall | None:
         result = await db.execute(
             select(SkillInstall)
@@ -1188,7 +1168,7 @@ class SkillInstallRepository:
                 selectinload(SkillInstall.skill).selectinload(Skill.owner_user),
             )
             .where(
-                SkillInstall.id == skill_install_id,
+                SkillInstall.id == skill_installation_id,
                 SkillInstall.user_id == user_id,
                 SkillInstall.deleted_at.is_(None),
             )
@@ -1267,13 +1247,9 @@ class SkillReleaseRepository:
         package_version: str | None,
         description: str | None,
         release_notes: str | None = None,
-        artifact_path: str,
         publisher_user_id: int | None,
-        source_skill_id: int | None,
-        published_skill_id: int | None,
-        skill_version_id: int | None = None,
-        skill_id: str | uuid.UUID | None = None,
-        version_number: int | None = None,
+        skill_id: str | uuid.UUID,
+        version_number: int,
         status: str = "published",
         release_version: str | None = None,
         published_at: datetime | None = None,
@@ -1281,27 +1257,18 @@ class SkillReleaseRepository:
     ) -> SkillRelease:
         """Create a release visibility row for an exact terminal Skill version."""
         terminal_skill_id = _as_optional_uuid(skill_id)
-        terminal_version_number = version_number
-        if skill_version_id is not None:
-            version = await SkillVersionRepository.get_by_id(db, skill_version_id=skill_version_id)
-            if version is None:
-                raise ValueError(f"Skill version {skill_version_id} not found")
-            if terminal_skill_id is None:
-                terminal_skill_id = version.skill_id
-            elif terminal_skill_id != version.skill_id:
-                raise ValueError("Skill release skill_id must match the legacy skill_version_id row")
-            if terminal_version_number is None:
-                terminal_version_number = version.version_number
-            elif terminal_version_number != version.version_number:
-                raise ValueError("Skill release version_number must match the legacy skill_version_id row")
-        if terminal_skill_id is None or terminal_version_number is None:
+        if terminal_skill_id is None:
             raise ValueError("Skill release creation requires skill_id and version_number")
+        if isinstance(version_number, bool) or not isinstance(version_number, int) or version_number <= 0:
+            raise ValueError("Skill release creation requires a positive version_number")
+        if await SkillVersionRepository.get_by_skill_version(db, skill_id=terminal_skill_id, version_number=version_number) is None:
+            raise ValueError(f"Skill version ({terminal_skill_id}, {version_number}) not found")
 
         now = datetime.now(UTC)
         result = await db.execute(
             select(SkillRelease).where(
                 SkillRelease.skill_id == terminal_skill_id,
-                SkillRelease.version_number == terminal_version_number,
+                SkillRelease.version_number == version_number,
             )
         )
         release = result.scalar_one_or_none()
@@ -1309,18 +1276,16 @@ class SkillReleaseRepository:
         if release is None:
             release = SkillRelease(
                 skill_id=terminal_skill_id,
-                version_number=terminal_version_number,
+                version_number=version_number,
                 skill_name=skill_name,
                 release_version=release_version or SkillReleaseRepository.generate_release_version(),
                 package_version=package_version,
                 description=description,
                 release_notes=release_notes,
                 status=status,
-                artifact_path=artifact_path,
                 publisher_user_id=publisher_user_id,
-                source_skill_id=source_skill_id,
-                published_skill_id=published_skill_id,
-                skill_version_id=skill_version_id,
+                source_skill_id=None,
+                published_skill_id=None,
                 published_at=release_published_at,
                 updated_at=now,
             )
@@ -1333,11 +1298,9 @@ class SkillReleaseRepository:
             release.description = description
             release.release_notes = release_notes
             release.status = status
-            release.artifact_path = artifact_path
             release.publisher_user_id = publisher_user_id
-            release.source_skill_id = source_skill_id
-            release.published_skill_id = published_skill_id
-            release.skill_version_id = skill_version_id
+            release.source_skill_id = None
+            release.published_skill_id = None
             if published_at is not None or (status == "published" and release.published_at is None):
                 release.published_at = release_published_at
             elif status != "published":
@@ -1365,7 +1328,6 @@ class SkillReleaseRepository:
             select(SkillRelease)
             .options(
                 selectinload(SkillRelease.skill).selectinload(Skill.owner_user),
-                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
                 selectinload(SkillRelease.publisher_user),
             )
             .where(
@@ -1385,7 +1347,6 @@ class SkillReleaseRepository:
             select(SkillRelease)
             .options(
                 selectinload(SkillRelease.skill).selectinload(Skill.owner_user),
-                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
                 selectinload(SkillRelease.publisher_user),
             )
             .where(SkillRelease.status == "published")
@@ -1431,7 +1392,6 @@ class SkillReleaseRepository:
             )
             .options(
                 selectinload(SkillRelease.skill).selectinload(Skill.owner_user),
-                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
                 selectinload(SkillRelease.publisher_user),
             )
             .where(
@@ -1444,145 +1404,29 @@ class SkillReleaseRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def get_latest_published_release_for_definition(
+    async def get_latest_published_release_for_skill(
         db: AsyncSession,
         *,
-        skill_definition_id: int,
+        skill_id: str | uuid.UUID,
     ) -> SkillRelease | None:
-        """Load the latest published release for a concrete skill definition."""
+        """Load the latest published release for a terminal Skill identity."""
+        terminal_skill_id = _as_optional_uuid(skill_id)
+        if terminal_skill_id is None:
+            return None
         result = await db.execute(
             select(SkillRelease)
-            .join(
-                SkillVersion,
-                (SkillRelease.skill_id == SkillVersion.skill_id) & (SkillRelease.version_number == SkillVersion.version_number),
-            )
             .options(
                 selectinload(SkillRelease.skill).selectinload(Skill.owner_user),
-                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
                 selectinload(SkillRelease.publisher_user),
             )
             .where(
-                SkillVersion.skill_definition_id == skill_definition_id,
+                SkillRelease.skill_id == terminal_skill_id,
                 SkillRelease.status == "published",
             )
-            .order_by(SkillVersion.version_number.desc(), SkillRelease.created_at.desc())
+            .order_by(SkillRelease.version_number.desc(), SkillRelease.created_at.desc())
             .limit(1)
         )
         return result.scalar_one_or_none()
-
-    @staticmethod
-    async def get_published_release_by_version_id(
-        db: AsyncSession,
-        *,
-        skill_version_id: int,
-    ) -> SkillRelease | None:
-        """Load a published release for a selected immutable skill version."""
-        result = await db.execute(
-            select(SkillRelease)
-            .options(
-                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
-                selectinload(SkillRelease.publisher_user),
-            )
-            .where(
-                SkillRelease.skill_version_id == skill_version_id,
-                SkillRelease.status == "published",
-            )
-            .order_by(SkillRelease.created_at.desc())
-            .limit(1)
-        )
-        return result.scalar_one_or_none()
-
-    @staticmethod
-    async def get_latest_release_for_public_skill(
-        db: AsyncSession,
-        *,
-        published_skill_id: int,
-    ) -> SkillRelease | None:
-        """Load the latest published release that produced a public skill row, if any."""
-        result = await db.execute(
-            select(SkillRelease)
-            .options(
-                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
-                selectinload(SkillRelease.publisher_user),
-            )
-            .where(
-                SkillRelease.published_skill_id == published_skill_id,
-                SkillRelease.status == "published",
-            )
-            .order_by(SkillRelease.created_at.desc())
-            .limit(1)
-        )
-        return result.scalar_one_or_none()
-
-
-class PendingSkillForkClaimRepository:
-    """Persistence helpers for server-authorized local fork package claims."""
-
-    @staticmethod
-    def hash_claim_token(token: str) -> str:
-        return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-    @staticmethod
-    async def create_claim(
-        db: AsyncSession,
-        *,
-        user_id: int,
-        source_version: SkillVersion,
-        claim_token_hash: str,
-        source_snapshot: dict[str, Any],
-        expires_at: datetime,
-    ) -> PendingSkillForkClaim:
-        claim = PendingSkillForkClaim(
-            user_id=user_id,
-            source_skill_definition_id=source_version.skill_definition_id,
-            source_skill_version_id=source_version.id,
-            claim_token_hash=claim_token_hash,
-            source_snapshot=source_snapshot,
-            expires_at=expires_at,
-            status="pending",
-        )
-        db.add(claim)
-        await db.flush()
-        await db.refresh(claim)
-        return claim
-
-    @staticmethod
-    async def get_valid_claim(
-        db: AsyncSession,
-        *,
-        claim_id: int,
-        user_id: int,
-        claim_token: str,
-        now: datetime,
-    ) -> PendingSkillForkClaim | None:
-        token_hash = PendingSkillForkClaimRepository.hash_claim_token(claim_token)
-        result = await db.execute(
-            select(PendingSkillForkClaim)
-            .options(
-                selectinload(PendingSkillForkClaim.source_definition).selectinload(SkillDefinition.owner_user),
-                selectinload(PendingSkillForkClaim.source_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
-            )
-            .where(
-                PendingSkillForkClaim.id == claim_id,
-                PendingSkillForkClaim.user_id == user_id,
-                PendingSkillForkClaim.claim_token_hash == token_hash,
-                PendingSkillForkClaim.status == "pending",
-                PendingSkillForkClaim.expires_at > now,
-            )
-        )
-        return result.scalar_one_or_none()
-
-    @staticmethod
-    async def mark_claimed(db: AsyncSession, *, claim: PendingSkillForkClaim, now: datetime) -> PendingSkillForkClaim:
-        if claim.status != "claimed":
-            claim.status = "claimed"
-        if claim.claimed_at is None:
-            claim.claimed_at = now
-        claim.updated_at = now
-        await db.flush()
-        await db.refresh(claim)
-        return claim
-
 
 class SkillRepository:
     """Compatibility helpers for legacy BIGINT skill rows."""
@@ -1838,33 +1682,11 @@ class SkillRepository:
             return user_skill
         return await SkillRepository.get_public_skill_by_name(db, name=name)
 
-    @staticmethod
-    async def list_bound_agent_names_for_skill(
-        db: AsyncSession,
-        *,
-        user_id: int,
-        skill_id: int,
-    ) -> list[str]:
-        """List active user-owned agent names currently bound to a skill."""
-        result = await db.execute(
-            select(Agent.name)
-            .join(AgentSkill, AgentSkill.agent_id == Agent.id)
-            .where(
-                Agent.user_id == user_id,
-                Agent.deleted_at.is_(None),
-                AgentSkill.skill_id == skill_id,
-                AgentSkill.deleted_at.is_(None),
-            )
-            .order_by(Agent.name.asc())
-        )
-        return list(result.scalars().all())
-
-    @staticmethod
     async def list_bound_agents_for_install(
         db: AsyncSession,
         *,
         user_id: int,
-        skill_install_id: int,
+        skill_installation_id: int,
     ) -> list[Agent]:
         """List active user-owned agents currently bound to an install."""
         result = await db.execute(
@@ -1873,39 +1695,12 @@ class SkillRepository:
             .where(
                 Agent.user_id == user_id,
                 Agent.deleted_at.is_(None),
-                AgentSkill.skill_install_id == skill_install_id,
+                AgentSkill.skill_installation_id == skill_installation_id,
                 AgentSkill.deleted_at.is_(None),
             )
             .order_by(Agent.name.asc())
         )
         return list(result.scalars().all())
-
-    @staticmethod
-    async def rebind_agent_skills(
-        db: AsyncSession,
-        *,
-        user_id: int,
-        old_skill_id: int,
-        new_skill_id: int,
-    ) -> None:
-        """Rebind active user-owned agent skill associations to a new skill row."""
-        user_agent_ids = (
-            select(Agent.id)
-            .where(
-                Agent.user_id == user_id,
-                Agent.deleted_at.is_(None),
-            )
-            .scalar_subquery()
-        )
-        await db.execute(
-            update(AgentSkill)
-            .where(
-                AgentSkill.skill_id == old_skill_id,
-                AgentSkill.deleted_at.is_(None),
-                AgentSkill.agent_id.in_(user_agent_ids),
-            )
-            .values(skill_id=new_skill_id)
-        )
 
     @staticmethod
     async def soft_delete_skill(
