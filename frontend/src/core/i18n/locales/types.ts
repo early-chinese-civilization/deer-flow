@@ -457,28 +457,13 @@ export interface Translations {
       mySkill: string;
       systemDirectUse: string;
       publishedByYou: string;
-      forkedSkill: string;
       officialSource: string;
       communitySpaceSource: string;
       communitySource: (ownerDisplayName: string) => string;
       installedFromSource: (ownerDisplayName: string) => string;
-      forkedSource: (ownerDisplayName: string) => string;
-      forkedSourceDetail: (
-        sourceName: string,
-        ownerDisplayName: string,
-        sourcePlatformVersion: number | null,
-      ) => string;
       installedSource: string;
       createdSource: string;
       addToPersonalSpace: string;
-      createMyVersion: string;
-      forkDialogTitle: string;
-      forkDialogDescription: string;
-      forkUploadBackNotice: string;
-      confirmForkDownload: string;
-      forkDownloadPending: string;
-      forkDownloadSuccess: string;
-      forkDownloadError: string;
       viewInPersonalSpace: string;
       publishUpdate: string;
       publishDialogTitle: string;

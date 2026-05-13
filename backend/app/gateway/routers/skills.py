@@ -323,7 +323,8 @@ class SkillUploadResult(BaseModel):
     package_version: str | None = Field(default=None, description="Deprecated alias for source_package_version")
     source_package_version: str | None = Field(default=None, description="Source version metadata from the uploaded SKILL.md")
     platform_version: int | None = Field(default=None, description="Platform version created or reused")
-    skill_version_id: int | None = Field(default=None, description="Immutable platform SkillVersion ID created or reused")
+    skill_id: str | None = Field(default=None, description="Terminal Skill UUID created or reused")
+    version_number: int | None = Field(default=None, description="Terminal Skill version number created or reused")
     action: str | None = Field(default=None, description="Upload action: created, updated, or skipped")
     success: bool = Field(..., description="Whether the upload succeeded")
     message: str = Field(..., description="Upload result message")
@@ -405,8 +406,8 @@ class SkillInstallUpdatePreviewResponse(BaseModel):
 
     skill_name: str = Field(..., description="Skill name")
     skill_install_id: int = Field(..., description="Install ID that would be updated")
-    current_skill_version_id: int = Field(..., description="Current installed SkillVersion ID")
-    target_skill_version_id: int | None = Field(default=None, description="Target SkillVersion ID when available")
+    skill_id: str | None = Field(default=None, description="Target terminal Skill UUID when available")
+    version_number: int | None = Field(default=None, description="Target terminal version number when available")
     current_platform_version: int = Field(..., description="Current installed platform version")
     target_platform_version: int | None = Field(default=None, description="Available platform version when update can proceed")
     update_available: bool = Field(..., description="Whether the target version differs from the install current version")
@@ -1092,8 +1093,8 @@ async def _build_skill_update_preview(
             return SkillInstallUpdatePreviewResponse(
                 skill_name=skill_name,
                 skill_install_id=install.id,
-                current_skill_version_id=install.current_version.id,
-                target_skill_version_id=None,
+                skill_id=str(install.skill_id or install.current_version.skill_id) if (install.skill_id or install.current_version.skill_id) is not None else None,
+                version_number=None,
                 current_platform_version=install.current_version.version_number,
                 target_platform_version=None,
                 update_available=False,
@@ -1105,8 +1106,8 @@ async def _build_skill_update_preview(
         return SkillInstallUpdatePreviewResponse(
             skill_name=skill_name,
             skill_install_id=install.id,
-            current_skill_version_id=install.current_version.id,
-            target_skill_version_id=None,
+            skill_id=str(install.skill_id or install.current_version.skill_id) if (install.skill_id or install.current_version.skill_id) is not None else None,
+            version_number=None,
             current_platform_version=install.current_version.version_number,
             target_platform_version=None,
             update_available=False,
@@ -1135,8 +1136,8 @@ async def _build_skill_update_preview(
     return SkillInstallUpdatePreviewResponse(
         skill_name=skill_name,
         skill_install_id=install.id,
-        current_skill_version_id=install.current_version.id,
-        target_skill_version_id=target_version.id,
+        skill_id=str(target_version.skill_id) if target_version.skill_id is not None else None,
+        version_number=target_version.version_number,
         current_platform_version=install.current_version.version_number,
         target_platform_version=target_version.version_number,
         update_available=update_available and artifact_available,
@@ -1684,7 +1685,8 @@ async def upload_skills(
                         package_version=package_version,
                         source_package_version=package_version,
                         platform_version=version.version_number,
-                        skill_version_id=version.id,
+                        skill_id=str(version.skill_id) if version.skill_id is not None else None,
+                        version_number=version.version_number,
                         action="skipped",
                         success=True,
                         message=f"Skill '{skill_name}' platform version {version.version_number} already exists",
@@ -1702,7 +1704,8 @@ async def upload_skills(
                         package_version=package_version,
                         source_package_version=package_version,
                         platform_version=version.version_number,
-                        skill_version_id=version.id,
+                        skill_id=str(version.skill_id) if version.skill_id is not None else None,
+                        version_number=version.version_number,
                         action="skipped",
                         success=False,
                         message=f"Skill '{skill_name}' target directory already exists",
@@ -1743,7 +1746,8 @@ async def upload_skills(
 
             current_user_id = current_user.id
             skill_definition_id = version.skill_definition_id
-            skill_version_id = version.id
+            skill_id = str(version.skill_id) if version.skill_id is not None else None
+            version_number = version.version_number
             platform_version = version.version_number
             await db.commit()
             refreshed_install = await SkillInstallRepository.get_by_user_and_definition(
@@ -1758,7 +1762,8 @@ async def upload_skills(
                     package_version=package_version,
                     source_package_version=package_version,
                     platform_version=platform_version,
-                    skill_version_id=skill_version_id,
+                    skill_id=skill_id,
+                    version_number=version_number,
                     action=action,
                     success=True,
                     message=(f"Skill installed at platform version {refreshed_install.current_version.version_number}" if refreshed_install is not None and refreshed_install.current_version is not None else "Skill uploaded successfully"),

@@ -22,22 +22,22 @@ export interface AgentDraftFormState {
   skills: string[];
 }
 
-function orderedUniqueSkillNames(
-  skillNames: string[] | null | undefined,
+function orderedUniqueSkillSelectionKeys(
+  skillSelectionKeys: string[] | null | undefined,
 ): string[] {
-  if (!skillNames?.length) {
+  if (!skillSelectionKeys?.length) {
     return [];
   }
 
   const ordered: string[] = [];
   const seen = new Set<string>();
-  for (const rawName of skillNames) {
-    const skillName = rawName.trim();
-    if (!skillName || seen.has(skillName)) {
+  for (const rawKey of skillSelectionKeys) {
+    const skillKey = rawKey.trim();
+    if (!skillKey || seen.has(skillKey)) {
       continue;
     }
-    seen.add(skillName);
-    ordered.push(skillName);
+    seen.add(skillKey);
+    ordered.push(skillKey);
   }
   return ordered;
 }
@@ -49,7 +49,7 @@ export function normalizeAgentDraftPayload(
     name: payload?.name ?? "",
     description: payload?.description ?? "",
     soul: payload?.soul ?? "",
-    skills: orderedUniqueSkillNames(payload?.skills),
+    skills: orderedUniqueSkillSelectionKeys(payload?.skills),
   };
 }
 
@@ -60,7 +60,7 @@ export function toAgentDraftPatchRequest(
     name: form.name,
     description: form.description,
     soul: form.soul,
-    skills: orderedUniqueSkillNames(form.skills),
+    skills: orderedUniqueSkillSelectionKeys(form.skills),
   };
 }
 

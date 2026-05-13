@@ -515,37 +515,14 @@ export const zhCN: Translations = {
       mySkill: "我的 Skill",
       systemDirectUse: "可直接使用",
       publishedByYou: "我发布的 Skill",
-      forkedSkill: "我的 Skill",
       officialSource: "系统",
       communitySpaceSource: "社区",
       communitySource: (ownerDisplayName: string) => `作者 ${ownerDisplayName}`,
       installedFromSource: (ownerDisplayName: string) =>
         `来自 ${ownerDisplayName}`,
-      forkedSource: (ownerDisplayName: string) => `基于 ${ownerDisplayName}`,
-      forkedSourceDetail: (
-        sourceName: string,
-        ownerDisplayName: string,
-        sourcePlatformVersion: number | null,
-      ) =>
-        `基于「${sourceName}」，作者 ${ownerDisplayName}${
-          sourcePlatformVersion != null
-            ? ` · 来源版本 ${sourcePlatformVersion}`
-            : ""
-        }`,
       installedSource: "已安装",
       createdSource: "我创建的",
       addToPersonalSpace: "安装",
-      createMyVersion: "下载",
-      forkDialogTitle: "下载可编辑副本",
-      forkDialogDescription:
-        "下载一份包含来源信息的 ZIP 到本机。编辑后回到这里上传，即可创建你的版本。原 Skill 不会被修改。",
-      forkUploadBackNotice:
-        "在本机编辑文件后，使用上传 Skill 将 ZIP 添加为你的版本。",
-      confirmForkDownload: "下载可编辑副本",
-      forkDownloadPending: "下载中...",
-      forkDownloadSuccess:
-        "可编辑副本已下载。编辑后上传 ZIP，即可创建你的版本。",
-      forkDownloadError: "下载可编辑 Skill 副本失败。",
       viewInPersonalSpace: "在我的 Skills 查看",
       publishUpdate: "发布更新",
       publishDialogTitle: "发布技能",

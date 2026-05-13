@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  DownloadIcon,
   MoreVerticalIcon,
   PackageIcon,
   SearchIcon,
@@ -49,12 +48,10 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useI18n } from "@/core/i18n/hooks";
 import {
-  checkSkillHubInstall,
   checkSkillUpload,
   getSkillInstallUpdateDialogState,
   useConfirmSkillInstallUpdate,
   useDeleteSkill,
-  useDownloadSkillForkPackage,
   useInstallSkillHubSkill,
   usePublishSkill,
   usePreviewSkillInstallUpdate,
@@ -63,7 +60,6 @@ import {
 } from "@/core/skills";
 import {
   findInstalledSkillForSkillHubItem,
-  canCreateMyVersionFromSkillHubItem,
   getSkillDisplayContract,
   getSkillHubLatestPlatformVersion,
   getSkillInstallState,
@@ -100,7 +96,6 @@ export function SkillsGallery() {
   const { skills, isLoading, error } = useSkills();
   const deleteSkill = useDeleteSkill();
   const installSkillHubSkill = useInstallSkillHubSkill();
-  const downloadForkPackage = useDownloadSkillForkPackage();
   const confirmSkillUpdate = useConfirmSkillInstallUpdate();
   const publishSkill = usePublishSkill();
   const uploadSkills = useUploadSkills();
@@ -111,9 +106,6 @@ export function SkillsGallery() {
   const [publishCandidate, setPublishCandidate] = useState<Skill | null>(null);
   const [updateCandidate, setUpdateCandidate] = useState<Skill | null>(null);
   const [installingSkillKey, setInstallingSkillKey] = useState<string | null>(
-    null,
-  );
-  const [downloadingSkillKey, setDownloadingSkillKey] = useState<string | null>(
     null,
   );
   const [releaseNotes, setReleaseNotes] = useState("");
@@ -168,6 +160,20 @@ export function SkillsGallery() {
     return t.settings.skills.noPlatformVersion;
   }
 
+  function getTerminalVersionNumber(skill: Skill): number | null {
+    return skill.version_number ?? getSkillHubLatestPlatformVersion(skill);
+  }
+
+  function getInstallTarget(
+    skill: Skill,
+  ): { skillId: string; versionNumber: number } | null {
+    const versionNumber = getTerminalVersionNumber(skill);
+    if (!skill.skill_id || versionNumber == null) {
+      return null;
+    }
+    return { skillId: skill.skill_id, versionNumber };
+  }
+
   function getMySkillVersionDetail(skill: Skill) {
     const version = getSkillPlatformVersion(skill);
     return version != null
@@ -202,19 +208,6 @@ export function SkillsGallery() {
         skill.owner_display_name ?? t.settings.skills.communitySpaceSource,
       );
     }
-    if (display.viewerRelation === "forked") {
-      if (skill.fork_source_skill_name) {
-        return t.settings.skills.forkedSourceDetail(
-          skill.fork_source_skill_name,
-          skill.fork_source_owner_display_name ??
-            t.settings.skills.communitySpaceSource,
-          skill.fork_source_platform_version ?? null,
-        );
-      }
-      return skill.owner_display_name
-        ? t.settings.skills.forkedSource(skill.owner_display_name)
-        : t.settings.skills.createdSource;
-    }
     return t.settings.skills.createdSource;
   }
 
@@ -246,10 +239,11 @@ export function SkillsGallery() {
     if (display.viewerRelation === "authored_published") {
       return t.settings.skills.published;
     }
-    if (display.space === "personal" && display.viewerRelation === "authored") {
-      return t.settings.skills.mySkill;
-    }
-    if (display.viewerRelation === "forked") {
+    if (
+      display.space === "personal" &&
+      (display.viewerRelation === "authored" ||
+        display.viewerRelation === "forked")
+    ) {
       return t.settings.skills.mySkill;
     }
     if (action === "view-update" || installState === "update-available") {
@@ -377,26 +371,17 @@ export function SkillsGallery() {
     if (installingSkillKey !== null) {
       return;
     }
+    const target = getInstallTarget(skill);
+    if (target === null) {
+      toast.error(t.settings.skills.installError);
+      return;
+    }
 
     setInstallingSkillKey(skillKey);
     try {
-      const result = await checkSkillHubInstall(skill.name, {
-        owner_user_id: skill.owner_user_id ?? null,
-        skill_definition_id: skill.skill_definition_id ?? null,
-      });
-      const overwrite = result.exists
-        ? window.confirm(t.settings.skills.conflictConfirm(result.skill_name))
-        : false;
-
-      if (result.exists && !overwrite) {
-        return;
-      }
-
       await installSkillHubSkill.mutateAsync({
-        skillName: skill.name,
-        ownerUserId: skill.owner_user_id ?? null,
-        skillDefinitionId: skill.skill_definition_id ?? null,
-        overwrite,
+        skillId: target.skillId,
+        versionNumber: target.versionNumber,
       });
       toast.success(t.settings.skills.installSuccess(skill.name));
     } catch (error) {
@@ -409,46 +394,35 @@ export function SkillsGallery() {
   }
 
   async function handleUpdateConfirmed() {
-    if (!updateCandidate || !updatePreview.data?.target_skill_version_id) {
+    const targetSkillId =
+      updatePreview.data?.skill_id ?? updateCandidate?.skill_id;
+    const targetVersionNumber =
+      updatePreview.data?.version_number ??
+      updatePreview.data?.target_platform_version;
+    const skillInstallId = updateCandidate?.skill_install_id;
+    const updateSkillName = updateCandidate?.name;
+    if (
+      !targetSkillId ||
+      !skillInstallId ||
+      !updateSkillName ||
+      targetVersionNumber == null
+    ) {
       return;
     }
 
     try {
       await confirmSkillUpdate.mutateAsync({
-        skillName: updateCandidate.name,
-        skillInstallId: updateCandidate.skill_install_id ?? null,
-        skillVersionId: updatePreview.data.target_skill_version_id,
+        skillName: updateSkillName,
+        skillInstallId,
+        skillId: targetSkillId,
+        versionNumber: targetVersionNumber,
       });
-      toast.success(t.settings.skills.updateSuccess(updateCandidate.name));
+      toast.success(t.settings.skills.updateSuccess(updateSkillName));
       setUpdateCandidate(null);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t.settings.skills.updateError,
       );
-    }
-  }
-
-  async function handleDownloadForkPackage(skill: Skill, skillKey: string) {
-    if (downloadingSkillKey !== null) {
-      return;
-    }
-
-    setDownloadingSkillKey(skillKey);
-    try {
-      await downloadForkPackage.mutateAsync({
-        skillName: skill.name,
-        ownerUserId: skill.owner_user_id ?? null,
-        skillDefinitionId: skill.skill_definition_id ?? null,
-      });
-      toast.success(t.settings.skills.forkDownloadSuccess);
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : t.settings.skills.forkDownloadError,
-      );
-    } finally {
-      setDownloadingSkillKey(null);
     }
   }
 
@@ -652,16 +626,13 @@ export function SkillsGallery() {
               const shouldShowCommunityInstallAction =
                 cardState.primaryAction === "add-to-personal" ||
                 communityActionInstalled;
-              const canCreateMyVersion =
-                canCreateMyVersionFromSkillHubItem(skill);
+              const installTarget = getInstallTarget(skill);
               const platformVersion =
                 display.space === "community" || display.space === "system"
                   ? getSkillHubLatestPlatformVersion(skill)
                   : getSkillPlatformVersion(skill);
               const isInstallingSkill =
                 installingSkillKey === display.identityKey;
-              const isDownloadingSkill =
-                downloadingSkillKey === display.identityKey;
               const primaryActionText = getPrimaryActionText(
                 cardState.primaryAction,
               );
@@ -726,6 +697,7 @@ export function SkillsGallery() {
                             }
                             disabled={
                               communityActionInstalled ||
+                              installTarget === null ||
                               installingSkillKey !== null
                             }
                             onClick={() => {
@@ -740,24 +712,6 @@ export function SkillsGallery() {
                               : communityActionInstalled
                                 ? t.settings.skills.installed
                                 : t.settings.skills.installSkill}
-                          </Button>
-                        ) : null}
-                        {canCreateMyVersion ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={downloadingSkillKey !== null}
-                            onClick={() =>
-                              void handleDownloadForkPackage(
-                                skill,
-                                display.identityKey,
-                              )
-                            }
-                          >
-                            <DownloadIcon className="size-4" />
-                            {isDownloadingSkill
-                              ? t.settings.skills.forkDownloadPending
-                              : t.settings.skills.createMyVersion}
                           </Button>
                         ) : null}
                       </div>

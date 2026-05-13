@@ -57,9 +57,6 @@ import {
   getMetadataDisplaySummary,
   getMetadataSelectionKey,
   getSelectionInstallIds as getSelectionInstallIdsFromForm,
-  getSelectionSkillNames as getSelectionSkillNamesFromForm,
-  getSelectionSystemSkillDefinitionIds as getSelectionSystemSkillDefinitionIdsFromForm,
-  getSelectionSystemSkillVersionIds as getSelectionSystemSkillVersionIdsFromForm,
   getSkillDisplaySummary,
   getSkillSelectionKey,
   type AgentSkillDisplaySummary,
@@ -126,7 +123,7 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
     [skills],
   );
   const visibleSkills = useMemo(
-    () => [...visibleSkillGroups.mySkills, ...visibleSkillGroups.systemSkills],
+    () => [...visibleSkillGroups.mySkills],
     [visibleSkillGroups],
   );
   const visibleSkillByKey = useMemo(
@@ -149,18 +146,6 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
 
   function getSelectionInstallIds(): number[] {
     return getSelectionInstallIdsFromForm(form.skills);
-  }
-
-  function getSelectionSkillNames(): string[] {
-    return getSelectionSkillNamesFromForm(form.skills);
-  }
-
-  function getSelectionSystemSkillVersionIds(): number[] {
-    return getSelectionSystemSkillVersionIdsFromForm(form.skills);
-  }
-
-  function getSelectionSystemSkillDefinitionIds(): number[] {
-    return getSelectionSystemSkillDefinitionIdsFromForm(form.skills);
   }
 
   function getSkillSummary(skill: (typeof visibleSkills)[number]) {
@@ -281,9 +266,7 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
         skills:
           agent?.skill_metadata?.map((skill) =>
             getMetadataSelectionKey(skill),
-          ) ??
-          agent?.skills?.map((skill) => `name:${skill}`) ??
-          [],
+          ) ?? [],
       });
 
     setForm(initialForm);
@@ -407,37 +390,21 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
     try {
       if (mode === "create") {
         const skillInstallIds = getSelectionInstallIds();
-        const skillNames = getSelectionSkillNames();
-        const systemSkillVersionIds = getSelectionSystemSkillVersionIds();
-        const systemSkillDefinitionIds = getSelectionSystemSkillDefinitionIds();
         await createAgentMutation.mutateAsync({
           name: normalizedName,
           description: form.description.trim(),
           soul: form.soul.trim(),
           skill_install_ids:
             skillInstallIds.length > 0 ? skillInstallIds : null,
-          system_skill_version_ids:
-            systemSkillVersionIds.length > 0 ? systemSkillVersionIds : null,
-          system_skill_definition_ids:
-            systemSkillDefinitionIds.length > 0
-              ? systemSkillDefinitionIds
-              : null,
-          skills: skillNames.length > 0 ? skillNames : null,
         });
       } else {
         const skillInstallIds = getSelectionInstallIds();
-        const skillNames = getSelectionSkillNames();
-        const systemSkillVersionIds = getSelectionSystemSkillVersionIds();
-        const systemSkillDefinitionIds = getSelectionSystemSkillDefinitionIds();
         await updateAgentMutation.mutateAsync({
           name: agentName!,
           request: {
             description: form.description.trim(),
             soul: form.soul.trim(),
             skill_install_ids: skillInstallIds,
-            system_skill_version_ids: systemSkillVersionIds,
-            system_skill_definition_ids: systemSkillDefinitionIds,
-            skills: skillNames.length > 0 ? skillNames : null,
           },
         });
       }
@@ -614,36 +581,20 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
               {t.agents.createSkillsEmpty}
             </div>
           ) : (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <section className="space-y-2">
-                <h3 className="text-sm font-medium">
-                  {t.settings.skills.mySkillsTab}
-                </h3>
-                <div className="space-y-3">
-                  {visibleSkillGroups.mySkills.length === 0 ? (
-                    <div className="text-muted-foreground rounded-md border border-dashed p-3 text-sm">
-                      {t.agents.createSkillsEmpty}
-                    </div>
-                  ) : (
-                    renderSkillRows(visibleSkillGroups.mySkills)
-                  )}
-                </div>
-              </section>
-              <section className="space-y-2">
-                <h3 className="text-sm font-medium">
-                  {t.settings.skills.systemSpaceTab}
-                </h3>
-                <div className="space-y-3">
-                  {visibleSkillGroups.systemSkills.length === 0 ? (
-                    <div className="text-muted-foreground rounded-md border border-dashed p-3 text-sm">
-                      {t.agents.createSkillsEmpty}
-                    </div>
-                  ) : (
-                    renderSkillRows(visibleSkillGroups.systemSkills)
-                  )}
-                </div>
-              </section>
-            </div>
+            <section className="space-y-2">
+              <h3 className="text-sm font-medium">
+                {t.settings.skills.mySkillsTab}
+              </h3>
+              <div className="space-y-3">
+                {visibleSkillGroups.mySkills.length === 0 ? (
+                  <div className="text-muted-foreground rounded-md border border-dashed p-3 text-sm">
+                    {t.agents.createSkillsEmpty}
+                  </div>
+                ) : (
+                  renderSkillRows(visibleSkillGroups.mySkills)
+                )}
+              </div>
+            </section>
           )}
         </div>
       </div>

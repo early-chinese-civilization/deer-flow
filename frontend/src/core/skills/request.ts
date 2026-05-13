@@ -1,57 +1,15 @@
-import type {
-  SkillHubInstallCheckRequest,
-  SkillHubInstallRequest,
-  SkillInstallUpdateRequest,
-  SkillForkPackageRequest,
-} from "./api";
+import type { SkillHubInstallRequest, SkillInstallUpdateRequest } from "./api";
 
 function buildSkillRoute(baseUrl: string, skillName: string, suffix: string) {
   return `${baseUrl}/api/skills/${encodeURIComponent(skillName)}/${suffix}`;
 }
 
-export function buildSkillHubInstallCheckRequest(
-  baseUrl: string,
-  skillName: string,
-  request: SkillHubInstallCheckRequest,
-): [string, RequestInit] {
-  return [
-    buildSkillRoute(baseUrl, skillName, "check-download"),
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(request),
-      credentials: "include",
-    },
-  ];
-}
-
 export function buildSkillHubInstallRequest(
   baseUrl: string,
-  skillName: string,
   request: SkillHubInstallRequest,
 ): [string, RequestInit] {
   return [
-    buildSkillRoute(baseUrl, skillName, "download"),
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(request),
-      credentials: "include",
-    },
-  ];
-}
-
-export function buildSkillForkPackageRequest(
-  baseUrl: string,
-  skillName: string,
-  request: SkillForkPackageRequest,
-): [string, RequestInit] {
-  return [
-    buildSkillRoute(baseUrl, skillName, "fork-package"),
+    `${baseUrl}/api/skills/install`,
     {
       method: "POST",
       headers: {
@@ -103,10 +61,6 @@ export function buildSkillInstallUpdateConfirmRequest(
       credentials: "include",
     },
   ];
-}
-
-export function getSkillHubInstallCheckFallbackError(statusText: string) {
-  return `Failed to check skill install: ${statusText}`;
 }
 
 export function getSkillHubInstallFallbackError(statusText: string) {

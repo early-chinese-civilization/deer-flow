@@ -23,8 +23,7 @@ export type SkillWorkspaceCardRole =
   | "installed"
   | "authored"
   | "authored-published"
-  | "authored-unpublished-changes"
-  | "forked";
+  | "authored-unpublished-changes";
 
 export type SkillWorkspacePrimaryAction =
   | "add-to-personal"
@@ -116,7 +115,7 @@ function getLegacySkillViewerRelation(
     return "system_available";
   }
   if (sourceKind === "fork") {
-    return "forked";
+    return "authored";
   }
   if (skill.update_available === true) {
     return "update_available";
@@ -177,14 +176,14 @@ export function getSkillIdentityKey(skill: Skill): string {
   if (space === "personal" && skill.skill_install_id != null) {
     return `install:${skill.skill_install_id}`;
   }
-  if (skill.skill_definition_id != null) {
-    return `definition:${skill.skill_definition_id}`;
+  if (skill.skill_id && skill.version_number != null) {
+    return `skill:${skill.skill_id}:v${skill.version_number}`;
+  }
+  if (skill.skill_id) {
+    return `skill:${skill.skill_id}`;
   }
   if (skill.skill_install_id != null) {
     return `install:${skill.skill_install_id}`;
-  }
-  if (skill.skill_version_id != null) {
-    return `version:${skill.skill_version_id}`;
   }
   return `legacy:${space}:${explicitSourceKind}:${skill.owner_user_id ?? "system"}:${skill.name}`;
 }
@@ -217,15 +216,6 @@ export function isSelfAuthoredCommunitySkill(skill: Skill): boolean {
     display.space === "community" &&
     (display.viewerRelation === "authored_published" ||
       display.viewerRelation === "authored_unpublished_changes")
-  );
-}
-
-export function canCreateMyVersionFromSkillHubItem(skill: Skill): boolean {
-  const display = getSkillDisplayContract(skill);
-  return (
-    display.space === "community" &&
-    display.sourceKind !== "official" &&
-    !isSelfAuthoredCommunitySkill(skill)
   );
 }
 
@@ -301,7 +291,7 @@ export function getSkillWorkspaceCardState(
   if (display.viewerRelation === "forked") {
     segments.add("authored");
     return {
-      role: "forked",
+      role: "authored",
       primaryAction: "publish",
       segments: Array.from(segments),
     };
@@ -456,27 +446,20 @@ export function findInstalledSkillForSkillHubItem(
     return skill.skill_install_id ? skill : null;
   }
 
-  const byDefinition =
-    skill.skill_definition_id != null
+  const bySkillId =
+    skill.skill_id != null
       ? skills.find(
           (candidate) =>
             isPersonalSkill(candidate) &&
-            candidate.skill_definition_id === skill.skill_definition_id &&
+            candidate.skill_id === skill.skill_id &&
             candidate.skill_install_id != null,
         )
       : undefined;
-  if (byDefinition) {
-    return byDefinition;
+  if (bySkillId) {
+    return bySkillId;
   }
 
-  const sameNameCandidates = skills.filter(
-    (candidate) =>
-      isPersonalSkill(candidate) &&
-      candidate.name === skill.name &&
-      candidate.skill_install_id != null,
-  );
-  const onlyMatch = sameNameCandidates[0];
-  return sameNameCandidates.length === 1 && onlyMatch ? onlyMatch : null;
+  return null;
 }
 
 export function getInstalledPlatformVersion(

@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   confirmSkillInstallUpdate,
   deleteSkill,
-  downloadSkillForkPackage,
   enableSkill,
   installSkillHubSkill,
   previewSkillInstallUpdate,
@@ -88,43 +87,20 @@ export function useInstallSkillHubSkill() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({
-      skillName,
-      ownerUserId,
-      skillDefinitionId,
-      overwrite,
+      skillId,
+      versionNumber,
     }: {
-      skillName: string;
-      ownerUserId?: number | null;
-      skillDefinitionId?: number | null;
-      overwrite?: boolean;
+      skillId: string;
+      versionNumber: number;
     }) =>
-      installSkillHubSkill(skillName, {
-        owner_user_id: ownerUserId,
-        skill_definition_id: skillDefinitionId,
-        overwrite,
+      installSkillHubSkill({
+        skill_id: skillId,
+        version_number: versionNumber,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["skills"] });
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
     },
-  });
-}
-
-export function useDownloadSkillForkPackage() {
-  return useMutation({
-    mutationFn: async ({
-      skillName,
-      ownerUserId,
-      skillDefinitionId,
-    }: {
-      skillName: string;
-      ownerUserId?: number | null;
-      skillDefinitionId?: number | null;
-    }) =>
-      downloadSkillForkPackage(skillName, {
-        owner_user_id: ownerUserId,
-        skill_definition_id: skillDefinitionId,
-      }),
   });
 }
 
@@ -146,15 +122,18 @@ export function useConfirmSkillInstallUpdate() {
     mutationFn: async ({
       skillName,
       skillInstallId,
-      skillVersionId,
+      skillId,
+      versionNumber,
     }: {
       skillName: string;
-      skillInstallId?: number | null;
-      skillVersionId?: number | null;
+      skillInstallId: number;
+      skillId: string;
+      versionNumber: number;
     }) =>
       confirmSkillInstallUpdate(skillName, {
         skill_install_id: skillInstallId,
-        skill_version_id: skillVersionId,
+        skill_id: skillId,
+        version_number: versionNumber,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["skills"] });

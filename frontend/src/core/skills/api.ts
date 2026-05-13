@@ -1,12 +1,9 @@
 import { getBackendBaseURL } from "@/core/config";
 
 import {
-  buildSkillHubInstallCheckRequest,
   buildSkillHubInstallRequest,
-  buildSkillForkPackageRequest,
   buildSkillInstallUpdateConfirmRequest,
   buildSkillInstallUpdatePreviewRequest,
-  getSkillHubInstallCheckFallbackError,
   getSkillHubInstallFallbackError,
 } from "./request";
 import type { Skill } from "./type";
@@ -35,7 +32,8 @@ export interface SkillUploadResult {
   package_version?: string | null;
   source_package_version?: string | null;
   platform_version?: number | null;
-  skill_version_id?: number | null;
+  skill_id?: string | null;
+  version_number?: number | null;
   action?: "created" | "updated" | "skipped" | null;
   success: boolean;
   message: string;
@@ -46,26 +44,9 @@ export interface SkillUploadResponse {
   results: SkillUploadResult[];
 }
 
-export interface SkillHubInstallCheckRequest {
-  owner_user_id?: number | null;
-  skill_definition_id?: number | null;
-}
-
-export interface SkillHubInstallCheckResponse {
-  skill_name: string;
-  exists: boolean;
-  message: string;
-}
-
 export interface SkillHubInstallRequest {
-  owner_user_id?: number | null;
-  skill_definition_id?: number | null;
-  overwrite?: boolean;
-}
-
-export interface SkillForkPackageRequest {
-  owner_user_id?: number | null;
-  skill_definition_id?: number | null;
+  skill_id: string;
+  version_number: number;
 }
 
 export interface SkillPublishRequest {
@@ -74,8 +55,9 @@ export interface SkillPublishRequest {
 }
 
 export interface SkillInstallUpdateRequest {
-  skill_install_id?: number | null;
-  skill_version_id?: number | null;
+  skill_install_id: number;
+  skill_id: string;
+  version_number: number;
 }
 
 export interface SkillManagementIdentity {
@@ -91,8 +73,8 @@ export interface SkillUpdateAffectedAgent {
 export interface SkillInstallUpdatePreview {
   skill_name: string;
   skill_install_id: number;
-  current_skill_version_id: number;
-  target_skill_version_id?: number | null;
+  skill_id?: string | null;
+  version_number?: number | null;
   current_platform_version: number;
   target_platform_version?: number | null;
   update_available: boolean;
@@ -231,37 +213,11 @@ export async function uploadSkills(
   return response.json() as Promise<SkillUploadResponse>;
 }
 
-export async function checkSkillHubInstall(
-  skillName: string,
-  request: SkillHubInstallCheckRequest,
-): Promise<SkillHubInstallCheckResponse> {
-  const response = await fetch(
-    ...buildSkillHubInstallCheckRequest(
-      getBackendBaseURL(),
-      skillName,
-      request,
-    ),
-  );
-
-  if (!response.ok) {
-    const errorData = (await response.json().catch(() => ({}))) as {
-      detail?: string;
-    };
-    throw new Error(
-      errorData.detail ??
-        getSkillHubInstallCheckFallbackError(response.statusText),
-    );
-  }
-
-  return response.json() as Promise<SkillHubInstallCheckResponse>;
-}
-
 export async function installSkillHubSkill(
-  skillName: string,
   request: SkillHubInstallRequest,
 ): Promise<Skill> {
   const response = await fetch(
-    ...buildSkillHubInstallRequest(getBackendBaseURL(), skillName, request),
+    ...buildSkillHubInstallRequest(getBackendBaseURL(), request),
   );
 
   if (!response.ok) {
@@ -274,51 +230,6 @@ export async function installSkillHubSkill(
   }
 
   return response.json() as Promise<Skill>;
-}
-
-function filenameFromContentDisposition(disposition: string | null) {
-  if (!disposition) {
-    return null;
-  }
-  const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
-  if (utf8Match?.[1]) {
-    return decodeURIComponent(utf8Match[1]);
-  }
-  const plainMatch = /filename="?([^";]+)"?/i.exec(disposition);
-  return plainMatch?.[1] ?? null;
-}
-
-export async function downloadSkillForkPackage(
-  skillName: string,
-  request: SkillForkPackageRequest,
-): Promise<void> {
-  const response = await fetch(
-    ...buildSkillForkPackageRequest(getBackendBaseURL(), skillName, request),
-  );
-
-  if (!response.ok) {
-    const errorData = (await response.json().catch(() => ({}))) as {
-      detail?: string;
-    };
-    throw new Error(
-      errorData.detail ??
-        `Failed to download editable Skill copy: ${response.statusText}`,
-    );
-  }
-
-  const blob = await response.blob();
-  const filename =
-    filenameFromContentDisposition(
-      response.headers.get("Content-Disposition"),
-    ) ?? `${skillName}-editable-copy.zip`;
-  const objectUrl = window.URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = objectUrl;
-  anchor.download = filename;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  window.URL.revokeObjectURL(objectUrl);
 }
 
 export async function previewSkillInstallUpdate(
@@ -348,7 +259,7 @@ export async function previewSkillInstallUpdate(
 
 export async function confirmSkillInstallUpdate(
   skillName: string,
-  request: SkillInstallUpdateRequest = {},
+  request: SkillInstallUpdateRequest,
 ): Promise<SkillInstallUpdatePreview> {
   const response = await fetch(
     ...buildSkillInstallUpdateConfirmRequest(

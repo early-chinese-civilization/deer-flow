@@ -13,8 +13,8 @@ function preview(
   return {
     skill_name: "demo-skill",
     skill_install_id: 301,
-    current_skill_version_id: 201,
-    target_skill_version_id: 202,
+    skill_id: "12345678-1234-5678-1234-567812345678",
+    version_number: 2,
     current_platform_version: 1,
     target_platform_version: 2,
     update_available: true,

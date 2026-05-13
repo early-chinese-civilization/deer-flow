@@ -2,6 +2,8 @@ export function GET() {
   return Response.json({
     skills: [
       {
+        skill_id: "00000000-0000-0000-0000-000000000100",
+        version_number: 3,
         name: "deep-research",
         description:
           "Plan and run careful research before producing reports, decks, or analysis.",
@@ -14,7 +16,6 @@ export function GET() {
         version: "3",
         platform_version: 3,
         skill_definition_id: 100,
-        skill_version_id: 300,
         release_status: "published",
         release_notes: "Curated official guidance for research workflows.",
         published_at: "2026-04-28T00:00:00Z",
@@ -22,6 +23,8 @@ export function GET() {
         owner_display_name: "official",
       },
       {
+        skill_id: "00000000-0000-0000-0000-000000000101",
+        version_number: 2,
         name: "frontend-design",
         description:
           "Create distinctive, production-grade frontend interfaces with clear product structure.",
@@ -34,7 +37,6 @@ export function GET() {
         version: "2",
         platform_version: 2,
         skill_definition_id: 101,
-        skill_version_id: 301,
         release_status: "published",
         release_notes: "Improved layout critique and implementation checks.",
         published_at: "2026-04-28T00:00:00Z",
@@ -42,6 +44,8 @@ export function GET() {
         owner_display_name: "Avery Chen",
       },
       {
+        skill_id: "00000000-0000-0000-0000-000000000102",
+        version_number: 2,
         name: "meeting-brief",
         description:
           "Summarize meeting notes into decisions, owners, and follow-up actions.",
@@ -54,7 +58,6 @@ export function GET() {
         version: "2",
         platform_version: 2,
         skill_definition_id: 102,
-        skill_version_id: 302,
         skill_install_id: 202,
         current_platform_version: 2,
         installed_platform_version: 2,
@@ -67,6 +70,8 @@ export function GET() {
         owner_display_name: "Mina Park",
       },
       {
+        skill_id: "00000000-0000-0000-0000-000000000103",
+        version_number: 1,
         name: "research-assistant",
         description:
           "Published Skill that helps teams gather sources and compare claims.",
@@ -79,7 +84,6 @@ export function GET() {
         version: "1",
         platform_version: 1,
         skill_definition_id: 103,
-        skill_version_id: 303,
         release_status: "published",
         release_notes: "Initial community release.",
         published_at: "2026-05-02T00:00:00Z",
@@ -87,6 +91,8 @@ export function GET() {
         owner_display_name: "You",
       },
       {
+        skill_id: "00000000-0000-0000-0000-000000000104",
+        version_number: 1,
         name: "same-name-helper",
         description: "Community Skill from Alice for short structured briefs.",
         license: null,
@@ -98,12 +104,13 @@ export function GET() {
         version: "1",
         platform_version: 1,
         skill_definition_id: 104,
-        skill_version_id: 304,
         release_status: "published",
         owner_user_id: 44,
         owner_display_name: "Alice",
       },
       {
+        skill_id: "00000000-0000-0000-0000-000000000105",
+        version_number: 1,
         name: "same-name-helper",
         description: "Community Skill from Bob for concise research memos.",
         license: null,
@@ -115,12 +122,13 @@ export function GET() {
         version: "1",
         platform_version: 1,
         skill_definition_id: 105,
-        skill_version_id: 305,
         release_status: "published",
         owner_user_id: 45,
         owner_display_name: "Bob",
       },
       {
+        skill_id: "00000000-0000-0000-0000-000000000102",
+        version_number: 2,
         name: "meeting-brief",
         description:
           "Personal Space copy added from Mina Park and ready for Agent binding.",
@@ -136,13 +144,14 @@ export function GET() {
         installed_platform_version: 2,
         latest_platform_version: 2,
         skill_definition_id: 102,
-        skill_version_id: 302,
         skill_install_id: 202,
         update_available: false,
         owner_user_id: 43,
         owner_display_name: "Mina Park",
       },
       {
+        skill_id: "00000000-0000-0000-0000-000000000101",
+        version_number: 1,
         name: "frontend-design",
         description:
           "Personal Space copy from Avery Chen with a newer Community version available.",
@@ -158,13 +167,14 @@ export function GET() {
         installed_platform_version: 1,
         latest_platform_version: 2,
         skill_definition_id: 101,
-        skill_version_id: 306,
         skill_install_id: 203,
         update_available: true,
         owner_user_id: 42,
         owner_display_name: "Avery Chen",
       },
       {
+        skill_id: "00000000-0000-0000-0000-000000000103",
+        version_number: 1,
         name: "research-assistant",
         description:
           "Your authored Skill, currently published to Community Space.",
@@ -178,13 +188,14 @@ export function GET() {
         platform_version: 1,
         current_platform_version: 1,
         skill_definition_id: 103,
-        skill_version_id: 303,
         skill_install_id: 204,
         release_status: "published",
         owner_user_id: 7,
         owner_display_name: "You",
       },
       {
+        skill_id: "00000000-0000-0000-0000-000000000106",
+        version_number: 1,
         name: "draft-analyst",
         description:
           "Your authored Skill draft for reviewing notes and writing summaries.",
@@ -198,28 +209,9 @@ export function GET() {
         platform_version: 1,
         current_platform_version: 1,
         skill_definition_id: 106,
-        skill_version_id: 307,
         skill_install_id: 205,
         owner_user_id: 7,
         owner_display_name: "You",
-      },
-      {
-        name: "brief-remix",
-        description: "Your forked Skill based on a community brief workflow.",
-        license: null,
-        category: "custom",
-        space: "personal",
-        source_kind: "fork",
-        viewer_relation: "forked",
-        enabled: true,
-        version: "1",
-        platform_version: 1,
-        current_platform_version: 1,
-        skill_definition_id: 107,
-        skill_version_id: 308,
-        skill_install_id: 206,
-        owner_user_id: 7,
-        owner_display_name: "Mina Park",
       },
     ],
   });

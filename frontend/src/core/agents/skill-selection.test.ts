@@ -11,8 +11,6 @@ const {
   getMetadataSelectionKey,
   getSelectionInstallIds,
   getSelectionSkillNames,
-  getSelectionSystemSkillDefinitionIds,
-  getSelectionSystemSkillVersionIds,
   getSkillDisplaySummary,
   getSkillSelectionKey,
 } = await import(new URL("./skill-selection.ts", import.meta.url).href);
@@ -32,9 +30,10 @@ function skill(overrides: Partial<Skill>): Skill {
     category: "custom",
     license: null,
     enabled: true,
+    skill_id: "12345678-1234-5678-1234-567812345678",
+    version_number: 1,
     skill_install_id: 201,
     skill_definition_id: 101,
-    skill_version_id: 301,
     current_platform_version: 1,
     source_kind: "community",
     viewer_relation: "downloaded",
@@ -48,7 +47,6 @@ function metadata(overrides: Partial<AgentSkillMetadata>): AgentSkillMetadata {
     name: "demo-skill",
     skill_install_id: 201,
     skill_definition_id: 101,
-    skill_version_id: 301,
     current_platform_version: 1,
     source: "skillhub",
     source_label: "Demo Publisher",
@@ -92,7 +90,7 @@ void test("Agent Skill selection rows expose source, installed version, update, 
   assert.deepEqual(
     getSkillDisplaySummary(
       skill({
-        skill_version_id: null,
+        skill_id: null,
         current_platform_version: null,
       }),
       labels,
@@ -158,7 +156,7 @@ void test("same-name different-source installed Skills remain separate and submi
   assert.deepEqual(getSelectionSkillNames(selection), []);
 });
 
-void test("Agent Skill selection groups My Skills and System Skills separately", () => {
+void test("Agent Skill selection exposes only install-backed My Skills", () => {
   const installed = skill({
     name: "same-skill",
     space: "personal",
@@ -174,7 +172,6 @@ void test("Agent Skill selection groups My Skills and System Skills separately",
     viewer_relation: "system_available",
     skill_install_id: null,
     skill_definition_id: 501,
-    skill_version_id: 701,
     current_platform_version: 3,
     owner_display_name: null,
   });
@@ -185,7 +182,6 @@ void test("Agent Skill selection groups My Skills and System Skills separately",
     viewer_relation: "community_available",
     skill_install_id: null,
     skill_definition_id: 601,
-    skill_version_id: 801,
     owner_display_name: "Community Author",
   });
 
@@ -196,52 +192,13 @@ void test("Agent Skill selection groups My Skills and System Skills separately",
   ]);
 
   assert.deepEqual(groups.mySkills.map(getSkillSelectionKey), ["install:201"]);
-  assert.deepEqual(groups.systemSkills.map(getSkillSelectionKey), [
-    "system-version:701",
-  ]);
   assert.notEqual(
     getSkillSelectionKey(installed),
     getSkillSelectionKey(system),
   );
 });
 
-void test("System Skill selections submit system IDs instead of install IDs or names", () => {
-  const directVersion = skill({
-    category: "public",
-    space: "system",
-    source_kind: "official",
-    viewer_relation: "system_available",
-    skill_install_id: null,
-    skill_definition_id: 501,
-    skill_version_id: 701,
-  });
-  const definitionFallback = skill({
-    category: "public",
-    space: "system",
-    source_kind: "official",
-    viewer_relation: "system_available",
-    skill_install_id: null,
-    skill_definition_id: 502,
-    skill_version_id: null,
-  });
-  const selection = [
-    getSkillSelectionKey(directVersion),
-    getSkillSelectionKey(definitionFallback),
-    "install:201",
-  ];
-
-  assert.deepEqual(selection, [
-    "system-version:701",
-    "system-definition:502",
-    "install:201",
-  ]);
-  assert.deepEqual(getSelectionSystemSkillVersionIds(selection), [701]);
-  assert.deepEqual(getSelectionSystemSkillDefinitionIds(selection), [502]);
-  assert.deepEqual(getSelectionInstallIds(selection), [201]);
-  assert.deepEqual(getSelectionSkillNames(selection), []);
-});
-
-void test("System Skill definition fallback remains selectable without install identity", () => {
+void test("System Skill rows are unavailable for custom Agent selection", () => {
   assert.deepEqual(
     getSkillDisplaySummary(
       skill({
@@ -250,30 +207,31 @@ void test("System Skill definition fallback remains selectable without install i
         source_kind: "official",
         viewer_relation: "system_available",
         skill_install_id: null,
+        skill_id: "12345678-1234-5678-1234-567812345679",
+        version_number: 3,
         skill_definition_id: 502,
-        skill_version_id: null,
         current_platform_version: null,
         owner_display_name: null,
       }),
       labels,
     ),
     {
-      key: "system-definition:502",
+      key: "unavailable:12345678-1234-5678-1234-567812345679:v3",
       name: "demo-skill",
       description: "Demo skill",
       versionLabel: "Version unavailable",
       sourceLabel: "Official",
       updateAvailable: false,
-      unavailable: false,
+      unavailable: true,
     },
   );
 });
 
-void test("legacy Agent Skill name fallback remains usable only without install identity", () => {
-  const selection = ["name:legacy-skill", "install:201"];
+void test("Agent Skill selections never submit name-only fallback values", () => {
+  const selection = ["unavailable:legacy-skill", "install:201"];
 
   assert.deepEqual(getSelectionInstallIds(selection), [201]);
-  assert.deepEqual(getSelectionSkillNames(selection), ["legacy-skill"]);
+  assert.deepEqual(getSelectionSkillNames(selection), []);
 });
 
 void test("Agent metadata summaries use platform version and hide internal identity", () => {
@@ -295,18 +253,15 @@ void test("Agent metadata summaries use platform version and hide internal ident
   });
   assert.equal(
     getMetadataSelectionKey(metadata({ skill_install_id: null })),
-    "name:demo-skill",
+    "unavailable:demo-skill",
   );
 });
 
-void test("System Agent metadata preloads direct binding keys and display source", () => {
+void test("System Agent metadata is display-only and unavailable for custom Agent resubmit", () => {
   const summary = getMetadataDisplaySummary(
     metadata({
       skill_install_id: null,
       skill_definition_id: 501,
-      skill_version_id: 701,
-      system_skill_definition_id: 501,
-      system_skill_version_id: 701,
       current_platform_version: 3,
       source: "system",
       source_label: "",
@@ -315,7 +270,7 @@ void test("System Agent metadata preloads direct binding keys and display source
   );
 
   assert.deepEqual(summary, {
-    key: "system-version:701",
+    key: "unavailable:demo-skill",
     name: "demo-skill",
     description: "",
     versionLabel: "v3",
@@ -329,7 +284,6 @@ void test("Agent metadata summaries render unavailable state", () => {
   assert.deepEqual(
     getMetadataDisplaySummary(
       metadata({
-        skill_version_id: null,
         current_platform_version: null,
         update_available: null,
         available: false,

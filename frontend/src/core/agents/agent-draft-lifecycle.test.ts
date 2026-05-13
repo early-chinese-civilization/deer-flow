@@ -9,19 +9,19 @@ const {
   toAgentDraftPatchRequest,
 } = await import(new URL("./agent-draft-lifecycle.ts", import.meta.url).href);
 
-void test("normalizes payloads and removes duplicate skill names while preserving order", () => {
+void test("normalizes payloads and removes duplicate Skill selection keys while preserving order", () => {
   assert.deepEqual(
     normalizeAgentDraftPayload({
       name: "demo-agent",
       description: "desc",
       soul: "soul",
-      skills: ["alpha", "beta", "alpha", " ", "gamma"],
+      skills: ["install:201", "install:202", "install:201", " ", "install:203"],
     }),
     {
       name: "demo-agent",
       description: "desc",
       soul: "soul",
-      skills: ["alpha", "beta", "gamma"],
+      skills: ["install:201", "install:202", "install:203"],
     },
   );
 });
@@ -32,13 +32,13 @@ void test("serializes a full draft snapshot for local persistence/final submit",
       name: "demo-agent",
       description: "desc",
       soul: "soul",
-      skills: ["alpha", "alpha", "beta"],
+      skills: ["install:201", "install:201", "install:202"],
     }),
     {
       name: "demo-agent",
       description: "desc",
       soul: "soul",
-      skills: ["alpha", "beta"],
+      skills: ["install:201", "install:202"],
     },
   );
 });
@@ -86,7 +86,7 @@ void test("tracks which create inputs have been filled", () => {
     name: "demo-agent",
     description: "Helpful summary",
     soul: "You are a focused reviewer.",
-    skills: ["review"],
+    skills: ["install:201"],
   };
 
   assert.equal(isAgentDraftInputComplete("name", emptyForm), false);

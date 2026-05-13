@@ -576,7 +576,8 @@ def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_
     with TestClient(app) as client:
         upload_v1 = upload("SKILL_RUNTIME_OK_V1", "99.0.0")
         assert upload_v1["platform_version"] == 1
-        v1 = store.version_by_id(upload_v1["skill_version_id"])
+        assert "skill_version_id" not in upload_v1
+        v1 = next(version for version in store.versions if str(version.skill_id) == upload_v1["skill_id"] and version.version_number == upload_v1["version_number"])
         definition = store.definition_by_id(v1.skill_definition_id)
         publisher_install = asyncio.run(store.get_install_by_user_and_definition(db, user_id=publisher.id, skill_definition_id=definition.id))
 
@@ -599,7 +600,8 @@ def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_
 
         current_user["value"] = publisher
         upload_v2 = upload("SKILL_RUNTIME_OK_V2", "100.0.0")
-        v2 = store.version_by_id(upload_v2["skill_version_id"])
+        assert "skill_version_id" not in upload_v2
+        v2 = next(version for version in store.versions if str(version.skill_id) == upload_v2["skill_id"] and version.version_number == upload_v2["version_number"])
         publish_v2 = client.post("/api/skills/probe-skill/publish", json={"release_notes": "publish v2"})
         assert publish_v2.status_code == 200, publish_v2.text
         release_v2 = store.releases[-1]
@@ -676,8 +678,10 @@ def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_
             json={"skill_install_id": installer_install.id, "skill_id": str(v2.skill_id), "version_number": v2.version_number},
         )
         assert update.status_code == 200, update.text
-        assert update.json()["current_skill_version_id"] == v2.id
-        assert update.json()["target_skill_version_id"] == v2.id
+        assert "current_skill_version_id" not in update.json()
+        assert "target_skill_version_id" not in update.json()
+        assert update.json()["skill_id"] == str(v2.skill_id)
+        assert update.json()["version_number"] == v2.version_number
         assert update.json()["update_available"] is False
         assert installer_install.current_version_id == v2.id
         assert installer_install.version_number == v2.version_number

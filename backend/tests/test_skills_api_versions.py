@@ -677,8 +677,11 @@ def test_manual_update_install_switches_current_platform_version(monkeypatch):
     assert db.commits == 1
     assert install.current_version_id == v2.id
     assert install.version_number == 2
+    assert response.skill_id == str(v2.skill_id)
+    assert response.version_number == v2.version_number
     assert response.current_platform_version == 2
     assert response.target_platform_version == 2
+    assert not hasattr(response, "target_skill_version_id")
     assert response.update_available is False
     assert touched_user_skill is False
     assert touched_agent_bindings is False
@@ -883,6 +886,8 @@ def test_update_preview_is_read_only_and_lists_affected_agents(monkeypatch):
     assert db.commits == 0
     assert install.current_version_id == v1.id
     assert response.status == "available"
+    assert response.skill_id == str(v2.skill_id)
+    assert response.version_number == v2.version_number
     assert response.current_platform_version == 1
     assert response.target_platform_version == 2
     assert response.release_notes == "Initial release"

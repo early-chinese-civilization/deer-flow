@@ -545,38 +545,14 @@ export const enUS: Translations = {
       mySkill: "My Skill",
       systemDirectUse: "Directly usable",
       publishedByYou: "Published by you",
-      forkedSkill: "My Skill",
       officialSource: "System",
       communitySpaceSource: "Community",
       communitySource: (ownerDisplayName: string) => `By ${ownerDisplayName}`,
       installedFromSource: (ownerDisplayName: string) =>
         `From ${ownerDisplayName}`,
-      forkedSource: (ownerDisplayName: string) =>
-        `Based on ${ownerDisplayName}`,
-      forkedSourceDetail: (
-        sourceName: string,
-        ownerDisplayName: string,
-        sourcePlatformVersion: number | null,
-      ) =>
-        `Based on ${sourceName} by ${ownerDisplayName}${
-          sourcePlatformVersion != null
-            ? ` · Source version ${sourcePlatformVersion}`
-            : ""
-        }`,
       installedSource: "Installed",
       createdSource: "Created by me",
       addToPersonalSpace: "Install",
-      createMyVersion: "Download",
-      forkDialogTitle: "Download editable copy",
-      forkDialogDescription:
-        "Download a ZIP with source attribution. Edit it locally, then upload it here to create your version. The original Skill will not change.",
-      forkUploadBackNotice:
-        "After editing the files locally, use Upload Skill to add the ZIP as your version.",
-      confirmForkDownload: "Download editable copy",
-      forkDownloadPending: "Downloading...",
-      forkDownloadSuccess:
-        "Editable copy downloaded. Edit it locally, then upload the ZIP to create your version.",
-      forkDownloadError: "Failed to download editable Skill copy.",
       viewInPersonalSpace: "View in My Skills",
       publishUpdate: "Publish update",
       publishDialogTitle: "Publish skill",

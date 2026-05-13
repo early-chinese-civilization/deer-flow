@@ -4,6 +4,8 @@ import test from "node:test";
 const { GET } = await import(new URL("./route.ts", import.meta.url).href);
 
 type MockSkill = {
+  skill_id?: string | null;
+  version_number?: number | null;
   name: string;
   description?: string | null;
   release_notes?: string | null;
@@ -83,9 +85,16 @@ void test("mock Skills payload covers System, Community, and Personal states", a
   );
 });
 
-void test("mock Skills payload covers version, publisher, downloader, and fork rows", async () => {
+void test("mock Skills payload covers terminal identity, publisher, installer, and update rows", async () => {
   const skills = await getMockSkills();
 
+  assert.ok(
+    skills.every(
+      (skill) =>
+        typeof skill.skill_id === "string" &&
+        typeof skill.version_number === "number",
+    ),
+  );
   assert.ok(
     skills.some(
       (skill) =>
@@ -100,7 +109,7 @@ void test("mock Skills payload covers version, publisher, downloader, and fork r
         skill.space === "personal" &&
         skill.viewer_relation === "downloaded" &&
         skill.owner_display_name === "Mina Park" &&
-        skill.skill_definition_id === 102,
+        skill.skill_id === "00000000-0000-0000-0000-000000000102",
     ),
   );
   assert.ok(
@@ -113,13 +122,9 @@ void test("mock Skills payload covers version, publisher, downloader, and fork r
         skill.update_available === true,
     ),
   );
-  assert.ok(
-    skills.some(
-      (skill) =>
-        skill.space === "personal" &&
-        skill.source_kind === "fork" &&
-        skill.viewer_relation === "forked",
-    ),
+  assert.equal(
+    skills.some((skill) => skill.source_kind === "fork"),
+    false,
   );
 });
 

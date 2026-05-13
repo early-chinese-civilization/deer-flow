@@ -18,7 +18,7 @@ export function getSkillInstallUpdateDialogState(
 ): SkillInstallUpdateDialogState {
   const canConfirm =
     preview?.status === "available" &&
-    preview.target_skill_version_id != null &&
+    preview.target_platform_version != null &&
     preview.update_available;
 
   return {

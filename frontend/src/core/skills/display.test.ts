@@ -4,7 +4,6 @@ import test from "node:test";
 import type { Skill } from "./type";
 
 const {
-  canCreateMyVersionFromSkillHubItem,
   findInstalledSkillForSkillHubItem,
   formatPlatformVersion,
   getAgentSkillBindingPlatformVersion,
@@ -21,6 +20,10 @@ const {
   skillMatchesCommunitySearch,
   skillMatchesWorkspaceSegment,
 } = await import(new URL("./display.ts", import.meta.url).href);
+
+function skillId(value: number): string {
+  return `00000000-0000-0000-0000-${String(value).padStart(12, "0")}`;
+}
 
 function skill(overrides: Partial<Skill>): Skill {
   return {
@@ -64,11 +67,15 @@ void test("derives SkillHub installed state from matching My Skills row", () => 
     space: "community",
     source_kind: "community",
     viewer_relation: "community_available",
+    skill_id: skillId(10),
+    version_number: 2,
     skill_definition_id: 10,
     platform_version: 2,
   });
   const installedSkill = skill({
     category: "custom",
+    skill_id: skillId(10),
+    version_number: 1,
     skill_definition_id: 10,
     skill_install_id: 20,
     platform_version: 1,
@@ -95,13 +102,15 @@ void test("classifies explicit Skills viewer relation matrix", () => {
         space: "system",
         source_kind: "official",
         viewer_relation: "system_available",
+        skill_id: skillId(10),
+        version_number: 1,
         skill_definition_id: 10,
       }),
       expected: {
         space: "system",
         sourceKind: "official",
         viewerRelation: "system_available",
-        identityKey: "definition:10",
+        identityKey: `skill:${skillId(10)}:v1`,
       },
     },
     {
@@ -110,13 +119,15 @@ void test("classifies explicit Skills viewer relation matrix", () => {
         space: "community",
         source_kind: "community",
         viewer_relation: "community_available",
+        skill_id: skillId(11),
+        version_number: 1,
         skill_definition_id: 11,
       }),
       expected: {
         space: "community",
         sourceKind: "community",
         viewerRelation: "community_available",
-        identityKey: "definition:11",
+        identityKey: `skill:${skillId(11)}:v1`,
       },
     },
     {
@@ -125,13 +136,15 @@ void test("classifies explicit Skills viewer relation matrix", () => {
         space: "community",
         source_kind: "community",
         viewer_relation: "authored_published",
+        skill_id: skillId(12),
+        version_number: 1,
         skill_definition_id: 12,
       }),
       expected: {
         space: "community",
         sourceKind: "community",
         viewerRelation: "authored_published",
-        identityKey: "definition:12",
+        identityKey: `skill:${skillId(12)}:v1`,
       },
     },
     {
@@ -275,6 +288,8 @@ void test("normalizes official Community compatibility rows into System surface"
     space: "community",
     source_kind: "official",
     viewer_relation: "official_available",
+    skill_id: skillId(40),
+    version_number: 1,
     skill_definition_id: 40,
     platform_version: 1,
   });
@@ -283,17 +298,13 @@ void test("normalizes official Community compatibility rows into System surface"
     space: "system",
     sourceKind: "official",
     viewerRelation: "official_available",
-    identityKey: "definition:40",
+    identityKey: `skill:${skillId(40)}:v1`,
   });
   assert.deepEqual(getSkillWorkspaceCardState(officialCompatibilityRow), {
     role: "system",
     primaryAction: "none",
     segments: ["all"],
   });
-  assert.equal(
-    canCreateMyVersionFromSkillHubItem(officialCompatibilityRow),
-    false,
-  );
 });
 
 void test("uses explicit API update state when provided", () => {
@@ -313,29 +324,37 @@ void test("uses explicit API update state when provided", () => {
 void test("preserves same-name different-source identity", () => {
   const publicA = skill({
     name: "same-skill",
+    skill_id: skillId(100),
+    version_number: 1,
     skill_definition_id: 100,
     owner_user_id: 8,
   });
   const publicB = skill({
     name: "same-skill",
+    skill_id: skillId(101),
+    version_number: 1,
     skill_definition_id: 101,
     owner_user_id: 9,
   });
   const installedA = skill({
     category: "custom",
     name: "same-skill",
+    skill_id: skillId(100),
+    version_number: 1,
     skill_definition_id: 100,
     skill_install_id: 200,
   });
   const installedB = skill({
     category: "custom",
     name: "same-skill",
+    skill_id: skillId(101),
+    version_number: 1,
     skill_definition_id: 101,
     skill_install_id: 201,
   });
 
-  assert.equal(getSkillIdentityKey(publicA), "definition:100");
-  assert.equal(getSkillIdentityKey(publicB), "definition:101");
+  assert.equal(getSkillIdentityKey(publicA), `skill:${skillId(100)}:v1`);
+  assert.equal(getSkillIdentityKey(publicB), `skill:${skillId(101)}:v1`);
   assert.equal(getSkillIdentityKey(installedA), "install:200");
   assert.equal(getSkillIdentityKey(installedB), "install:201");
   assert.equal(
@@ -351,7 +370,7 @@ void test("preserves same-name different-source identity", () => {
     findInstalledSkillForSkillHubItem(
       skill({
         name: "same-skill",
-        skill_definition_id: null,
+        skill_id: null,
       }),
       [installedA, installedB],
     ),
@@ -359,11 +378,13 @@ void test("preserves same-name different-source identity", () => {
   );
 });
 
-void test("uses definition identity for installed Community Space rows", () => {
+void test("uses terminal Skill identity for Community rows", () => {
   const communityRow = skill({
     space: "community",
     source_kind: "community",
     viewer_relation: "update_available",
+    skill_id: skillId(100),
+    version_number: 2,
     skill_definition_id: 100,
     skill_install_id: 200,
   });
@@ -372,15 +393,17 @@ void test("uses definition identity for installed Community Space rows", () => {
     space: "personal",
     source_kind: "community",
     viewer_relation: "update_available",
+    skill_id: skillId(100),
+    version_number: 1,
     skill_definition_id: 100,
     skill_install_id: 200,
   });
 
-  assert.equal(getSkillIdentityKey(communityRow), "definition:100");
+  assert.equal(getSkillIdentityKey(communityRow), `skill:${skillId(100)}:v2`);
   assert.equal(getSkillIdentityKey(personalRow), "install:200");
   assert.equal(
     getSkillDisplayContract(communityRow).identityKey,
-    "definition:100",
+    `skill:${skillId(100)}:v2`,
   );
   assert.equal(isSelfAuthoredCommunitySkill(communityRow), false);
 });
@@ -458,7 +481,6 @@ void test("treats publisher's own Community listing as discovery-only", () => {
     getSkillWorkspaceCardState(ownPublishedListing).primaryAction,
     "none",
   );
-  assert.equal(canCreateMyVersionFromSkillHubItem(ownPublishedListing), false);
 });
 
 void test("separates System Skills from Community install rows", () => {
@@ -467,6 +489,8 @@ void test("separates System Skills from Community install rows", () => {
     source_kind: "official",
     viewer_relation: "system_available",
     owner_display_name: "official",
+    skill_id: skillId(801),
+    version_number: 2,
     skill_definition_id: 801,
     platform_version: 2,
   });
@@ -475,6 +499,8 @@ void test("separates System Skills from Community install rows", () => {
     source_kind: "community",
     viewer_relation: "community_available",
     owner_display_name: "Demo Publisher",
+    skill_id: skillId(802),
+    version_number: 3,
     skill_definition_id: 802,
     platform_version: 3,
   });
@@ -491,16 +517,17 @@ void test("separates System Skills from Community install rows", () => {
   });
   assert.equal(isSystemSkill(systemSkill), true);
   assert.equal(skillMatchesCommunitySearch(systemSkill, "official"), false);
-  assert.equal(canCreateMyVersionFromSkillHubItem(systemSkill), false);
   assert.equal(getSkillHubLatestPlatformVersion(userCommunity), 3);
 });
 
-void test("Create my version stays available for installed Community rows", () => {
+void test("installed Community rows are matched by terminal Skill identity", () => {
   const community = skill({
     category: "public",
     space: "community",
     source_kind: "community",
     viewer_relation: "community_available",
+    skill_id: skillId(10),
+    version_number: 1,
     skill_definition_id: 10,
   });
   const installed = skill({
@@ -508,11 +535,12 @@ void test("Create my version stays available for installed Community rows", () =
     space: "personal",
     source_kind: "community",
     viewer_relation: "downloaded",
+    skill_id: skillId(10),
+    version_number: 1,
     skill_definition_id: 10,
     skill_install_id: 20,
   });
 
-  assert.equal(canCreateMyVersionFromSkillHubItem(community), true);
   assert.equal(getSkillInstallState(community, installed), "installed");
 });
 
@@ -561,7 +589,7 @@ void test("renders legacy downloaded relation as installed Community state", () 
   assert.equal(skillMatchesWorkspaceSegment(updateAvailable, "updates"), true);
 });
 
-void test("separates forked Personal Space rows from installed rows", () => {
+void test("treats legacy fork relation as authored Personal row", () => {
   const forked = skill({
     category: "custom",
     space: "personal",
@@ -574,7 +602,7 @@ void test("separates forked Personal Space rows from installed rows", () => {
   });
 
   assert.deepEqual(getSkillWorkspaceCardState(forked), {
-    role: "forked",
+    role: "authored",
     primaryAction: "publish",
     segments: ["all", "authored"],
   });
@@ -589,6 +617,8 @@ void test("keeps same-name Community cards distinguishable without user-facing I
     source_kind: "community",
     viewer_relation: "community_available",
     owner_display_name: "Alice",
+    skill_id: skillId(1000),
+    version_number: 1,
     skill_definition_id: 1000,
   });
   const bob = skill({
@@ -597,14 +627,16 @@ void test("keeps same-name Community cards distinguishable without user-facing I
     source_kind: "community",
     viewer_relation: "community_available",
     owner_display_name: "Bob",
+    skill_id: skillId(1001),
+    version_number: 1,
     skill_definition_id: 1001,
   });
 
   assert.notEqual(getSkillIdentityKey(alice), getSkillIdentityKey(bob));
   assert.equal(alice.owner_display_name, "Alice");
   assert.equal(bob.owner_display_name, "Bob");
-  assert.equal(getSkillIdentityKey(alice).startsWith("definition:"), true);
-  assert.equal(getSkillIdentityKey(bob).startsWith("definition:"), true);
+  assert.equal(getSkillIdentityKey(alice).startsWith("skill:"), true);
+  assert.equal(getSkillIdentityKey(bob).startsWith("skill:"), true);
 });
 
 void test("filters Community Space by first-class Skill name and author fields", () => {
@@ -614,6 +646,8 @@ void test("filters Community Space by first-class Skill name and author fields",
     source_kind: "official",
     viewer_relation: "system_available",
     owner_display_name: "official",
+    skill_id: skillId(1100),
+    version_number: 1,
     skill_definition_id: 1100,
   });
   const community = skill({
@@ -622,6 +656,8 @@ void test("filters Community Space by first-class Skill name and author fields",
     source_kind: "community",
     viewer_relation: "community_available",
     owner_display_name: "Avery Chen",
+    skill_id: skillId(1101),
+    version_number: 1,
     skill_definition_id: 1101,
   });
   const downloaded = skill({
@@ -630,6 +666,8 @@ void test("filters Community Space by first-class Skill name and author fields",
     source_kind: "community",
     viewer_relation: "downloaded",
     owner_display_name: "Mina Park",
+    skill_id: skillId(1102),
+    version_number: 1,
     skill_definition_id: 1102,
     skill_install_id: 2102,
   });
@@ -639,6 +677,8 @@ void test("filters Community Space by first-class Skill name and author fields",
     source_kind: "community",
     viewer_relation: "update_available",
     owner_display_name: "Update Publisher",
+    skill_id: skillId(1103),
+    version_number: 2,
     skill_definition_id: 1103,
     skill_install_id: 2103,
     current_platform_version: 1,
@@ -651,6 +691,8 @@ void test("filters Community Space by first-class Skill name and author fields",
     source_kind: "community",
     viewer_relation: "community_available",
     owner_display_name: "Alice",
+    skill_id: skillId(1104),
+    version_number: 1,
     skill_definition_id: 1104,
   });
   const sameNameBob = skill({
@@ -659,6 +701,8 @@ void test("filters Community Space by first-class Skill name and author fields",
     source_kind: "community",
     viewer_relation: "community_available",
     owner_display_name: "Bob",
+    skill_id: skillId(1105),
+    version_number: 1,
     skill_definition_id: 1105,
   });
   const personalDownloaded = skill({
@@ -668,6 +712,8 @@ void test("filters Community Space by first-class Skill name and author fields",
     source_kind: "community",
     viewer_relation: "downloaded",
     owner_display_name: "Avery Chen",
+    skill_id: skillId(1101),
+    version_number: 1,
     skill_definition_id: 1101,
     skill_install_id: 2101,
   });
@@ -723,7 +769,7 @@ void test("filters Community Space by first-class Skill name and author fields",
     })),
     [
       {
-        key: "definition:1100",
+        key: `skill:${skillId(1100)}:v1`,
         state: {
           role: "system",
           primaryAction: "none",
@@ -731,7 +777,7 @@ void test("filters Community Space by first-class Skill name and author fields",
         },
       },
       {
-        key: "definition:1101",
+        key: `skill:${skillId(1101)}:v1`,
         state: {
           role: "community",
           primaryAction: "add-to-personal",
@@ -739,7 +785,7 @@ void test("filters Community Space by first-class Skill name and author fields",
         },
       },
       {
-        key: "definition:1102",
+        key: `skill:${skillId(1102)}:v1`,
         state: {
           role: "community",
           primaryAction: "none",
@@ -747,7 +793,7 @@ void test("filters Community Space by first-class Skill name and author fields",
         },
       },
       {
-        key: "definition:1103",
+        key: `skill:${skillId(1103)}:v2`,
         state: {
           role: "community",
           primaryAction: "none",
@@ -755,7 +801,7 @@ void test("filters Community Space by first-class Skill name and author fields",
         },
       },
       {
-        key: "definition:1104",
+        key: `skill:${skillId(1104)}:v1`,
         state: {
           role: "community",
           primaryAction: "add-to-personal",
@@ -763,7 +809,7 @@ void test("filters Community Space by first-class Skill name and author fields",
         },
       },
       {
-        key: "definition:1105",
+        key: `skill:${skillId(1105)}:v1`,
         state: {
           role: "community",
           primaryAction: "add-to-personal",
