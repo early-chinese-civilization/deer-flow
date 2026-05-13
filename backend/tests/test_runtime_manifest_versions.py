@@ -150,6 +150,9 @@ class _ApiFlowStore:
     async def get_version_by_id(self, db, *, skill_version_id):
         return next((version for version in self.versions if version.id == skill_version_id), None)
 
+    async def get_version_by_skill_version(self, db, *, skill_id, version_number):
+        return next((version for version in self.versions if version.skill_id == skill_id and version.version_number == version_number), None)
+
     async def create_version(
         self,
         db,
@@ -200,16 +203,18 @@ class _ApiFlowStore:
     async def get_install_by_id_for_user(self, db, *, user_id, skill_install_id):
         return next((install for install in self.installs if install.id == skill_install_id and install.user_id == user_id and install.deleted_at is None), None)
 
+    async def get_install_by_user_and_skill_id(self, db, *, user_id, skill_id):
+        return next((install for install in self.installs if install.user_id == user_id and install.skill_id == skill_id and install.deleted_at is None), None)
+
     async def upsert_install(self, db, *, user_id, definition, version):
-        install = await self.get_install_by_user_and_definition(
-            db,
-            user_id=user_id,
-            skill_definition_id=definition.id,
-        )
+        install = await self.get_install_by_user_and_skill_id(db, user_id=user_id, skill_id=version.skill_id)
         if install is None:
             install = SkillInstall(
                 id=self.next_install_id,
                 user_id=user_id,
+                skill_id=version.skill_id,
+                version_number=version.version_number,
+                status="active",
                 skill_definition_id=definition.id,
                 installed_version_id=version.id,
                 current_version_id=version.id,
@@ -220,11 +225,17 @@ class _ApiFlowStore:
             self.next_install_id += 1
             self.installs.append(install)
         else:
+            install.skill_id = version.skill_id
+            install.version_number = version.version_number
+            install.status = "active"
             install.current_version_id = version.id
             install.current_version = version
         return install
 
     async def update_current_version(self, db, *, install, version):
+        assert install.skill_id == version.skill_id
+        install.version_number = version.version_number
+        install.status = "active"
         install.current_version_id = version.id
         install.current_version = version
         return install
@@ -296,13 +307,35 @@ class _ApiFlowStore:
         source_skill_id,
         published_skill_id,
         skill_version_id=None,
+        skill_id=None,
+        version_number=None,
         status="published",
         release_version=None,
         commit=True,
     ):
         version = self.version_by_id(skill_version_id)
+        skill_id = skill_id or version.skill_id
+        version_number = version_number or version.version_number
+        existing = next((release for release in self.releases if release.skill_id == skill_id and release.version_number == version_number), None)
+        if existing is not None:
+            existing.skill_name = skill_name
+            existing.package_version = package_version
+            existing.description = description
+            existing.release_notes = release_notes
+            existing.status = status
+            existing.artifact_path = artifact_path
+            existing.publisher_user_id = publisher_user_id
+            existing.source_skill_id = source_skill_id
+            existing.published_skill_id = published_skill_id
+            existing.skill_version_id = skill_version_id
+            existing.skill_version = version
+            if commit:
+                await db.commit()
+            return existing
         release = SkillRelease(
             id=self.next_release_id,
+            skill_id=skill_id,
+            version_number=version_number,
             skill_name=skill_name,
             release_version=release_version or f"rel-{self.next_release_id}",
             package_version=package_version,
@@ -339,6 +372,12 @@ class _ApiFlowStore:
 
     async def get_published_release_by_version_id(self, db, *, skill_version_id):
         return next((release for release in self.releases if release.skill_version_id == skill_version_id and release.status == "published"), None)
+
+    async def get_published_release_by_skill_version(self, db, *, skill_id, version_number):
+        return next((release for release in self.releases if release.skill_id == skill_id and release.version_number == version_number and release.status == "published"), None)
+
+    async def list_published_releases(self, db):
+        return [release for release in self.releases if release.status == "published"]
 
     async def create_agent(self, db, *, user_id, name, description=None, soul=None, mcp_config=None, commit=True):
         agent = Agent(
@@ -415,8 +454,10 @@ def _install_api_flow_repositories(monkeypatch, store: _ApiFlowStore) -> None:
     monkeypatch.setattr(skills_router.SkillVersionRepository, "get_latest_for_definition", store.get_latest_version)
     monkeypatch.setattr(skills_router.SkillVersionRepository, "create_version", store.create_version)
     monkeypatch.setattr(skills_router.SkillVersionRepository, "get_by_id", store.get_version_by_id)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "get_by_skill_version", store.get_version_by_skill_version)
     monkeypatch.setattr(skills_router.TerminalSkillRepository, "ensure_for_legacy_definition", store.ensure_terminal_skill_for_legacy_definition)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_definition", store.get_install_by_user_and_definition)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_skill_id", store.get_install_by_user_and_skill_id)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_name", store.get_install_by_user_and_name)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "list_by_user_and_name", store.list_install_by_user_and_name)
     monkeypatch.setattr(agents_router.SkillInstallRepository, "list_by_user_and_name", store.list_install_by_user_and_name)
@@ -440,6 +481,8 @@ def _install_api_flow_repositories(monkeypatch, store: _ApiFlowStore) -> None:
     monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_release_for_public_skill", store.get_latest_release_for_public_skill)
     monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_published_release_for_definition", store.get_latest_published_release_for_definition)
     monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_published_release_by_version_id", store.get_published_release_by_version_id)
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_published_release_by_skill_version", store.get_published_release_by_skill_version)
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "list_published_releases", store.list_published_releases)
     monkeypatch.setattr(agents_router.AgentRepository, "create_agent", store.create_agent)
     monkeypatch.setattr(agents_router.AgentRepository, "get_agent_by_name", store.get_agent_by_name)
     monkeypatch.setattr(agents_router.AgentRepository, "get_agent_by_id", store.get_agent_by_id)
@@ -530,13 +573,11 @@ def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_
         publish_v1 = client.post("/api/skills/probe-skill/publish", json={"release_notes": "publish v1"})
         assert publish_v1.status_code == 200, publish_v1.text
         release_v1 = store.releases[-1]
-        public_v1 = store.active_skill_by_id(release_v1.published_skill_id)
 
         current_user["value"] = installer
-        install_v1 = client.post("/api/skills/probe-skill/download", json={"overwrite": False})
+        install_v1 = client.post("/api/skills/install", json={"skill_id": str(v1.skill_id), "version_number": v1.version_number})
         assert install_v1.status_code == 200, install_v1.text
         installer_install = asyncio.run(store.get_install_by_user_and_definition(db, user_id=installer.id, skill_definition_id=definition.id))
-        installer_custom_skill = asyncio.run(store.get_user_skill_by_name(db, user_id=installer.id, name="probe-skill"))
 
         create_agent = client.post(
             "/api/agents",
@@ -552,12 +593,17 @@ def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_
         publish_v2 = client.post("/api/skills/probe-skill/publish", json={"release_notes": "publish v2"})
         assert publish_v2.status_code == 200, publish_v2.text
         release_v2 = store.releases[-1]
-        public_v2 = store.active_skill_by_id(release_v2.published_skill_id)
 
         _write_artifact(skills_root, "22/probe-skill", "SKILL_RUNTIME_OK_V2_LEGACY_CUSTOM")
         _write_artifact(skills_root, "probe-skill", "SKILL_RUNTIME_OK_V2_SAME_NAME_ROOT")
         (skills_root / "artifacts/skills/1/v-missing-skill-md/probe-skill").mkdir(parents=True)
-        agent_skill.skill_id = installer_custom_skill.id
+        legacy_same_name_skill = Skill(
+            id=999,
+            user_id=installer.id,
+            name="probe-skill",
+            file_path="22/probe-skill",
+        )
+        agent_skill.skill_id = legacy_same_name_skill.id
         agent_skill.skill = Skill(
             id=999,
             user_id=installer.id,
@@ -576,16 +622,22 @@ def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_
         assert v2.artifact_uri == f"{_terminal_skill_id(definition.id)}/2"
         assert publisher_install.current_version_id == v2.id
         assert release_v1.skill_version_id == v1.id
+        assert release_v1.skill_id == v1.skill_id
+        assert release_v1.version_number == v1.version_number
         assert release_v1.artifact_path == v1.artifact_uri
+        assert release_v1.published_skill_id is None
         assert release_v2.skill_version_id == v2.id
+        assert release_v2.skill_id == v2.skill_id
+        assert release_v2.version_number == v2.version_number
         assert release_v2.artifact_path == v2.artifact_uri
-        assert public_v1.deleted_at is not None
-        assert public_v2.file_path == "public/7/probe-skill"
+        assert release_v2.published_skill_id is None
         assert installer_install.installed_version_id == v1.id
         assert installer_install.current_version_id == v1.id
+        assert installer_install.skill_id == v1.skill_id
+        assert installer_install.version_number == v1.version_number
         assert install_v1.json()["skill_install_id"] == installer_install.id
         assert agent_skill.skill_install_id == installer_install.id
-        assert agent_skill.skill_id == installer_custom_skill.id
+        assert agent_skill.skill_id == legacy_same_name_skill.id
 
         before_update_manifest, before_update_load, public_denied, legacy_denied, missing_denied = manifest_and_load(v1.id)
         before_entry = before_update_manifest.manifest_json["skills"][0]
@@ -609,12 +661,16 @@ def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_
         assert "Permission denied" in missing_denied
 
         current_user["value"] = installer
-        update = client.post("/api/skills/probe-skill/update-install", json={})
+        update = client.post(
+            "/api/skills/probe-skill/update-install",
+            json={"skill_install_id": installer_install.id, "skill_id": str(v2.skill_id), "version_number": v2.version_number},
+        )
         assert update.status_code == 200, update.text
         assert update.json()["current_skill_version_id"] == v2.id
         assert update.json()["target_skill_version_id"] == v2.id
         assert update.json()["update_available"] is False
         assert installer_install.current_version_id == v2.id
+        assert installer_install.version_number == v2.version_number
 
         after_update_manifest, after_update_load, public_denied, legacy_denied, missing_denied = manifest_and_load(v2.id)
         after_entry = after_update_manifest.manifest_json["skills"][0]

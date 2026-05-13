@@ -958,6 +958,29 @@ class SkillVersionRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_by_skill_version(
+        db: AsyncSession,
+        *,
+        skill_id: str | uuid.UUID,
+        version_number: int,
+    ) -> SkillVersion | None:
+        terminal_skill_id = _as_optional_uuid(skill_id)
+        if terminal_skill_id is None:
+            return None
+        result = await db.execute(
+            select(SkillVersion)
+            .options(
+                selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
+                selectinload(SkillVersion.skill).selectinload(Skill.owner_user),
+            )
+            .where(
+                SkillVersion.skill_id == terminal_skill_id,
+                SkillVersion.version_number == version_number,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def get_by_definition_and_hash(
         db: AsyncSession,
         *,
@@ -1046,6 +1069,32 @@ class SkillInstallRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_by_user_and_skill_id(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        skill_id: str | uuid.UUID,
+    ) -> SkillInstall | None:
+        terminal_skill_id = _as_optional_uuid(skill_id)
+        if terminal_skill_id is None:
+            return None
+        result = await db.execute(
+            select(SkillInstall)
+            .options(
+                selectinload(SkillInstall.definition).selectinload(SkillDefinition.owner_user),
+                selectinload(SkillInstall.installed_version),
+                selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
+                selectinload(SkillInstall.skill).selectinload(Skill.owner_user),
+            )
+            .where(
+                SkillInstall.user_id == user_id,
+                SkillInstall.skill_id == terminal_skill_id,
+                SkillInstall.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def get_by_user_and_name(
         db: AsyncSession,
         *,
@@ -1109,6 +1158,7 @@ class SkillInstallRepository:
                 selectinload(SkillInstall.definition).selectinload(SkillDefinition.owner_user),
                 selectinload(SkillInstall.installed_version),
                 selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
+                selectinload(SkillInstall.skill).selectinload(Skill.owner_user),
             )
             .where(
                 SkillInstall.id == skill_install_id,
@@ -1126,11 +1176,13 @@ class SkillInstallRepository:
         definition: SkillDefinition,
         version: SkillVersion,
     ) -> SkillInstall:
-        install = await SkillInstallRepository.get_by_user_and_definition(
-            db,
-            user_id=user_id,
-            skill_definition_id=definition.id,
-        )
+        install = await SkillInstallRepository.get_by_user_and_skill_id(db, user_id=user_id, skill_id=version.skill_id)
+        if install is None:
+            install = await SkillInstallRepository.get_by_user_and_definition(
+                db,
+                user_id=user_id,
+                skill_definition_id=definition.id,
+            )
         now = datetime.now(UTC)
         if install is None:
             install = SkillInstall(
@@ -1161,7 +1213,8 @@ class SkillInstallRepository:
         version: SkillVersion,
     ) -> SkillInstall:
         """Update only the runtime-selected version for an existing install."""
-        install.skill_id = version.skill_id
+        if install.skill_id != version.skill_id:
+            raise ValueError("Skill install update target must belong to the same terminal Skill")
         install.version_number = version.version_number
         install.status = "active"
         install.current_version_id = version.id
@@ -1218,30 +1271,100 @@ class SkillReleaseRepository:
             raise ValueError("Skill release creation requires skill_id and version_number")
 
         now = datetime.now(UTC)
-        release = SkillRelease(
-            skill_id=terminal_skill_id,
-            version_number=terminal_version_number,
-            skill_name=skill_name,
-            release_version=release_version or SkillReleaseRepository.generate_release_version(),
-            package_version=package_version,
-            description=description,
-            release_notes=release_notes,
-            status=status,
-            artifact_path=artifact_path,
-            publisher_user_id=publisher_user_id,
-            source_skill_id=source_skill_id,
-            published_skill_id=published_skill_id,
-            skill_version_id=skill_version_id,
-            published_at=published_at if published_at is not None else (now if status == "published" else None),
-            updated_at=now,
+        result = await db.execute(
+            select(SkillRelease).where(
+                SkillRelease.skill_id == terminal_skill_id,
+                SkillRelease.version_number == terminal_version_number,
+            )
         )
-        db.add(release)
+        release = result.scalar_one_or_none()
+        release_published_at = published_at if published_at is not None else (now if status == "published" else None)
+        if release is None:
+            release = SkillRelease(
+                skill_id=terminal_skill_id,
+                version_number=terminal_version_number,
+                skill_name=skill_name,
+                release_version=release_version or SkillReleaseRepository.generate_release_version(),
+                package_version=package_version,
+                description=description,
+                release_notes=release_notes,
+                status=status,
+                artifact_path=artifact_path,
+                publisher_user_id=publisher_user_id,
+                source_skill_id=source_skill_id,
+                published_skill_id=published_skill_id,
+                skill_version_id=skill_version_id,
+                published_at=release_published_at,
+                updated_at=now,
+            )
+            db.add(release)
+        else:
+            release.skill_name = skill_name
+            if release_version is not None:
+                release.release_version = release_version
+            release.package_version = package_version
+            release.description = description
+            release.release_notes = release_notes
+            release.status = status
+            release.artifact_path = artifact_path
+            release.publisher_user_id = publisher_user_id
+            release.source_skill_id = source_skill_id
+            release.published_skill_id = published_skill_id
+            release.skill_version_id = skill_version_id
+            if published_at is not None or (status == "published" and release.published_at is None):
+                release.published_at = release_published_at
+            elif status != "published":
+                release.published_at = published_at
+            release.updated_at = now
         await db.flush()
         await db.refresh(release)
         if commit:
             await db.commit()
             await db.refresh(release)
         return release
+
+    @staticmethod
+    async def get_published_release_by_skill_version(
+        db: AsyncSession,
+        *,
+        skill_id: str | uuid.UUID,
+        version_number: int,
+    ) -> SkillRelease | None:
+        """Load the published release for an exact terminal Skill version."""
+        terminal_skill_id = _as_optional_uuid(skill_id)
+        if terminal_skill_id is None:
+            return None
+        result = await db.execute(
+            select(SkillRelease)
+            .options(
+                selectinload(SkillRelease.skill).selectinload(Skill.owner_user),
+                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
+                selectinload(SkillRelease.publisher_user),
+            )
+            .where(
+                SkillRelease.skill_id == terminal_skill_id,
+                SkillRelease.version_number == version_number,
+                SkillRelease.status == "published",
+            )
+            .order_by(SkillRelease.updated_at.desc(), SkillRelease.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def list_published_releases(db: AsyncSession) -> list[SkillRelease]:
+        """List published release visibility rows for community discovery."""
+        result = await db.execute(
+            select(SkillRelease)
+            .options(
+                selectinload(SkillRelease.skill).selectinload(Skill.owner_user),
+                selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
+                selectinload(SkillRelease.publisher_user),
+            )
+            .where(SkillRelease.status == "published")
+            .order_by(SkillRelease.updated_at.desc(), SkillRelease.created_at.desc())
+        )
+        return list(result.scalars().all())
 
     @staticmethod
     async def get_latest_published_version_by_name(
@@ -1252,12 +1375,14 @@ class SkillReleaseRepository:
         """Load the latest published platform version for a SkillHub skill name."""
         result = await db.execute(
             select(SkillVersion)
-            .join(SkillRelease, SkillRelease.skill_version_id == SkillVersion.id)
+            .join(
+                SkillRelease,
+                (SkillRelease.skill_id == SkillVersion.skill_id) & (SkillRelease.version_number == SkillVersion.version_number),
+            )
             .options(selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user))
             .where(
                 SkillRelease.skill_name == skill_name,
                 SkillRelease.status == "published",
-                SkillRelease.skill_version_id.is_not(None),
             )
             .order_by(SkillVersion.version_number.desc(), SkillRelease.created_at.desc())
             .limit(1)
@@ -1273,15 +1398,18 @@ class SkillReleaseRepository:
         """Load the latest published release with version and publisher metadata."""
         result = await db.execute(
             select(SkillRelease)
-            .join(SkillVersion, SkillVersion.id == SkillRelease.skill_version_id)
+            .join(
+                SkillVersion,
+                (SkillRelease.skill_id == SkillVersion.skill_id) & (SkillRelease.version_number == SkillVersion.version_number),
+            )
             .options(
+                selectinload(SkillRelease.skill).selectinload(Skill.owner_user),
                 selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
                 selectinload(SkillRelease.publisher_user),
             )
             .where(
                 SkillRelease.skill_name == skill_name,
                 SkillRelease.status == "published",
-                SkillRelease.skill_version_id.is_not(None),
             )
             .order_by(SkillVersion.version_number.desc(), SkillRelease.created_at.desc())
             .limit(1)
@@ -1297,15 +1425,18 @@ class SkillReleaseRepository:
         """Load the latest published release for a concrete skill definition."""
         result = await db.execute(
             select(SkillRelease)
-            .join(SkillVersion, SkillVersion.id == SkillRelease.skill_version_id)
+            .join(
+                SkillVersion,
+                (SkillRelease.skill_id == SkillVersion.skill_id) & (SkillRelease.version_number == SkillVersion.version_number),
+            )
             .options(
+                selectinload(SkillRelease.skill).selectinload(Skill.owner_user),
                 selectinload(SkillRelease.skill_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
                 selectinload(SkillRelease.publisher_user),
             )
             .where(
                 SkillVersion.skill_definition_id == skill_definition_id,
                 SkillRelease.status == "published",
-                SkillRelease.skill_version_id.is_not(None),
             )
             .order_by(SkillVersion.version_number.desc(), SkillRelease.created_at.desc())
             .limit(1)

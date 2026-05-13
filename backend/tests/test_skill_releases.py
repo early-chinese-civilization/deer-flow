@@ -8,13 +8,14 @@ from app.gateway.db.repository import SkillReleaseRepository, SkillRepository
 
 
 class FakeAsyncSession:
-    def __init__(self, skill_version=None):
+    def __init__(self, skill_version=None, existing_release=None):
         self.added = []
         self.committed = False
         self.executed = []
         self.flushed = False
         self.refreshed = []
         self.skill_version = skill_version
+        self.existing_release = existing_release
 
     def add(self, value):
         self.added.append(value)
@@ -30,7 +31,9 @@ class FakeAsyncSession:
 
     async def execute(self, stmt):
         self.executed.append(stmt)
-        return FakeScalarResult(self.skill_version)
+        if len(self.executed) == 1:
+            return FakeScalarResult(self.skill_version)
+        return FakeScalarResult(self.existing_release)
 
 
 class FakeScalarResult:
@@ -235,6 +238,51 @@ def test_get_latest_release_for_public_skill_returns_none_for_legacy_public_skil
 
         assert result is None
         assert len(session.executed) == 1
+
+    import asyncio
+
+    asyncio.run(run())
+
+
+def test_latest_published_release_by_name_uses_terminal_release_identity():
+    async def run():
+        release = SkillRelease(
+            skill_id=uuid.UUID("55555555-5555-4555-8555-555555555555"),
+            version_number=2,
+            skill_name="demo-skill",
+            release_version="rel_fixed",
+            package_version="v1",
+            description="Demo skill",
+            status="published",
+            artifact_path=".deer-flow/skills/55555555-5555-4555-8555-555555555555/2",
+            publisher_user_id=7,
+            skill_version_id=None,
+        )
+        session = FakeExecuteSession(release)
+
+        result = await SkillReleaseRepository.get_latest_published_release_by_name(session, skill_name="demo-skill")
+
+        sql = str(session.executed[0].compile(compile_kwargs={"literal_binds": True}))
+        assert result is release
+        assert "skill_releases.skill_id = skill_versions.skill_id" in sql
+        assert "skill_releases.version_number = skill_versions.version_number" in sql
+        assert "skill_releases.skill_version_id IS NOT NULL" not in sql
+
+    import asyncio
+
+    asyncio.run(run())
+
+
+def test_latest_published_release_for_definition_uses_terminal_release_identity():
+    async def run():
+        session = FakeExecuteSession(None)
+
+        await SkillReleaseRepository.get_latest_published_release_for_definition(session, skill_definition_id=11)
+
+        sql = str(session.executed[0].compile(compile_kwargs={"literal_binds": True}))
+        assert "skill_releases.skill_id = skill_versions.skill_id" in sql
+        assert "skill_releases.version_number = skill_versions.version_number" in sql
+        assert "skill_releases.skill_version_id IS NOT NULL" not in sql
 
     import asyncio
 
