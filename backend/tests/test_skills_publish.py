@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
@@ -7,6 +8,8 @@ from fastapi import HTTPException
 from app.gateway.db.models import LegacySkill as Skill
 from app.gateway.db.models import SkillDefinition, SkillInstall, SkillRelease, SkillVersion, User
 from app.gateway.routers import skills as skills_router
+
+DEMO_TERMINAL_SKILL_ID = UUID("11111111-1111-4111-8111-111111111111")
 
 
 class FakeDb:
@@ -52,6 +55,7 @@ def _version(tmp_path: Path, *, version_number: int = 1, source_package_version:
     )
     version = SkillVersion(
         id=200 + version_number,
+        skill_id=DEMO_TERMINAL_SKILL_ID,
         skill_definition_id=100,
         version_number=version_number,
         source_package_version=source_package_version,
@@ -64,6 +68,8 @@ def _version(tmp_path: Path, *, version_number: int = 1, source_package_version:
     install = SkillInstall(
         id=300,
         user_id=7,
+        skill_id=version.skill_id,
+        version_number=version.version_number,
         skill_definition_id=100,
         installed_version_id=version.id,
         current_version_id=version.id,
@@ -78,10 +84,10 @@ def test_publish_custom_skill_creates_release_for_current_skill_version(tmp_path
     target_dir = tmp_path / "public" / "demo-skill"
     current_user = _user()
     custom_skill = Skill(id=11, user_id=7, skill_definition_id=definition.id, name="demo-skill", display_name="demo-skill", description="Old description", file_path="7/demo-skill")
-    old_public_skill = Skill(id=10, user_id=None, owner_user_id=7, skill_definition_id=definition.id, name="demo-skill", display_name="demo-skill", description="Old public", file_path="public/7/demo-skill")
-    published_skill = Skill(id=12, user_id=None, owner_user_id=7, skill_definition_id=definition.id, name="demo-skill", display_name="demo-skill", description="Published description", file_path="public/demo-skill")
     release = SkillRelease(
         id=30,
+        skill_id=version.skill_id,
+        version_number=version.version_number,
         skill_name="demo-skill",
         release_version="rel_fixed",
         package_version=version.source_package_version,
@@ -91,7 +97,7 @@ def test_publish_custom_skill_creates_release_for_current_skill_version(tmp_path
         artifact_path=version.artifact_uri,
         publisher_user_id=7,
         source_skill_id=11,
-        published_skill_id=12,
+        published_skill_id=None,
         skill_version_id=version.id,
     )
     db = FakeDb()
@@ -116,18 +122,17 @@ def test_publish_custom_skill_creates_release_for_current_skill_version(tmp_path
         return install
 
     async def list_public_skills_by_name_and_owner(db_arg, *, name, owner_user_id):
-        assert owner_user_id == 7
-        return [old_public_skill]
+        calls["public_listed"] = True
+        return []
 
     async def soft_delete_skill(db_arg, *, skill, commit=True):
         calls["soft_deleted"].append((skill.id, commit))
 
     async def create_skill(db_arg, **kwargs):
         calls["created"].append(kwargs)
-        return published_skill
 
     async def get_skill_by_id(db_arg, skill_id):
-        return published_skill
+        raise AssertionError("publish must not resolve a legacy public latest skill row")
 
     async def create_release(db_arg, **kwargs):
         calls["releases"].append(kwargs)
@@ -151,11 +156,20 @@ def test_publish_custom_skill_creates_release_for_current_skill_version(tmp_path
     response = asyncio.run(run())
 
     assert db.commits == 1
-    assert (target_dir / "SKILL.md").exists()
-    assert calls["soft_deleted"] == [(10, False)]
-    assert calls["releases"][0]["skill_version_id"] == version.id
-    assert calls["releases"][0]["artifact_path"] == version.artifact_uri
-    assert calls["releases"][0]["package_version"] == version.source_package_version
+    assert not target_dir.exists()
+    assert not calls.get("public_listed", False)
+    assert calls["soft_deleted"] == []
+    assert calls["created"] == []
+    assert len(calls["releases"]) == 1
+    release_kwargs = calls["releases"][0]
+    assert release_kwargs["skill_id"] == version.skill_id
+    assert release_kwargs["version_number"] == version.version_number
+    assert release_kwargs["skill_version_id"] == version.id
+    assert release_kwargs["artifact_path"] == version.artifact_uri
+    assert release_kwargs["published_skill_id"] is None
+    assert release_kwargs["package_version"] == version.source_package_version
+    assert response.skill_id == str(version.skill_id)
+    assert response.version_number == version.version_number
     assert response.platform_version == 1
     assert response.skill_version_id == version.id
     assert response.version == "1"

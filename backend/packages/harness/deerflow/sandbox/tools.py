@@ -21,9 +21,9 @@ from deerflow.sandbox.local.list_dir import list_dir as local_list_dir
 from deerflow.sandbox.sandbox import Sandbox
 from deerflow.sandbox.sandbox_provider import get_sandbox_provider
 from deerflow.sandbox.security import LOCAL_HOST_BASH_DISABLED_MESSAGE, is_host_bash_allowed
-from deerflow.sandbox.skill_scope import derive_skill_scope_from_runtime, get_runtime_agent_context, normalize_runtime_artifact_uri
+from deerflow.sandbox.skill_scope import build_runtime_skill_scope_entry, derive_skill_scope_from_runtime, get_runtime_agent_context
 from deerflow.skills.hashing import hash_skill_file_manifest
-from deerflow.skills.path_utils import resolve_skill_storage_dir
+from deerflow.skills.path_utils import resolve_terminal_skill_version_dir
 
 _ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![:\w])(?<!:/)/(?:[^\s\"'`;&|<>()]+)")
 _FILE_URL_PATTERN = re.compile(r"\bfile://\S+", re.IGNORECASE)
@@ -43,7 +43,8 @@ _DIRECT_FS_LOCK_OWNER = SimpleNamespace(id="shared-fs")
 
 @dataclass(frozen=True)
 class RuntimeSkillRoot:
-    file_path: str
+    skill_id: str
+    version_number: int
     file_manifest_hash: str
 
 
@@ -105,7 +106,7 @@ def _resolve_skills_path(path: str) -> str:
     """Resolve a virtual skills path to a host filesystem path.
 
     Args:
-        path: Virtual skills path (e.g. /mnt/skills/public/bootstrap/SKILL.md)
+        path: Virtual skills path (e.g. /mnt/skills/sql-review/SKILL.md)
 
     Returns:
         Resolved host path.
@@ -133,26 +134,15 @@ def _get_runtime_skill_root_map(runtime: "ToolRuntime[ContextT, ThreadState] | N
         return {}
 
     root_map: dict[str, RuntimeSkillRoot] = {}
-    for skill in raw_skills:
+    for index, skill in enumerate(raw_skills):
         if not isinstance(skill, dict):
             continue
-        virtual_path = skill.get("virtual_path")
-        skill_version_id = skill.get("skill_version_id")
-        artifact_uri = skill.get("artifact_uri")
-        file_manifest_hash = skill.get("file_manifest_hash")
-        if skill_version_id is None:
-            continue
-        if not isinstance(virtual_path, str) or not virtual_path.strip():
-            continue
-        if not isinstance(file_manifest_hash, str) or not file_manifest_hash.strip():
-            continue
-        normalized_file_path = normalize_runtime_artifact_uri(artifact_uri)
-        virtual_root = str(PurePosixPath(virtual_path.strip()).parent)
-        if not _is_skills_path(virtual_root):
-            continue
+        entry = build_runtime_skill_scope_entry(skill, index=index, container_base_path=_get_skills_container_path())
+        virtual_root = entry.virtual_root
         root_map[virtual_root] = RuntimeSkillRoot(
-            file_path=normalized_file_path,
-            file_manifest_hash=file_manifest_hash.strip(),
+            skill_id=entry.skill_id,
+            version_number=entry.version_number,
+            file_manifest_hash=entry.file_manifest_hash,
         )
     return root_map
 
@@ -172,7 +162,7 @@ def _get_runtime_skill_actual_to_virtual_map(runtime: "ToolRuntime[ContextT, Thr
     skills_root = Path(skills_host)
     for virtual_root, entry in _get_runtime_skill_root_map(runtime).items():
         try:
-            actual_root = resolve_skill_storage_dir(skills_root, entry.file_path).resolve()
+            actual_root = resolve_terminal_skill_version_dir(skills_root, entry.skill_id, entry.version_number).resolve()
         except Exception:
             continue
         mappings[str(actual_root)] = virtual_root
@@ -231,12 +221,14 @@ def _resolve_runtime_skill_path(
         if path != virtual_root and not path.startswith(f"{virtual_root}/"):
             continue
 
-        resolved_root = resolve_skill_storage_dir(Path(skills_host), entry.file_path).resolve()
+        resolved_root = resolve_terminal_skill_version_dir(Path(skills_host), entry.skill_id, entry.version_number).resolve()
         if not resolved_root.is_dir():
-            raise FileNotFoundError(f"Skill artifact is missing: {path}")
+            raise FileNotFoundError(f"Skill storage is missing: {path}")
+        if not (resolved_root / "SKILL.md").exists():
+            raise FileNotFoundError(f"Skill storage is missing SKILL.md: {path}")
         actual_hash = hash_skill_file_manifest(resolved_root)
         if actual_hash != entry.file_manifest_hash:
-            raise RuntimeError(f"Skill artifact file manifest hash mismatch for {path}")
+            raise RuntimeError(f"Skill storage file manifest hash mismatch for {path}")
         suffix = path[len(virtual_root) :].lstrip("/")
         resolved = resolved_root if not suffix else (resolved_root / Path(PurePosixPath(suffix))).resolve()
         try:

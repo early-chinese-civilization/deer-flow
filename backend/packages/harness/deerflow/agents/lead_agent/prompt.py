@@ -3,6 +3,7 @@ from datetime import datetime
 
 from langgraph.config import get_config
 
+from deerflow.sandbox.skill_scope import build_runtime_skill_scope_entry
 from deerflow.subagents import get_available_subagent_names
 
 logger = logging.getLogger(__name__)
@@ -26,35 +27,23 @@ def _get_runtime_agent_context(runtime_agent_context: dict | None = None) -> dic
 
 
 def build_runtime_skill_descriptors(skills: list[dict] | None, *, container_base_path: str) -> list[dict[str, str]]:
-    """Build prompt-facing skill descriptors from manifest-provided entries."""
-    del container_base_path
+    """Build prompt-facing skill descriptors from terminal runtime entries."""
     if not skills:
         return []
 
     descriptors: list[dict[str, str]] = []
-    for skill in skills:
-        name = skill.get("name")
-        if not isinstance(name, str) or not name.strip():
-            continue
-        normalized_name = name.strip()
-        virtual_path = skill.get("virtual_path")
-        if not isinstance(virtual_path, str) or not virtual_path.strip():
-            continue
-        skill_version_id = skill.get("skill_version_id")
-        if skill_version_id is None:
-            continue
-        file_manifest_hash = skill.get("file_manifest_hash")
-        if not isinstance(file_manifest_hash, str) or not file_manifest_hash.strip():
-            continue
+    for index, skill in enumerate(skills):
+        entry = build_runtime_skill_scope_entry(skill, index=index, container_base_path=container_base_path)
+        raw_name = skill.get("name")
+        normalized_name = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else entry.skill_id
         descriptors.append(
             {
                 "name": normalized_name,
                 "description": str(skill.get("description") or ""),
-                "location": virtual_path,
-                "skill_version_id": str(skill_version_id),
-                "version_number": str(skill.get("version_number") or ""),
-                "content_hash": str(skill.get("content_hash") or ""),
-                "file_manifest_hash": file_manifest_hash.strip(),
+                "location": entry.virtual_path,
+                "skill_id": entry.skill_id,
+                "version_number": str(entry.version_number),
+                "file_manifest_hash": entry.file_manifest_hash,
             }
         )
     return descriptors
@@ -475,7 +464,7 @@ def get_skills_prompt_section(
                 f"        <name>{skill['name']}</name>",
                 f"        <description>{skill['description']}</description>",
                 f"        <location>{skill['location']}</location>",
-                f"        <skill_version_id>{skill['skill_version_id']}</skill_version_id>",
+                f"        <skill_id>{skill['skill_id']}</skill_id>",
                 f"        <version_number>{skill['version_number']}</version_number>",
                 f"        <file_manifest_hash>{skill['file_manifest_hash']}</file_manifest_hash>",
                 "    </skill>",

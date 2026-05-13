@@ -37,6 +37,33 @@ _THREAD_DATA = {
     "uploads_path": "/tmp/deer-flow/threads/t1/user-data/uploads",
     "outputs_path": "/tmp/deer-flow/threads/t1/user-data/outputs",
 }
+_TERMINAL_SKILL_ID = "12345678-1234-5678-1234-567812345678"
+_TERMINAL_SKILL_ID_ALT = "87654321-4321-8765-4321-876543218765"
+
+
+def _terminal_skill_path(skill_id: str = _TERMINAL_SKILL_ID, version_number: int = 1) -> str:
+    return f"{skill_id}/{version_number}"
+
+
+def _terminal_runtime_skill(
+    name: str,
+    *,
+    skill_id: str = _TERMINAL_SKILL_ID,
+    version_number: int = 1,
+    file_manifest_hash: str,
+    virtual_root_name: str | None = None,
+    **extra,
+) -> dict:
+    root_name = virtual_root_name or name
+    return {
+        "name": name,
+        "description": f"{name} skill",
+        "skill_id": skill_id,
+        "version_number": version_number,
+        "virtual_path": f"/mnt/skills/{root_name}/SKILL.md",
+        "file_manifest_hash": file_manifest_hash,
+        **extra,
+    }
 
 
 # ---------- replace_virtual_path ----------
@@ -64,11 +91,11 @@ def test_mask_local_paths_in_output_hides_skills_host_paths() -> None:
         patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"),
         patch("deerflow.sandbox.tools._get_skills_host_path", return_value="/home/user/deer-flow/skills"),
     ):
-        output = "Reading: /home/user/deer-flow/skills/public/bootstrap/SKILL.md"
+        output = f"Reading: /home/user/deer-flow/skills/{_terminal_skill_path()}/SKILL.md"
         masked = mask_local_paths_in_output(output, _THREAD_DATA)
 
         assert "/home/user/deer-flow/skills" not in masked
-        assert "/mnt/skills/public/bootstrap/SKILL.md" in masked
+        assert f"/mnt/skills/{_terminal_skill_path()}/SKILL.md" in masked
 
 
 # ---------- _reject_path_traversal ----------
@@ -92,7 +119,7 @@ def test_reject_path_traversal_blocks_backslash_dotdot() -> None:
 def test_reject_path_traversal_allows_normal_paths() -> None:
     # Should not raise
     _reject_path_traversal("/mnt/user-data/workspace/file.txt")
-    _reject_path_traversal("/mnt/skills/public/bootstrap/SKILL.md")
+    _reject_path_traversal(f"/mnt/skills/{_terminal_skill_path()}/SKILL.md")
     _reject_path_traversal("/mnt/user-data/workspace/sub/dir/file.py")
 
 
@@ -150,8 +177,8 @@ def test_resolve_skills_path_resolves_correctly() -> None:
         patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"),
         patch("deerflow.sandbox.tools._get_skills_host_path", return_value="/home/user/deer-flow/skills"),
     ):
-        resolved = _resolve_skills_path("/mnt/skills/public/bootstrap/SKILL.md")
-        assert resolved == "/home/user/deer-flow/skills/public/bootstrap/SKILL.md"
+        resolved = _resolve_skills_path(f"/mnt/skills/{_terminal_skill_path()}/SKILL.md")
+        assert resolved == f"/home/user/deer-flow/skills/{_terminal_skill_path()}/SKILL.md"
 
 
 def test_resolve_skills_path_resolves_root() -> None:
@@ -171,7 +198,7 @@ def test_resolve_skills_path_raises_when_not_configured() -> None:
         patch("deerflow.sandbox.tools._get_skills_host_path", return_value=None),
     ):
         with pytest.raises(FileNotFoundError, match="Skills directory not available"):
-            _resolve_skills_path("/mnt/skills/public/bootstrap/SKILL.md")
+            _resolve_skills_path(f"/mnt/skills/{_terminal_skill_path()}/SKILL.md")
 
 
 # ---------- _resolve_and_validate_user_data_path ----------
@@ -213,10 +240,10 @@ def test_replace_virtual_paths_in_command_replaces_skills_paths() -> None:
         patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"),
         patch("deerflow.sandbox.tools._get_skills_host_path", return_value="/home/user/deer-flow/skills"),
     ):
-        cmd = "cat /mnt/skills/public/bootstrap/SKILL.md"
+        cmd = f"cat /mnt/skills/{_terminal_skill_path()}/SKILL.md"
         result = replace_virtual_paths_in_command(cmd, _THREAD_DATA)
         assert "/mnt/skills" not in result
-        assert "/home/user/deer-flow/skills/public/bootstrap/SKILL.md" in result
+        assert f"/home/user/deer-flow/skills/{_terminal_skill_path()}/SKILL.md" in result
 
 
 def test_replace_virtual_paths_in_command_replaces_both() -> None:
@@ -225,11 +252,11 @@ def test_replace_virtual_paths_in_command_replaces_both() -> None:
         patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"),
         patch("deerflow.sandbox.tools._get_skills_host_path", return_value="/home/user/skills"),
     ):
-        cmd = "cat /mnt/skills/public/SKILL.md > /mnt/user-data/workspace/out.txt"
+        cmd = f"cat /mnt/skills/{_terminal_skill_path()}/SKILL.md > /mnt/user-data/workspace/out.txt"
         result = replace_virtual_paths_in_command(cmd, _THREAD_DATA)
         assert "/mnt/skills" not in result
         assert "/mnt/user-data" not in result
-        assert "/home/user/skills/public/SKILL.md" in result
+        assert f"/home/user/skills/{_terminal_skill_path()}/SKILL.md" in result
         assert "/tmp/deer-flow/threads/t1/user-data/workspace/out.txt" in result
 
 
@@ -323,7 +350,7 @@ def test_bash_tool_remote_reuses_initialized_sandbox(monkeypatch) -> None:
 def test_is_skills_path_recognises_default_prefix() -> None:
     with patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"):
         assert _is_skills_path("/mnt/skills") is True
-        assert _is_skills_path("/mnt/skills/public/bootstrap/SKILL.md") is True
+        assert _is_skills_path(f"/mnt/skills/{_terminal_skill_path()}/SKILL.md") is True
         assert _is_skills_path("/mnt/skills-extra/foo") is False
         assert _is_skills_path("/mnt/user-data/workspace") is False
 
@@ -333,7 +360,7 @@ def test_validate_local_tool_path_allows_skills_read_only() -> None:
     with patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"):
         # Should not raise
         validate_local_tool_path(
-            "/mnt/skills/public/bootstrap/SKILL.md",
+            f"/mnt/skills/{_terminal_skill_path()}/SKILL.md",
             _THREAD_DATA,
             read_only=True,
         )
@@ -344,7 +371,7 @@ def test_validate_local_tool_path_blocks_skills_write() -> None:
     with patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"):
         with pytest.raises(PermissionError, match="Write access to skills path is not allowed"):
             validate_local_tool_path(
-                "/mnt/skills/public/bootstrap/SKILL.md",
+                f"/mnt/skills/{_terminal_skill_path()}/SKILL.md",
                 _THREAD_DATA,
                 read_only=False,
             )
@@ -354,14 +381,14 @@ def test_validate_local_bash_command_paths_allows_skills_path() -> None:
     """bash commands referencing /mnt/skills should be allowed."""
     with patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"):
         validate_local_bash_command_paths(
-            "cat /mnt/skills/public/bootstrap/SKILL.md",
+            f"cat /mnt/skills/{_terminal_skill_path()}/SKILL.md",
             _THREAD_DATA,
         )
 
 
-def test_local_bash_skills_paths_use_runtime_manifest_allowlist(tmp_path) -> None:
+def test_local_bash_skills_paths_use_terminal_runtime_allowlist(tmp_path) -> None:
     skills_root = tmp_path / "skills"
-    artifact_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "probe-skill"
+    artifact_dir = skills_root / _terminal_skill_path()
     public_dir = skills_root / "public" / "probe-skill"
     artifact_dir.mkdir(parents=True)
     public_dir.mkdir(parents=True)
@@ -373,14 +400,13 @@ def test_local_bash_skills_paths_use_runtime_manifest_allowlist(tmp_path) -> Non
         context={
             "runtime_agent": {
                 "skills": [
-                    {
-                        "name": "probe-skill",
-                        "artifact_uri": "artifacts/skills/1/v1/probe-skill",
-                        "file_path": "artifacts/skills/1/v1/probe-skill",
-                        "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
-                        "skill_version_id": 101,
-                        "file_manifest_hash": file_manifest_hash,
-                    }
+                    _terminal_runtime_skill(
+                        "probe-skill",
+                        file_manifest_hash=file_manifest_hash,
+                        artifact_uri="public/probe-skill",
+                        file_path="custom/probe-skill",
+                        skill_version_id=101,
+                    )
                 ]
             }
         },
@@ -412,9 +438,9 @@ def test_local_bash_skills_paths_use_runtime_manifest_allowlist(tmp_path) -> Non
     assert "public" not in resolved
 
 
-def test_skill_load_uses_runtime_virtual_mapping_for_manifest_artifact(tmp_path: Path) -> None:
+def test_skill_load_uses_runtime_virtual_mapping_for_terminal_descriptor(tmp_path: Path) -> None:
     skills_root = tmp_path / "skills"
-    skill_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "sql-review"
+    skill_dir = skills_root / _terminal_skill_path()
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text("review sql", encoding="utf-8")
     file_manifest_hash = hash_skill_file_manifest(skill_dir)
@@ -424,14 +450,7 @@ def test_skill_load_uses_runtime_virtual_mapping_for_manifest_artifact(tmp_path:
         context={
             "runtime_agent": {
                 "skills": [
-                    {
-                        "name": "sql-review",
-                        "artifact_uri": "artifacts/skills/1/v1/sql-review",
-                        "file_path": "artifacts/skills/1/v1/sql-review",
-                        "virtual_path": "/mnt/skills/sql-review/SKILL.md",
-                        "skill_version_id": 1,
-                        "file_manifest_hash": file_manifest_hash,
-                    }
+                    _terminal_runtime_skill("sql-review", file_manifest_hash=file_manifest_hash)
                 ]
             }
         },
@@ -453,7 +472,7 @@ def test_skill_load_uses_runtime_virtual_mapping_for_manifest_artifact(tmp_path:
 
 def test_skill_load_rejects_paths_not_in_runtime_allowlist(tmp_path: Path) -> None:
     skills_root = tmp_path / "skills"
-    skill_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "sql-review"
+    skill_dir = skills_root / _terminal_skill_path()
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text("review sql", encoding="utf-8")
     file_manifest_hash = hash_skill_file_manifest(skill_dir)
@@ -463,14 +482,7 @@ def test_skill_load_rejects_paths_not_in_runtime_allowlist(tmp_path: Path) -> No
         context={
             "runtime_agent": {
                 "skills": [
-                    {
-                        "name": "sql-review",
-                        "artifact_uri": "artifacts/skills/1/v1/sql-review",
-                        "file_path": "artifacts/skills/1/v1/sql-review",
-                        "virtual_path": "/mnt/skills/sql-review/SKILL.md",
-                        "skill_version_id": 1,
-                        "file_manifest_hash": file_manifest_hash,
-                    }
+                    _terminal_runtime_skill("sql-review", file_manifest_hash=file_manifest_hash)
                 ]
             }
         },
@@ -490,25 +502,26 @@ def test_skill_load_rejects_paths_not_in_runtime_allowlist(tmp_path: Path) -> No
     assert "Permission denied" in result
 
 
-def test_skill_load_rejects_manifest_artifact_traversal_to_public_latest(tmp_path: Path) -> None:
+def test_skill_load_rejects_legacy_public_virtual_root(tmp_path: Path) -> None:
     skills_root = tmp_path / "skills"
     public_dir = skills_root / "public" / "sql-review"
     public_dir.mkdir(parents=True)
     (public_dir / "SKILL.md").write_text("public latest", encoding="utf-8")
+    skill_dir = skills_root / _terminal_skill_path()
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("terminal authorized", encoding="utf-8")
+    file_manifest_hash = hash_skill_file_manifest(skill_dir)
 
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
         context={
             "runtime_agent": {
                 "skills": [
-                    {
-                        "name": "sql-review",
-                        "artifact_uri": "artifacts/../public/sql-review",
-                        "file_path": "artifacts/../public/sql-review",
-                        "virtual_path": "/mnt/skills/sql-review/SKILL.md",
-                        "skill_version_id": 1,
-                        "file_manifest_hash": "expected-file-manifest-hash",
-                    }
+                    _terminal_runtime_skill(
+                        "sql-review",
+                        file_manifest_hash=file_manifest_hash,
+                        virtual_root_name="public/sql-review",
+                    )
                 ]
             }
         },
@@ -531,7 +544,7 @@ def test_skill_load_rejects_manifest_artifact_traversal_to_public_latest(tmp_pat
 
 def test_ls_uses_runtime_virtual_mapping_for_skill_directories(tmp_path: Path) -> None:
     skills_root = tmp_path / "skills"
-    skill_dir = skills_root / "artifacts" / "skills" / "2" / "v1" / "table-tools"
+    skill_dir = skills_root / _terminal_skill_path(_TERMINAL_SKILL_ID_ALT, 2)
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text("table skill", encoding="utf-8")
     (skill_dir / "notes.md").write_text("notes", encoding="utf-8")
@@ -542,14 +555,12 @@ def test_ls_uses_runtime_virtual_mapping_for_skill_directories(tmp_path: Path) -
         context={
             "runtime_agent": {
                 "skills": [
-                    {
-                        "name": "table-tools",
-                        "artifact_uri": "artifacts/skills/2/v1/table-tools",
-                        "file_path": "artifacts/skills/2/v1/table-tools",
-                        "virtual_path": "/mnt/skills/table-tools/SKILL.md",
-                        "skill_version_id": 1,
-                        "file_manifest_hash": file_manifest_hash,
-                    }
+                    _terminal_runtime_skill(
+                        "table-tools",
+                        skill_id=_TERMINAL_SKILL_ID_ALT,
+                        version_number=2,
+                        file_manifest_hash=file_manifest_hash,
+                    )
                 ]
             }
         },
@@ -576,22 +587,8 @@ def test_ls_skills_root_lists_runtime_skill_directories() -> None:
         context={
             "runtime_agent": {
                 "skills": [
-                    {
-                        "name": "chart-visualization",
-                        "artifact_uri": "artifacts/skills/1/v1/chart-visualization",
-                        "file_path": "artifacts/skills/1/v1/chart-visualization",
-                        "virtual_path": "/mnt/skills/chart-visualization/SKILL.md",
-                        "skill_version_id": 1,
-                        "file_manifest_hash": "chart-hash",
-                    },
-                    {
-                        "name": "table-tools",
-                        "artifact_uri": "artifacts/skills/2/v1/table-tools",
-                        "file_path": "artifacts/skills/2/v1/table-tools",
-                        "virtual_path": "/mnt/skills/table-tools/SKILL.md",
-                        "skill_version_id": 2,
-                        "file_manifest_hash": "table-hash",
-                    },
+                    _terminal_runtime_skill("chart-visualization", file_manifest_hash="chart-hash"),
+                    _terminal_runtime_skill("table-tools", skill_id=_TERMINAL_SKILL_ID_ALT, version_number=2, file_manifest_hash="table-hash"),
                 ]
             }
         },
@@ -619,9 +616,9 @@ def test_derive_skill_scope_returns_none_when_runtime_skills_are_missing() -> No
     assert derive_skill_scope_from_runtime(runtime) is None
 
 
-def test_derive_skill_scope_materializes_bundle_for_manifest_artifacts(tmp_path) -> None:
+def test_derive_skill_scope_materializes_bundle_for_terminal_descriptor(tmp_path) -> None:
     skills_root = tmp_path / "skills"
-    artifact_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "probe-skill"
+    artifact_dir = skills_root / _terminal_skill_path()
     artifact_dir.mkdir(parents=True)
     (artifact_dir / "SKILL.md").write_text("authorized", encoding="utf-8")
     file_manifest_hash = hash_skill_file_manifest(artifact_dir)
@@ -634,15 +631,7 @@ def test_derive_skill_scope_materializes_bundle_for_manifest_artifacts(tmp_path)
             "runtime_agent": {
                 "user_id": 7,
                 "skills": [
-                    {
-                        "name": "probe-skill",
-                        "artifact_uri": "artifacts/skills/1/v1/probe-skill",
-                        "file_path": "artifacts/skills/1/v1/probe-skill",
-                        "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
-                        "skill_version_id": 101,
-                        "content_hash": "hash-v1",
-                        "file_manifest_hash": file_manifest_hash,
-                    }
+                    _terminal_runtime_skill("probe-skill", file_manifest_hash=file_manifest_hash)
                 ],
             }
         },
@@ -664,8 +653,7 @@ def test_derive_skill_scope_materializes_bundle_for_manifest_artifacts(tmp_path)
 
 def test_derive_skill_scope_materializes_bundle_for_terminal_skill_version_path(tmp_path) -> None:
     skills_root = tmp_path / "skills"
-    artifact_uri = "12345678-1234-5678-1234-567812345678/1"
-    artifact_dir = skills_root / artifact_uri
+    artifact_dir = skills_root / _terminal_skill_path()
     artifact_dir.mkdir(parents=True)
     (artifact_dir / "SKILL.md").write_text("terminal authorized", encoding="utf-8")
     file_manifest_hash = hash_skill_file_manifest(artifact_dir)
@@ -676,15 +664,13 @@ def test_derive_skill_scope_materializes_bundle_for_terminal_skill_version_path(
             "runtime_agent": {
                 "user_id": 7,
                 "skills": [
-                    {
-                        "name": "probe-skill",
-                        "artifact_uri": artifact_uri,
-                        "file_path": artifact_uri,
-                        "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
-                        "skill_version_id": 101,
-                        "content_hash": "hash-v1",
-                        "file_manifest_hash": file_manifest_hash,
-                    }
+                    _terminal_runtime_skill(
+                        "probe-skill",
+                        file_manifest_hash=file_manifest_hash,
+                        artifact_uri="public/probe-skill",
+                        file_path="artifacts/skills/1/v1/probe-skill",
+                        skill_version_id=101,
+                    )
                 ],
             }
         },
@@ -703,7 +689,7 @@ def test_derive_skill_scope_materializes_bundle_for_terminal_skill_version_path(
 
 def test_derive_skill_scope_reuses_system_skill_bundle_for_repeated_direct_bindings(tmp_path) -> None:
     skills_root = tmp_path / "skills"
-    artifact_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "system-skill"
+    artifact_dir = skills_root / _terminal_skill_path()
     artifact_dir.mkdir(parents=True)
     (artifact_dir / "SKILL.md").write_text("system authorized", encoding="utf-8")
     file_manifest_hash = hash_skill_file_manifest(artifact_dir)
@@ -715,19 +701,7 @@ def test_derive_skill_scope_reuses_system_skill_bundle_for_repeated_direct_bindi
                 "runtime_agent": {
                     "user_id": user_id,
                     "skills": [
-                        {
-                            "name": "system-skill",
-                            "artifact_uri": "artifacts/skills/1/v1/system-skill",
-                            "file_path": "artifacts/skills/1/v1/system-skill",
-                            "virtual_path": "/mnt/skills/system-skill/SKILL.md",
-                            "skill_version_id": 101,
-                            "system_skill_definition_id": 1,
-                            "system_skill_version_id": 101,
-                            "source_kind": "system",
-                            "binding_kind": "system",
-                            "content_hash": "hash-v1",
-                            "file_manifest_hash": file_manifest_hash,
-                        }
+                        _terminal_runtime_skill("system-skill", file_manifest_hash=file_manifest_hash)
                     ],
                 }
             },
@@ -748,7 +722,7 @@ def test_derive_skill_scope_reuses_system_skill_bundle_for_repeated_direct_bindi
 
 def test_derive_skill_scope_prunes_stale_runtime_skill_bundles(tmp_path, monkeypatch) -> None:
     skills_root = tmp_path / "skills"
-    artifact_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "probe-skill"
+    artifact_dir = skills_root / _terminal_skill_path()
     artifact_dir.mkdir(parents=True)
     (artifact_dir / "SKILL.md").write_text("authorized", encoding="utf-8")
     file_manifest_hash = hash_skill_file_manifest(artifact_dir)
@@ -767,15 +741,7 @@ def test_derive_skill_scope_prunes_stale_runtime_skill_bundles(tmp_path, monkeyp
             "runtime_agent": {
                 "user_id": 7,
                 "skills": [
-                    {
-                        "name": "probe-skill",
-                        "artifact_uri": "artifacts/skills/1/v1/probe-skill",
-                        "file_path": "artifacts/skills/1/v1/probe-skill",
-                        "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
-                        "skill_version_id": 101,
-                        "content_hash": "hash-v1",
-                        "file_manifest_hash": file_manifest_hash,
-                    }
+                    _terminal_runtime_skill("probe-skill", file_manifest_hash=file_manifest_hash)
                 ],
             }
         },
@@ -794,7 +760,7 @@ def test_derive_skill_scope_prunes_stale_runtime_skill_bundles(tmp_path, monkeyp
     assert (skills_root / current_scope / "probe-skill" / "SKILL.md").exists()
 
 
-def test_derive_skill_scope_rejects_missing_manifest_artifact(tmp_path) -> None:
+def test_derive_skill_scope_rejects_missing_terminal_storage(tmp_path) -> None:
     skills_root = tmp_path / "skills"
     skills_root.mkdir()
     runtime = SimpleNamespace(
@@ -803,15 +769,7 @@ def test_derive_skill_scope_rejects_missing_manifest_artifact(tmp_path) -> None:
             "runtime_agent": {
                 "user_id": 7,
                 "skills": [
-                    {
-                        "name": "probe-skill",
-                        "artifact_uri": "artifacts/skills/1/missing/probe-skill",
-                        "file_path": "artifacts/skills/1/missing/probe-skill",
-                        "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
-                        "skill_version_id": 101,
-                        "content_hash": "hash-v1",
-                        "file_manifest_hash": "expected-file-manifest-hash",
-                    }
+                    _terminal_runtime_skill("probe-skill", file_manifest_hash="expected-file-manifest-hash")
                 ],
             }
         },
@@ -822,13 +780,13 @@ def test_derive_skill_scope_rejects_missing_manifest_artifact(tmp_path) -> None:
         "deerflow.sandbox.skill_scope._get_skills_root_path",
         return_value=skills_root,
     ):
-        with pytest.raises(SandboxRuntimeError, match="artifact is missing"):
+        with pytest.raises(SandboxRuntimeError, match="storage is missing"):
             derive_skill_scope_from_runtime(runtime)
 
 
-def test_derive_skill_scope_rejects_artifact_file_manifest_hash_mismatch(tmp_path) -> None:
+def test_derive_skill_scope_rejects_terminal_file_manifest_hash_mismatch(tmp_path) -> None:
     skills_root = tmp_path / "skills"
-    artifact_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "probe-skill"
+    artifact_dir = skills_root / _terminal_skill_path()
     artifact_dir.mkdir(parents=True)
     (artifact_dir / "SKILL.md").write_text("authorized", encoding="utf-8")
 
@@ -838,15 +796,7 @@ def test_derive_skill_scope_rejects_artifact_file_manifest_hash_mismatch(tmp_pat
             "runtime_agent": {
                 "user_id": 7,
                 "skills": [
-                    {
-                        "name": "probe-skill",
-                        "artifact_uri": "artifacts/skills/1/v1/probe-skill",
-                        "file_path": "artifacts/skills/1/v1/probe-skill",
-                        "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
-                        "skill_version_id": 101,
-                        "content_hash": "hash-v1",
-                        "file_manifest_hash": "wrong-file-manifest-hash",
-                    }
+                    _terminal_runtime_skill("probe-skill", file_manifest_hash="wrong-file-manifest-hash")
                 ],
             }
         },
@@ -861,31 +811,42 @@ def test_derive_skill_scope_rejects_artifact_file_manifest_hash_mismatch(tmp_pat
             derive_skill_scope_from_runtime(runtime)
 
 
-def test_derive_skill_scope_rejects_public_latest_artifact_uri() -> None:
+@pytest.mark.parametrize(
+    "virtual_root_name",
+    [
+        "public/chart-visualization",
+        "custom/chart-visualization",
+        "local/chart-visualization",
+        "7/table-tools",
+        "artifacts/skills/1/v1/probe-skill",
+        "101",
+        "11111111-1111-4111-8111-111111111111",
+        ".runtime-skill-bundles/cache-id/probe-skill",
+    ],
+)
+def test_derive_skill_scope_rejects_legacy_virtual_roots(virtual_root_name: str) -> None:
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
         context={
             "runtime_agent": {
                 "user_id": 9,
                 "skills": [
-                    {
-                        "name": "chart-visualization",
-                        "artifact_uri": "public/chart-visualization",
-                        "file_path": "public/chart-visualization",
-                        "virtual_path": "/mnt/skills/chart-visualization/SKILL.md",
-                        "skill_version_id": 1,
-                    }
+                    _terminal_runtime_skill(
+                        "chart-visualization",
+                        file_manifest_hash="manifest-hash",
+                        virtual_root_name=virtual_root_name,
+                    )
                 ],
             }
         },
         config={},
     )
 
-    with pytest.raises(SandboxRuntimeError, match="immutable version storage scope"):
+    with pytest.raises(SandboxRuntimeError, match="legacy|runtime bundle cache"):
         derive_skill_scope_from_runtime(runtime)
 
 
-def test_derive_skill_scope_rejects_private_latest_artifact_uri() -> None:
+def test_derive_skill_scope_rejects_legacy_descriptor_without_terminal_identity() -> None:
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
         context={
@@ -894,8 +855,8 @@ def test_derive_skill_scope_rejects_private_latest_artifact_uri() -> None:
                 "skills": [
                     {
                         "name": "table-tools",
-                        "artifact_uri": "7/table-tools",
-                        "file_path": "7/table-tools",
+                        "artifact_uri": "artifacts/skills/1/v1/table-tools",
+                        "file_path": "public/table-tools",
                         "virtual_path": "/mnt/skills/table-tools/SKILL.md",
                         "skill_version_id": 1,
                     }
@@ -905,84 +866,34 @@ def test_derive_skill_scope_rejects_private_latest_artifact_uri() -> None:
         config={},
     )
 
-    with pytest.raises(SandboxRuntimeError, match="immutable version storage scope"):
+    with pytest.raises(SandboxRuntimeError, match="missing skill_id"):
         derive_skill_scope_from_runtime(runtime)
 
 
 @pytest.mark.parametrize(
-    "artifact_uri",
+    "missing_field, expected",
     [
-        "artifacts/../public/probe-skill",
-        "artifacts/legacy/skills/legacy-id/probe-skill",
+        ("skill_id", "missing skill_id"),
+        ("version_number", "version_number must be a positive integer"),
+        ("file_manifest_hash", "missing file_manifest_hash"),
+        ("virtual_path", "missing virtual_path"),
     ],
 )
-def test_derive_skill_scope_rejects_non_runtime_artifact_uri(artifact_uri) -> None:
+def test_derive_skill_scope_rejects_missing_terminal_descriptor_fields(missing_field: str, expected: str) -> None:
+    descriptor = _terminal_runtime_skill("probe-skill", file_manifest_hash="manifest-hash")
+    descriptor.pop(missing_field)
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
         context={
             "runtime_agent": {
                 "user_id": 7,
-                "skills": [
-                    {
-                        "name": "probe-skill",
-                        "artifact_uri": artifact_uri,
-                        "file_path": artifact_uri,
-                        "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
-                        "skill_version_id": 1,
-                    },
-                ],
+                "skills": [descriptor],
             }
         },
         config={},
     )
 
-    with pytest.raises(SandboxRuntimeError, match="immutable version storage scope"):
-        derive_skill_scope_from_runtime(runtime)
-
-
-def test_derive_skill_scope_rejects_missing_skill_version_id() -> None:
-    runtime = SimpleNamespace(
-        state={"thread_data": _THREAD_DATA.copy()},
-        context={
-            "runtime_agent": {
-                "user_id": 7,
-                "skills": [
-                    {
-                        "name": "broken",
-                        "artifact_uri": "artifacts/skills/1/v1/broken-skill",
-                        "file_path": "artifacts/skills/1/v1/broken-skill",
-                        "virtual_path": "/mnt/skills/broken/SKILL.md",
-                    }
-                ],
-            }
-        },
-        config={},
-    )
-
-    with pytest.raises(SandboxRuntimeError, match="missing skill_version_id"):
-        derive_skill_scope_from_runtime(runtime)
-
-
-def test_derive_skill_scope_rejects_missing_artifact_uri() -> None:
-    runtime = SimpleNamespace(
-        state={"thread_data": _THREAD_DATA.copy()},
-        context={
-            "runtime_agent": {
-                "user_id": 9,
-                "skills": [
-                    {
-                        "name": "table-tools",
-                        "file_path": "7/table-tools",
-                        "virtual_path": "/mnt/skills/table-tools/SKILL.md",
-                        "skill_version_id": 1,
-                    }
-                ],
-            }
-        },
-        config={},
-    )
-
-    with pytest.raises(SandboxRuntimeError, match="missing artifact_uri"):
+    with pytest.raises(SandboxRuntimeError, match=expected):
         derive_skill_scope_from_runtime(runtime)
 
 
@@ -1048,7 +959,7 @@ def test_validate_local_tool_path_skills_custom_container_path() -> None:
     with patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/custom/skills"):
         # Should not raise
         validate_local_tool_path(
-            "/custom/skills/public/my-skill/SKILL.md",
+            f"/custom/skills/{_terminal_skill_path()}/SKILL.md",
             _THREAD_DATA,
             read_only=True,
         )
@@ -1056,7 +967,7 @@ def test_validate_local_tool_path_skills_custom_container_path() -> None:
         # The default /mnt/skills should not match since container path is /custom/skills
         with pytest.raises(PermissionError, match="Only paths under"):
             validate_local_tool_path(
-                "/mnt/skills/public/bootstrap/SKILL.md",
+                f"/mnt/skills/{_terminal_skill_path()}/SKILL.md",
                 _THREAD_DATA,
                 read_only=True,
             )

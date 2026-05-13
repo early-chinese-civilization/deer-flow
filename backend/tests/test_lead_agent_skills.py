@@ -1,3 +1,5 @@
+from uuid import NAMESPACE_DNS, uuid5
+
 from deerflow.agents.lead_agent.prompt import get_skills_prompt_section
 
 
@@ -5,8 +7,8 @@ def _make_runtime_skill(name: str) -> dict:
     return {
         "name": name,
         "description": f"Description for {name}",
+        "skill_id": str(uuid5(NAMESPACE_DNS, f"deerflow-test:{name}")),
         "virtual_path": f"/mnt/skills/{name}/SKILL.md",
-        "skill_version_id": f"{name}-version",
         "version_number": 1,
         "file_manifest_hash": f"{name}-hash",
     }

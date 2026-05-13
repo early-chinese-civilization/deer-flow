@@ -449,8 +449,8 @@ async def test_runtime_agent_bundle_without_agent_name_loads_default_chat_system
     from deerflow.skills.hashing import hash_skill_file_manifest
 
     skill_id = uuid4()
-    artifact_uri = f"{skill_id}/1"
-    artifact_dir = tmp_path / "skills" / artifact_uri
+    terminal_relative_path = f"{skill_id}/1"
+    artifact_dir = tmp_path / "skills" / terminal_relative_path
     artifact_dir.mkdir(parents=True)
     (artifact_dir / "SKILL.md").write_text("DEFAULT_CHAT_SYSTEM_SKILL", encoding="utf-8")
     file_manifest_hash = hash_skill_file_manifest(artifact_dir)
@@ -473,7 +473,7 @@ async def test_runtime_agent_bundle_without_agent_name_loads_default_chat_system
         description="System skill",
         content_hash="content-hash",
         file_manifest_hash=file_manifest_hash,
-        artifact_uri=artifact_uri,
+        artifact_uri="artifacts/skills/10/v1/system-skill",
     )
 
     class _FakeDb:
@@ -506,10 +506,206 @@ async def test_runtime_agent_bundle_without_agent_name_loads_default_chat_system
     assert bundle.agent_name is None
     assert bundle.manifest_id is None
     assert bundle.skills[0].name == "system-skill"
-    assert bundle.skills[0].source_kind == "system"
-    assert bundle.skills[0].binding_kind == "system"
-    assert bundle.skills[0].skill_install_id is None
-    assert bundle.skills[0].system_skill_version_id == 101
+    assert bundle.skills[0].skill_id == str(skill_id)
+    assert bundle.skills[0].version_number == 1
+    assert bundle.skills[0].file_manifest_hash == file_manifest_hash
+    assert bundle.skills[0].virtual_path == f"/mnt/skills/system-skill--{skill_id}-v1/SKILL.md"
+    assert not hasattr(bundle.skills[0], "artifact_uri")
+    assert not hasattr(bundle.skills[0], "file_path")
+    assert not hasattr(bundle.skills[0], "skill_version_id")
+
+
+@pytest.mark.anyio
+async def test_runtime_agent_payload_serializes_terminal_skill_descriptor(monkeypatch):
+    from app.gateway.db.repository import RuntimeAgentBundle, RuntimeSkillDescriptor
+    from app.gateway.services.runtime import _load_runtime_agent_payload
+
+    skill_id = str(uuid4())
+    descriptor = RuntimeSkillDescriptor(
+        name="probe-skill",
+        description="Probe description",
+        skill_id=skill_id,
+        version_number=2,
+        file_manifest_hash="manifest-hash",
+        virtual_path=f"/mnt/skills/probe-skill--{skill_id}-v2/SKILL.md",
+    )
+    bundle = RuntimeAgentBundle(
+        user_id=9,
+        agent_name="probe-agent",
+        memory_json={"facts": []},
+        soul="Probe soul",
+        skills=[descriptor],
+        manifest_id="manifest-id",
+        manifest_hash="manifest-hash",
+    )
+    db = SimpleNamespace(commit=AsyncMock())
+
+    class _Session:
+        async def __aenter__(self):
+            return db
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    monkeypatch.setattr("app.gateway.services.runtime.get_db_session", lambda: _Session())
+    monkeypatch.setattr("app.gateway.services.runtime.AgentRepository.get_runtime_agent_bundle", AsyncMock(return_value=bundle))
+
+    payload = await _load_runtime_agent_payload(user_id=9, agent_name="probe-agent")
+
+    assert payload["skills"] == [
+        {
+            "name": "probe-skill",
+            "description": "Probe description",
+            "skill_id": skill_id,
+            "version_number": 2,
+            "file_manifest_hash": "manifest-hash",
+            "virtual_path": f"/mnt/skills/probe-skill--{skill_id}-v2/SKILL.md",
+        }
+    ]
+    assert "manifest_id" in payload
+    assert "artifact_uri" not in payload["skills"][0]
+    assert "file_path" not in payload["skills"][0]
+    assert "skill_version_id" not in payload["skills"][0]
+
+
+@pytest.mark.anyio
+async def test_runtime_agent_bundle_uses_install_composite_identity_not_current_version_id(tmp_path, monkeypatch):
+    from app.gateway.db.models import Agent, AgentSkill, Skill, SkillDefinition, SkillInstall, SkillVersion, User
+    from app.gateway.db.repository import AgentRepository
+    from deerflow.skills.hashing import hash_skill_file_manifest
+
+    skill_id = uuid4()
+    terminal_v2_dir = tmp_path / "skills" / str(skill_id) / "2"
+    terminal_v2_dir.mkdir(parents=True)
+    (terminal_v2_dir / "SKILL.md").write_text("TERMINAL_V2", encoding="utf-8")
+    v2_file_manifest_hash = hash_skill_file_manifest(terminal_v2_dir)
+
+    owner = User(id=22, external_auth_id="user-22", username="owner", display_name="Owner")
+    terminal_skill = Skill(id=skill_id, owner_user_id=owner.id, name="probe-skill", owner_user=owner)
+    definition = SkillDefinition(id=10, name="probe-skill", description="Probe")
+    stale_v1 = SkillVersion(
+        id=101,
+        skill_id=skill_id,
+        skill=terminal_skill,
+        skill_definition_id=definition.id,
+        definition=definition,
+        version_number=1,
+        description="Probe v1",
+        content_hash="hash-v1",
+        file_manifest_hash="stale-hash",
+        artifact_uri="artifacts/skills/10/v1/probe-skill",
+    )
+    terminal_v2 = SkillVersion(
+        id=102,
+        skill_id=skill_id,
+        skill=terminal_skill,
+        skill_definition_id=definition.id,
+        definition=definition,
+        version_number=2,
+        description="Probe v2",
+        content_hash="hash-v2",
+        file_manifest_hash=v2_file_manifest_hash,
+        artifact_uri="artifacts/skills/10/v2/probe-skill",
+    )
+    install = SkillInstall(
+        id=201,
+        user_id=22,
+        skill_id=skill_id,
+        skill=terminal_skill,
+        version_number=2,
+        status="active",
+        skill_definition_id=definition.id,
+        installed_version_id=101,
+        current_version_id=101,
+        definition=definition,
+        current_version=stale_v1,
+    )
+    agent = Agent(id=501, user_id=22, name="probe-agent", soul="probe")
+    agent.agent_skills = [AgentSkill(id=601, agent_id=agent.id, skill_install_id=install.id, skill_install=install, display_order=0, enabled=True)]
+
+    monkeypatch.setattr("app.gateway.db.repository.MemoryRepository.get_memory_by_user_id", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.gateway.db.repository.AgentRepository.get_agent_by_name", AsyncMock(return_value=agent))
+    monkeypatch.setattr("app.gateway.db.repository.SkillVersionRepository.get_by_skill_version", AsyncMock(return_value=terminal_v2))
+    monkeypatch.setattr(
+        "deerflow.config.get_app_config",
+        lambda: SimpleNamespace(skills=SimpleNamespace(container_path="/mnt/skills", get_skills_path=lambda: tmp_path / "skills")),
+    )
+
+    class _FakeDb:
+        def __init__(self):
+            self.added = []
+
+        def add(self, value):
+            self.added.append(value)
+
+        async def flush(self):
+            for value in self.added:
+                value.id = uuid4()
+
+        async def refresh(self, value):
+            return None
+
+    bundle = await AgentRepository.get_runtime_agent_bundle(_FakeDb(), user_id=22, agent_name="probe-agent")
+
+    assert bundle.skills[0].skill_id == str(skill_id)
+    assert bundle.skills[0].version_number == 2
+    assert bundle.skills[0].file_manifest_hash == v2_file_manifest_hash
+    assert bundle.skills[0].description == "Probe v2"
+
+
+@pytest.mark.anyio
+async def test_runtime_agent_bundle_rejects_legacy_artifacts_root_when_terminal_root_missing(tmp_path, monkeypatch):
+    from app.gateway.db.models import Agent, AgentSkill, Skill, SkillDefinition, SkillInstall, SkillVersion, User
+    from app.gateway.db.repository import AgentRepository, RuntimeManifestResolutionError
+    from deerflow.skills.hashing import hash_skill_file_manifest
+
+    skill_id = uuid4()
+    legacy_artifact_dir = tmp_path / "skills" / "artifacts" / "skills" / "10" / "v1" / "probe-skill"
+    legacy_artifact_dir.mkdir(parents=True)
+    (legacy_artifact_dir / "SKILL.md").write_text("LEGACY_ONLY", encoding="utf-8")
+    legacy_hash = hash_skill_file_manifest(legacy_artifact_dir)
+
+    owner = User(id=22, external_auth_id="user-22", username="owner", display_name="Owner")
+    terminal_skill = Skill(id=skill_id, owner_user_id=owner.id, name="probe-skill", owner_user=owner)
+    definition = SkillDefinition(id=10, name="probe-skill", description="Probe")
+    version = SkillVersion(
+        id=101,
+        skill_id=skill_id,
+        skill=terminal_skill,
+        skill_definition_id=definition.id,
+        definition=definition,
+        version_number=1,
+        description="Probe v1",
+        content_hash="hash-v1",
+        file_manifest_hash=legacy_hash,
+        artifact_uri="artifacts/skills/10/v1/probe-skill",
+    )
+    install = SkillInstall(
+        id=201,
+        user_id=22,
+        skill_id=skill_id,
+        skill=terminal_skill,
+        version_number=1,
+        status="active",
+        skill_definition_id=definition.id,
+        installed_version_id=101,
+        current_version_id=101,
+        definition=definition,
+        current_version=version,
+    )
+    agent = Agent(id=501, user_id=22, name="probe-agent", soul="probe")
+    agent.agent_skills = [AgentSkill(id=601, agent_id=agent.id, skill_install_id=install.id, skill_install=install, display_order=0, enabled=True)]
+
+    monkeypatch.setattr("app.gateway.db.repository.MemoryRepository.get_memory_by_user_id", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.gateway.db.repository.AgentRepository.get_agent_by_name", AsyncMock(return_value=agent))
+    monkeypatch.setattr("app.gateway.db.repository.SkillVersionRepository.get_by_skill_version", AsyncMock(return_value=version))
+    monkeypatch.setattr(
+        "deerflow.config.get_app_config",
+        lambda: SimpleNamespace(skills=SimpleNamespace(container_path="/mnt/skills", get_skills_path=lambda: tmp_path / "skills")),
+    )
+
+    with pytest.raises(RuntimeManifestResolutionError, match="terminal storage root is missing"):
+        await AgentRepository.get_runtime_agent_bundle(SimpleNamespace(), user_id=22, agent_name="probe-agent")
 
 
 @pytest.mark.anyio

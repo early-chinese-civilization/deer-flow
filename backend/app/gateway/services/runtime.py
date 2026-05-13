@@ -111,20 +111,10 @@ async def _load_runtime_agent_payload(*, user_id: int, agent_name: str | None) -
             {
                 "name": skill.name,
                 "description": skill.description,
-                "file_path": skill.file_path,
-                "virtual_path": skill.virtual_path,
-                "skill_definition_id": skill.skill_definition_id,
-                "skill_version_id": skill.skill_version_id,
-                "skill_install_id": skill.skill_install_id,
-                "system_skill_definition_id": skill.system_skill_definition_id,
-                "system_skill_version_id": skill.system_skill_version_id,
-                "source_kind": skill.source_kind,
-                "binding_kind": skill.binding_kind,
+                "skill_id": skill.skill_id,
                 "version_number": skill.version_number,
-                "content_hash": skill.content_hash,
                 "file_manifest_hash": skill.file_manifest_hash,
-                "artifact_uri": skill.artifact_uri,
-                "source_package_version": skill.source_package_version,
+                "virtual_path": skill.virtual_path,
             }
             for skill in bundle.skills
         ],

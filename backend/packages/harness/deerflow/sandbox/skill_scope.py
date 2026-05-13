@@ -7,14 +7,15 @@ import os
 import shutil
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
+from uuid import UUID
 
 from deerflow.sandbox.exceptions import SandboxRuntimeError
 from deerflow.skills.hashing import hash_skill_file_manifest
-from deerflow.skills.path_utils import is_terminal_skill_version_relative_path, resolve_skill_storage_dir
+from deerflow.skills.path_utils import build_terminal_skill_version_relative_path, resolve_skill_storage_dir, resolve_terminal_skill_version_dir
 
-_ARTIFACTS_SCOPE_ROOT = "artifacts"
 _RUNTIME_BUNDLE_SCOPE_ROOT = ".runtime-skill-bundles"
 _BUNDLE_READY_FILE = ".deerflow-runtime-bundle.json"
 _RUNTIME_BUNDLE_RETENTION_SECONDS = 7 * 24 * 60 * 60
@@ -23,13 +24,17 @@ _RUNTIME_BUNDLE_TMP_RETENTION_SECONDS = 60 * 60
 logger = logging.getLogger(__name__)
 
 
-def _is_immutable_runtime_artifact_uri(normalized_artifact: str) -> bool:
-    parts = [part for part in normalized_artifact.split("/") if part]
-    if any(part in {".", ".."} for part in parts):
-        return False
-    if len(parts) >= 3 and parts[0] == _ARTIFACTS_SCOPE_ROOT and parts[1] == "skills":
-        return True
-    return is_terminal_skill_version_relative_path(normalized_artifact)
+@dataclass(frozen=True)
+class RuntimeSkillScopeEntry:
+    """Terminal runtime Skill descriptor normalized for prompt, mounts, and skill_load."""
+
+    skill_id: str
+    version_number: int
+    file_manifest_hash: str
+    virtual_path: str
+    virtual_root: str
+    relative_virtual_root: str
+    storage_relative_path: str
 
 
 def get_runtime_agent_context(
@@ -79,57 +84,113 @@ def _get_skills_root_path() -> Path:
         raise SandboxRuntimeError("Skills root is not available for runtime skill bundle materialization") from exc
 
 
-def normalize_runtime_artifact_uri(artifact_uri: Any, *, index: int | None = None) -> str:
-    """Normalize and validate a Runtime Manifest SkillVersion artifact URI."""
+def _runtime_skill_label(index: int | None = None) -> str:
     label = "Runtime skill"
     if index is not None:
         label = f"Runtime skill at index {index}"
-
-    if not isinstance(artifact_uri, str) or not artifact_uri.strip():
-        raise SandboxRuntimeError(f"{label} is missing artifact_uri")
-
-    normalized_artifact = artifact_uri.replace("\\", "/").strip("/")
-    if not _is_immutable_runtime_artifact_uri(normalized_artifact):
-        raise SandboxRuntimeError(f"{label} artifact_uri must use the immutable version storage scope: {artifact_uri!r}")
-    return normalized_artifact
+    return label
 
 
-def _runtime_bundle_entry(index: int, skill: Mapping[str, Any], *, container_base_path: str) -> dict[str, Any]:
-    normalized_artifact = normalize_runtime_artifact_uri(skill.get("artifact_uri"), index=index)
+def _parse_terminal_version_number(version_number: Any, *, index: int | None = None) -> int:
+    label = _runtime_skill_label(index)
+    if isinstance(version_number, bool):
+        raise SandboxRuntimeError(f"{label} version_number must be a positive integer")
+    try:
+        terminal_version_number = int(version_number)
+    except (TypeError, ValueError) as exc:
+        raise SandboxRuntimeError(f"{label} version_number must be a positive integer") from exc
+    if terminal_version_number <= 0:
+        raise SandboxRuntimeError(f"{label} version_number must be a positive integer")
+    return terminal_version_number
 
-    if skill.get("skill_version_id") is None:
-        raise SandboxRuntimeError(f"Runtime skill at index {index} is missing skill_version_id")
+
+def _looks_like_uuid(value: str) -> bool:
+    try:
+        UUID(value)
+    except (TypeError, ValueError, AttributeError):
+        return False
+    return True
+
+
+def _reject_legacy_virtual_root(relative_parts: tuple[str, ...], *, virtual_path: str, index: int | None = None) -> None:
+    label = _runtime_skill_label(index)
+    first = relative_parts[0]
+    if first in {"public", "custom", "local"}:
+        raise SandboxRuntimeError(f"{label} virtual_path uses a legacy skill root: {virtual_path!r}")
+    if first == "artifacts":
+        raise SandboxRuntimeError(f"{label} virtual_path uses a legacy artifacts skill root: {virtual_path!r}")
+    if first == _RUNTIME_BUNDLE_SCOPE_ROOT:
+        raise SandboxRuntimeError(f"{label} virtual_path must not point at runtime bundle cache storage: {virtual_path!r}")
+    if first.isdigit():
+        raise SandboxRuntimeError(f"{label} virtual_path uses a legacy user or version-id root: {virtual_path!r}")
+    if len(relative_parts) == 1 and _looks_like_uuid(first):
+        raise SandboxRuntimeError(f"{label} virtual_path uses a legacy standalone version-id root: {virtual_path!r}")
+
+
+def build_runtime_skill_scope_entry(skill: Mapping[str, Any], *, index: int | None = None, container_base_path: str) -> RuntimeSkillScopeEntry:
+    """Normalize one terminal runtime Skill descriptor.
+
+    The descriptor contract is intentionally narrow: authorization is derived
+    only from skill_id + version_number + file_manifest_hash + virtual_path.
+    Legacy path fields such as artifact_uri and file_path are ignored.
+    """
+    label = _runtime_skill_label(index)
+
+    skill_id = skill.get("skill_id")
+    if not isinstance(skill_id, str) or not skill_id.strip():
+        raise SandboxRuntimeError(f"{label} is missing skill_id")
+    version_number = _parse_terminal_version_number(skill.get("version_number"), index=index)
+    try:
+        storage_relative_path = build_terminal_skill_version_relative_path(skill_id.strip(), version_number)
+    except ValueError as exc:
+        raise SandboxRuntimeError(f"{label} skill_id must be a valid UUID") from exc
+    terminal_skill_id = storage_relative_path.split("/", 1)[0]
 
     virtual_path = skill.get("virtual_path")
     if not isinstance(virtual_path, str) or not virtual_path.strip():
-        raise SandboxRuntimeError(f"Runtime skill at index {index} is missing virtual_path")
+        raise SandboxRuntimeError(f"{label} is missing virtual_path")
     file_manifest_hash = skill.get("file_manifest_hash")
     if not isinstance(file_manifest_hash, str) or not file_manifest_hash.strip():
-        raise SandboxRuntimeError(f"Runtime skill at index {index} is missing file_manifest_hash")
+        raise SandboxRuntimeError(f"{label} is missing file_manifest_hash")
 
     container_root = PurePosixPath(container_base_path.rstrip("/"))
     virtual_root = PurePosixPath(virtual_path.strip()).parent
     try:
         relative_virtual_root = virtual_root.relative_to(container_root)
     except ValueError as exc:
-        raise SandboxRuntimeError(f"Runtime skill virtual_path is outside the skills mount: {virtual_path!r}") from exc
+        raise SandboxRuntimeError(f"{label} virtual_path is outside the skills mount: {virtual_path!r}") from exc
 
-    relative_parts = [part for part in relative_virtual_root.parts if part not in ("", ".")]
+    relative_parts = tuple(part for part in relative_virtual_root.parts if part not in ("", "."))
     if not relative_parts or any(part == ".." for part in relative_parts):
-        raise SandboxRuntimeError(f"Runtime skill virtual_path has invalid root: {virtual_path!r}")
+        raise SandboxRuntimeError(f"{label} virtual_path has invalid root: {virtual_path!r}")
+    _reject_legacy_virtual_root(relative_parts, virtual_path=virtual_path, index=index)
+
+    return RuntimeSkillScopeEntry(
+        skill_id=terminal_skill_id,
+        version_number=version_number,
+        file_manifest_hash=file_manifest_hash.strip(),
+        virtual_path=virtual_path.strip(),
+        virtual_root=str(virtual_root),
+        relative_virtual_root=str(PurePosixPath(*relative_parts)),
+        storage_relative_path=storage_relative_path,
+    )
+
+
+def _runtime_bundle_entry(index: int, skill: Mapping[str, Any], *, container_base_path: str) -> dict[str, Any]:
+    entry = build_runtime_skill_scope_entry(skill, index=index, container_base_path=container_base_path)
 
     return {
-        "artifact_uri": normalized_artifact,
-        "content_hash": skill.get("content_hash"),
-        "file_manifest_hash": file_manifest_hash,
-        "relative_virtual_root": str(PurePosixPath(*relative_parts)),
-        "skill_version_id": skill.get("skill_version_id"),
-        "virtual_root": str(virtual_root),
+        "file_manifest_hash": entry.file_manifest_hash,
+        "relative_virtual_root": entry.relative_virtual_root,
+        "skill_id": entry.skill_id,
+        "storage_relative_path": entry.storage_relative_path,
+        "version_number": entry.version_number,
+        "virtual_root": entry.virtual_root,
     }
 
 
-def _copy_authorized_artifact_tree(source: Path, target: Path) -> None:
-    """Copy one exact Manifest artifact into the run bundle without following symlinks."""
+def _copy_authorized_skill_tree(source: Path, target: Path) -> None:
+    """Copy one exact terminal Skill version into the run bundle without following symlinks."""
     for current_root, dir_names, file_names in os.walk(source, followlinks=False):
         current = Path(current_root)
         relative = current.relative_to(source)
@@ -139,27 +200,27 @@ def _copy_authorized_artifact_tree(source: Path, target: Path) -> None:
         for dir_name in list(dir_names):
             source_dir = current / dir_name
             if source_dir.is_symlink():
-                raise SandboxRuntimeError(f"Runtime skill artifact contains an unsupported symlink: {source_dir.name}")
+                raise SandboxRuntimeError(f"Runtime skill storage contains an unsupported symlink: {source_dir.name}")
             (destination / dir_name).mkdir(exist_ok=True)
 
         for file_name in file_names:
             source_file = current / file_name
             if source_file.is_symlink():
-                raise SandboxRuntimeError(f"Runtime skill artifact contains an unsupported symlink: {source_file.name}")
+                raise SandboxRuntimeError(f"Runtime skill storage contains an unsupported symlink: {source_file.name}")
             shutil.copy2(source_file, destination / file_name)
 
 
-def _verify_authorized_artifact_tree(skills_root: Path, entry: Mapping[str, Any]) -> Path:
-    """Verify one manifest artifact still matches its recorded raw hash."""
-    artifact_dir = resolve_skill_storage_dir(skills_root, entry["artifact_uri"])
+def _verify_authorized_skill_tree(skills_root: Path, entry: Mapping[str, Any]) -> Path:
+    """Verify one terminal Skill version still matches its recorded raw hash."""
+    artifact_dir = resolve_terminal_skill_version_dir(skills_root, entry["skill_id"], entry["version_number"])
     if not artifact_dir.exists() or not artifact_dir.is_dir():
-        raise SandboxRuntimeError(f"Runtime skill artifact is missing: {entry['artifact_uri']}")
+        raise SandboxRuntimeError(f"Runtime skill storage is missing: {entry['storage_relative_path']}")
     if not (artifact_dir / "SKILL.md").exists():
-        raise SandboxRuntimeError(f"Runtime skill artifact is missing SKILL.md: {entry['artifact_uri']}")
+        raise SandboxRuntimeError(f"Runtime skill storage is missing SKILL.md: {entry['storage_relative_path']}")
 
     actual_file_manifest_hash = hash_skill_file_manifest(artifact_dir)
     if actual_file_manifest_hash != entry["file_manifest_hash"]:
-        raise SandboxRuntimeError(f"Runtime skill artifact file manifest hash mismatch: {entry['artifact_uri']}")
+        raise SandboxRuntimeError(f"Runtime skill file manifest hash mismatch: {entry['storage_relative_path']}")
     return artifact_dir
 
 
@@ -214,15 +275,15 @@ def _prune_runtime_skill_bundle_cache(skills_root: Path, *, keep_bundle_scope: s
 
 
 def _materialize_runtime_skill_bundle(entries: list[dict[str, Any]]) -> str:
-    """Create a deterministic readonly-bundle source for Manifest-authorized skills.
+    """Create a deterministic readonly-bundle source for terminal Skill descriptors.
 
     Physical layout:
     ``<skills_root>/.runtime-skill-bundles/<manifest-hash>/<virtual-skill-name>/...``.
-    The bundle is populated only from exact ``SkillVersion.artifact_uri`` roots
-    listed in the Runtime Manifest; it never scans the skills root or falls back
-    to public/latest/same-name directories. The deterministic bundle id reuses
-    repeated identical manifest projections, while stale cache entries are
-    pruned by retention window to prevent unbounded copy accumulation.
+    The bundle is populated only from exact ``skill_id/version_number`` roots
+    derived from terminal descriptors; it never scans the skills root or falls
+    back to public/latest/same-name directories. The deterministic bundle id
+    reuses repeated identical descriptor projections, while stale cache entries
+    are pruned by retention window to prevent unbounded copy accumulation.
     """
     skills_root = _get_skills_root_path()
     payload = json.dumps(entries, sort_keys=True, separators=(",", ":"), default=str)
@@ -238,7 +299,7 @@ def _materialize_runtime_skill_bundle(entries: list[dict[str, Any]]) -> str:
         if relative_virtual_root in seen_virtual_roots:
             raise SandboxRuntimeError(f"Duplicate runtime skill virtual root: {entry['virtual_root']}")
         seen_virtual_roots.add(relative_virtual_root)
-        verified_sources.append((entry, _verify_authorized_artifact_tree(skills_root, entry)))
+        verified_sources.append((entry, _verify_authorized_skill_tree(skills_root, entry)))
 
     if ready_file.exists():
         _prune_runtime_skill_bundle_cache(skills_root, keep_bundle_scope=bundle_scope)
@@ -254,7 +315,7 @@ def _materialize_runtime_skill_bundle(entries: list[dict[str, Any]]) -> str:
     try:
         for entry, artifact_dir in verified_sources:
             relative_virtual_root = entry["relative_virtual_root"]
-            _copy_authorized_artifact_tree(artifact_dir, tmp_dir / relative_virtual_root)
+            _copy_authorized_skill_tree(artifact_dir, tmp_dir / relative_virtual_root)
 
         ready_file_payload = {"bundle_id": bundle_id, "skills": entries}
         (tmp_dir / _BUNDLE_READY_FILE).write_text(json.dumps(ready_file_payload, sort_keys=True), encoding="utf-8")

@@ -1,6 +1,26 @@
 from types import SimpleNamespace
+from uuid import NAMESPACE_DNS, uuid5
+
+import pytest
 
 from deerflow.agents.lead_agent import prompt as prompt_module
+from deerflow.sandbox.exceptions import SandboxRuntimeError
+
+
+def _skill_id(name: str) -> str:
+    return str(uuid5(NAMESPACE_DNS, f"deerflow-prompt-test:{name}"))
+
+
+def _runtime_skill(name: str, *, version_number: int = 1, file_manifest_hash: str | None = None, virtual_path: str | None = None, **extra) -> dict:
+    return {
+        "name": name,
+        "description": f"{name} description",
+        "skill_id": _skill_id(name),
+        "version_number": version_number,
+        "virtual_path": virtual_path or f"/mnt/skills/{name}/SKILL.md",
+        "file_manifest_hash": file_manifest_hash or f"manifest-{name}",
+        **extra,
+    }
 
 
 def test_build_custom_mounts_section_returns_empty_when_no_mounts(monkeypatch):
@@ -79,24 +99,8 @@ def test_get_skills_prompt_section_uses_runtime_context(monkeypatch):
             "context": {
                 "runtime_agent": {
                     "skills": [
-                        {
-                            "name": "sql-review",
-                            "description": "Review SQL changes.",
-                            "file_path": "public/sql-review",
-                            "virtual_path": "/mnt/skills/sql-review/SKILL.md",
-                            "skill_version_id": 101,
-                            "version_number": 1,
-                            "file_manifest_hash": "manifest-sql",
-                        },
-                        {
-                            "name": "api-design",
-                            "description": "Design API contracts.",
-                            "file_path": "9/api-design",
-                            "virtual_path": "/mnt/skills/api-design/SKILL.md",
-                            "skill_version_id": 102,
-                            "version_number": 2,
-                            "file_manifest_hash": "manifest-api",
-                        },
+                        _runtime_skill("sql-review", file_manifest_hash="manifest-sql", description="Review SQL changes."),
+                        _runtime_skill("api-design", version_number=2, file_manifest_hash="manifest-api", description="Design API contracts."),
                     ]
                 }
             }
@@ -109,46 +113,45 @@ def test_get_skills_prompt_section_uses_runtime_context(monkeypatch):
     assert "Review SQL changes." in section
     assert "/mnt/skills/sql-review/SKILL.md" in section
     assert "api-design" in section
-    assert "<skill_version_id>101</skill_version_id>" in section
+    assert f"<skill_id>{_skill_id('sql-review')}</skill_id>" in section
+    assert "<skill_version_id>" not in section
     assert "<version_number>2</version_number>" in section
     assert "<file_manifest_hash>manifest-api</file_manifest_hash>" in section
     assert "skill_load" in section
 
 
-def test_runtime_skill_prompt_descriptors_require_manifest_location():
+def test_runtime_skill_prompt_descriptors_require_terminal_descriptor_fields():
+    with pytest.raises(SandboxRuntimeError, match="missing skill_id"):
+        prompt_module.build_runtime_skill_descriptors(
+            [
+                {
+                    "name": "legacy-name-only",
+                    "description": "Should be rejected.",
+                    "skill_version_id": 101,
+                    "version_number": 1,
+                    "file_manifest_hash": "manifest-hash",
+                    "virtual_path": "/mnt/skills/legacy-name-only/SKILL.md",
+                },
+            ],
+            container_base_path="/mnt/skills",
+        )
+
+
+def test_runtime_skill_prompt_descriptors_use_terminal_identity():
     descriptors = prompt_module.build_runtime_skill_descriptors(
         [
-            {
-                "name": "legacy-name-only",
-                "description": "Should be ignored.",
-                "skill_version_id": 101,
-                "version_number": 1,
-            },
-            {
-                "name": "missing-version",
-                "description": "Should also be ignored.",
-                "virtual_path": "/mnt/skills/missing-version/SKILL.md",
-            },
-            {
-                "name": "manifest-skill",
-                "description": "Allowed.",
-                "virtual_path": "/mnt/skills/manifest-skill/SKILL.md",
-                "skill_version_id": 102,
-                "version_number": 2,
-                "file_manifest_hash": "manifest-hash",
-            },
+            _runtime_skill("terminal-skill", version_number=2, file_manifest_hash="manifest-hash", description="Allowed."),
         ],
         container_base_path="/mnt/skills",
     )
 
     assert descriptors == [
         {
-            "name": "manifest-skill",
+            "name": "terminal-skill",
             "description": "Allowed.",
-            "location": "/mnt/skills/manifest-skill/SKILL.md",
-            "skill_version_id": "102",
+            "location": "/mnt/skills/terminal-skill/SKILL.md",
+            "skill_id": _skill_id("terminal-skill"),
             "version_number": "2",
-            "content_hash": "",
             "file_manifest_hash": "manifest-hash",
         }
     ]

@@ -33,29 +33,19 @@ from app.gateway.db.models import (
     Workspace,
 )
 from deerflow.skills.hashing import hash_skill_file_manifest
-from deerflow.skills.path_utils import build_skill_virtual_path, build_terminal_skill_version_relative_path, is_terminal_skill_version_relative_path, resolve_skill_storage_dir
+from deerflow.skills.path_utils import build_skill_virtual_path, build_terminal_skill_version_relative_path, resolve_terminal_skill_version_dir
 
 
 @dataclass(frozen=True)
 class RuntimeSkillDescriptor:
-    """Resolved skill metadata injected into the runtime prompt."""
+    """Resolved terminal Skill metadata injected into runtime."""
 
     name: str
     description: str
-    file_path: str
-    virtual_path: str
-    skill_definition_id: int
-    skill_version_id: int
-    skill_install_id: int | None
-    system_skill_definition_id: int | None
-    system_skill_version_id: int | None
-    source_kind: str
-    binding_kind: str
+    skill_id: str
     version_number: int
-    content_hash: str
     file_manifest_hash: str
-    artifact_uri: str
-    source_package_version: str | None
+    virtual_path: str
 
 
 @dataclass(frozen=True)
@@ -120,36 +110,46 @@ def build_runtime_manifest_hash(manifest_json: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
 
 
-def _is_immutable_version_storage_path(normalized_artifact: str) -> bool:
-    parts = [part for part in normalized_artifact.split("/") if part]
-    if any(part in {".", ".."} for part in parts):
-        return False
-    if len(parts) >= 3 and parts[0] == "artifacts" and parts[1] == "skills":
-        return True
-    return is_terminal_skill_version_relative_path(normalized_artifact)
-
-
-def _ensure_artifact_integrity(artifact_uri: str, *, skill_name: str, expected_file_manifest_hash: str) -> None:
-    """Fail manifest resolution if an immutable artifact is missing or drifted."""
-    normalized_artifact = artifact_uri.replace("\\", "/").strip("/")
-    if not _is_immutable_version_storage_path(normalized_artifact):
-        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact must use immutable version storage scope: {artifact_uri}")
+def _ensure_terminal_skill_integrity(
+    *,
+    skill_id: str | uuid.UUID,
+    version_number: int,
+    skill_name: str,
+    expected_file_manifest_hash: str,
+) -> str:
+    """Fail runtime resolution if the terminal Skill version root is missing or drifted."""
     if not expected_file_manifest_hash:
-        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact is missing file manifest hash")
+        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' is missing file manifest hash")
     try:
         from deerflow.config import get_app_config
 
+        terminal_relative_path = build_terminal_skill_version_relative_path(skill_id, version_number)
         skills_root = get_app_config().skills.get_skills_path()
-        artifact_dir = resolve_skill_storage_dir(skills_root, normalized_artifact)
+        artifact_dir = resolve_terminal_skill_version_dir(skills_root, skill_id, version_number)
     except Exception as exc:
-        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact cannot be resolved") from exc
+        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' terminal storage root cannot be resolved") from exc
     if not artifact_dir.exists() or not artifact_dir.is_dir():
-        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact is missing: {artifact_uri}")
+        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' terminal storage root is missing: {terminal_relative_path}")
     if not (artifact_dir / "SKILL.md").exists():
-        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact is missing SKILL.md: {artifact_uri}")
+        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' terminal storage root is missing SKILL.md: {terminal_relative_path}")
     actual_file_manifest_hash = hash_skill_file_manifest(artifact_dir)
     if actual_file_manifest_hash != expected_file_manifest_hash:
-        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact file manifest hash mismatch")
+        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' terminal storage file manifest hash mismatch")
+    return terminal_relative_path
+
+
+def _runtime_skill_display_name(*, terminal_skill: Skill | None, definition: SkillDefinition | None, skill_id: uuid.UUID) -> str:
+    """Return non-authorizing display text for a resolved Skill."""
+    if terminal_skill is not None:
+        return terminal_skill.display_name or terminal_skill.name or str(skill_id)
+    if definition is not None:
+        return definition.display_name or definition.name or str(skill_id)
+    return str(skill_id)
+
+
+def _runtime_skill_description(*, terminal_skill: Skill | None, definition: SkillDefinition | None, version: SkillVersion) -> str:
+    """Return non-authorizing description text for a resolved Skill."""
+    return version.description or getattr(terminal_skill, "description", None) or getattr(definition, "description", None) or ""
 
 
 class UserRepository:
@@ -493,66 +493,57 @@ class AgentRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    def _build_runtime_skill_descriptor(install: SkillInstall) -> RuntimeSkillDescriptor:
-        """Project an install/current version into runtime manifest metadata."""
-        version = install.current_version
-        definition = install.definition or (version.definition if version is not None else None)
-        if version is None:
-            raise RuntimeManifestResolutionError(f"Skill install {install.id} has no current version")
-        if definition is None:
-            raise RuntimeManifestResolutionError(f"Skill install {install.id} has no definition")
-        if version.skill_definition_id != install.skill_definition_id:
-            raise RuntimeManifestResolutionError(f"Skill install {install.id} points to a version from another definition")
-        file_path = version.artifact_uri
-        _ensure_artifact_integrity(file_path, skill_name=definition.name, expected_file_manifest_hash=version.file_manifest_hash)
+    def _build_runtime_skill_descriptor(install: SkillInstall, version: SkillVersion) -> RuntimeSkillDescriptor:
+        """Project an install-backed terminal Skill version into runtime metadata."""
+        terminal_skill_id = _as_optional_uuid(install.skill_id)
+        if terminal_skill_id is None:
+            raise RuntimeManifestResolutionError(f"Skill install {install.id} is missing terminal skill_id")
+        if isinstance(install.version_number, bool) or not isinstance(install.version_number, int) or install.version_number <= 0:
+            raise RuntimeManifestResolutionError(f"Skill install {install.id} is missing terminal version_number")
+        if version.skill_id != terminal_skill_id or version.version_number != install.version_number:
+            raise RuntimeManifestResolutionError(f"Skill install {install.id} points to a version from another terminal Skill version")
+
+        terminal_skill = install.skill or version.skill
+        definition = install.definition or version.definition
+        display_name = _runtime_skill_display_name(terminal_skill=terminal_skill, definition=definition, skill_id=terminal_skill_id)
+        _ensure_terminal_skill_integrity(
+            skill_id=terminal_skill_id,
+            version_number=install.version_number,
+            skill_name=display_name,
+            expected_file_manifest_hash=version.file_manifest_hash,
+        )
         return RuntimeSkillDescriptor(
-            name=definition.name,
-            description=version.description or definition.description or "",
-            file_path=file_path,
-            virtual_path=build_skill_virtual_path(definition.name, container_base_path=_get_skills_container_path(), identity_suffix=f"install-{install.id}"),
-            skill_definition_id=definition.id,
-            skill_version_id=version.id,
-            skill_install_id=install.id,
-            system_skill_definition_id=None,
-            system_skill_version_id=None,
-            source_kind="install",
-            binding_kind="install",
+            name=display_name,
+            description=_runtime_skill_description(terminal_skill=terminal_skill, definition=definition, version=version),
+            skill_id=str(terminal_skill_id),
             version_number=version.version_number,
-            content_hash=version.content_hash,
             file_manifest_hash=version.file_manifest_hash,
-            artifact_uri=version.artifact_uri,
-            source_package_version=version.source_package_version,
+            virtual_path=build_skill_virtual_path(display_name, container_base_path=_get_skills_container_path(), identity_suffix=f"{terminal_skill_id}-v{version.version_number}"),
         )
 
     @staticmethod
     def _build_runtime_system_skill_descriptor(version: SkillVersion, explicit_definition: SkillDefinition | None = None) -> RuntimeSkillDescriptor:
-        """Project a configured default-chat system SkillVersion into runtime metadata."""
+        """Project a configured default-chat terminal Skill version into runtime metadata."""
+        terminal_skill_id = _as_optional_uuid(version.skill_id)
+        if terminal_skill_id is None:
+            raise RuntimeManifestResolutionError("Default chat system Skill version is missing terminal skill_id")
         definition = explicit_definition or version.definition
-        if definition is None:
-            raise RuntimeManifestResolutionError(f"System skill version {version.id} has no definition")
-        if version.skill_definition_id != definition.id:
-            raise RuntimeManifestResolutionError(f"System skill version {version.id} points to another definition")
         if not is_system_owned_skill(version.skill):
             raise RuntimeManifestResolutionError(f"Skill {version.skill_id} is not owned by the internal system user")
-        file_path = version.artifact_uri
-        _ensure_artifact_integrity(file_path, skill_name=definition.name, expected_file_manifest_hash=version.file_manifest_hash)
-        return RuntimeSkillDescriptor(
-            name=definition.name,
-            description=version.description or definition.description or "",
-            file_path=file_path,
-            virtual_path=build_skill_virtual_path(definition.name, container_base_path=_get_skills_container_path(), identity_suffix=f"system-{version.skill_id}-version-{version.version_number}"),
-            skill_definition_id=definition.id,
-            skill_version_id=version.id,
-            skill_install_id=None,
-            system_skill_definition_id=definition.id,
-            system_skill_version_id=version.id,
-            source_kind="system",
-            binding_kind="system",
+        display_name = _runtime_skill_display_name(terminal_skill=version.skill, definition=definition, skill_id=terminal_skill_id)
+        _ensure_terminal_skill_integrity(
+            skill_id=terminal_skill_id,
             version_number=version.version_number,
-            content_hash=version.content_hash,
+            skill_name=display_name,
+            expected_file_manifest_hash=version.file_manifest_hash,
+        )
+        return RuntimeSkillDescriptor(
+            name=display_name,
+            description=_runtime_skill_description(terminal_skill=version.skill, definition=definition, version=version),
+            skill_id=str(terminal_skill_id),
+            version_number=version.version_number,
             file_manifest_hash=version.file_manifest_hash,
-            artifact_uri=version.artifact_uri,
-            source_package_version=version.source_package_version,
+            virtual_path=build_skill_virtual_path(display_name, container_base_path=_get_skills_container_path(), identity_suffix=f"{terminal_skill_id}-v{version.version_number}"),
         )
 
     @staticmethod
@@ -579,11 +570,10 @@ class AgentRepository:
         return descriptors
 
     @staticmethod
-    def _active_runtime_skills(agent: Agent) -> list[RuntimeSkillDescriptor]:
-        """Return ordered active skill descriptors for an agent."""
+    def _active_runtime_skill_associations(agent: Agent) -> list[AgentSkill]:
+        """Return ordered active install-backed skill bindings for an agent."""
         active_associations = [association for association in agent.agent_skills if association.deleted_at is None and association.enabled]
         active_associations.sort(key=lambda association: (association.display_order, association.id))
-        descriptors: list[RuntimeSkillDescriptor] = []
         for association in active_associations:
             if association.skill_install is not None:
                 if association.skill_install.deleted_at is not None:
@@ -592,12 +582,41 @@ class AgentRepository:
                     raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
                 if agent.user_id is None or association.skill_install.user_id != agent.user_id:
                     raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding owned by another user")
-                descriptors.append(AgentRepository._build_runtime_skill_descriptor(association.skill_install))
                 continue
             if association.system_skill_version is not None or association.system_skill_version_id is not None:
                 raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a direct system skill binding; use default_chat.system_skills or an install-backed binding")
             else:
                 raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
+        return active_associations
+
+    @staticmethod
+    async def _resolve_active_runtime_skills(db: AsyncSession, agent: Agent) -> list[RuntimeSkillDescriptor]:
+        """Resolve ordered active Skill bindings from terminal installation identity."""
+        descriptors: list[RuntimeSkillDescriptor] = []
+        for association in AgentRepository._active_runtime_skill_associations(agent):
+            install = association.skill_install
+            if install is None:
+                raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
+            terminal_skill_id = _as_optional_uuid(install.skill_id)
+            if terminal_skill_id is None:
+                raise RuntimeManifestResolutionError(f"Skill install {install.id} is missing terminal skill_id")
+            if isinstance(install.version_number, bool) or not isinstance(install.version_number, int) or install.version_number <= 0:
+                raise RuntimeManifestResolutionError(f"Skill install {install.id} is missing terminal version_number")
+            version = await SkillVersionRepository.get_by_skill_version(db, skill_id=terminal_skill_id, version_number=install.version_number)
+            if version is None:
+                raise RuntimeManifestResolutionError(f"Skill install {install.id} terminal Skill version ({terminal_skill_id}, {install.version_number}) not found")
+            descriptors.append(AgentRepository._build_runtime_skill_descriptor(install, version))
+        return descriptors
+
+    @staticmethod
+    def _active_runtime_skills(agent: Agent) -> list[RuntimeSkillDescriptor]:
+        """Return descriptors for already-hydrated test/runtime fixtures."""
+        descriptors: list[RuntimeSkillDescriptor] = []
+        for association in AgentRepository._active_runtime_skill_associations(agent):
+            install = association.skill_install
+            if install is None or install.current_version is None:
+                raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
+            descriptors.append(AgentRepository._build_runtime_skill_descriptor(install, install.current_version))
         return descriptors
 
     @staticmethod
@@ -608,29 +627,19 @@ class AgentRepository:
         agent: Agent,
         skills: list[RuntimeSkillDescriptor],
     ) -> RuntimeManifest:
-        """Persist the resolved manifest snapshot used by prompt and skill_load."""
+        """Persist an audit snapshot generated from resolved runtime descriptors."""
         entries = [
             {
                 "name": skill.name,
                 "description": skill.description,
-                "file_path": skill.file_path,
-                "virtual_path": skill.virtual_path,
-                "skill_definition_id": skill.skill_definition_id,
-                "skill_version_id": skill.skill_version_id,
-                "skill_install_id": skill.skill_install_id,
-                "system_skill_definition_id": skill.system_skill_definition_id,
-                "system_skill_version_id": skill.system_skill_version_id,
-                "source_kind": skill.source_kind,
-                "binding_kind": skill.binding_kind,
+                "skill_id": skill.skill_id,
                 "version_number": skill.version_number,
-                "content_hash": skill.content_hash,
                 "file_manifest_hash": skill.file_manifest_hash,
-                "artifact_uri": skill.artifact_uri,
-                "source_package_version": skill.source_package_version,
+                "virtual_path": skill.virtual_path,
             }
             for skill in skills
         ]
-        manifest_json = {"version": 1, "skills": entries}
+        manifest_json = {"version": 2, "skills": entries}
         manifest = RuntimeManifest(
             user_id=user_id,
             agent_id=agent.id,
@@ -669,7 +678,7 @@ class AgentRepository:
         if agent is None:
             raise RuntimeManifestResolutionError(f"Agent '{normalized_agent_name}' not found")
 
-        skills = AgentRepository._active_runtime_skills(agent)
+        skills = await AgentRepository._resolve_active_runtime_skills(db, agent)
         manifest = await AgentRepository._create_runtime_manifest(db, user_id=user_id, agent=agent, skills=skills)
 
         return RuntimeAgentBundle(
