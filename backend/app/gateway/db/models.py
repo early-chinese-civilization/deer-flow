@@ -9,6 +9,8 @@ from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, DateTime, F
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
 
+INTERNAL_SYSTEM_EXTERNAL_AUTH_ID = "system:deerflow"
+
 
 class Base(DeclarativeBase):
     """Base class for Gateway-owned ORM models."""
@@ -50,7 +52,8 @@ class User(Base):
     workspaces = relationship("Workspace", back_populates="user", cascade="all, delete-orphan")
     threads = relationship("Thread", back_populates="user", cascade="all, delete-orphan")
     agents = relationship("Agent", back_populates="user", cascade="all, delete-orphan")
-    skills = relationship("Skill", back_populates="user", cascade="all, delete-orphan", foreign_keys="Skill.user_id")
+    skills = relationship("Skill", back_populates="owner_user", foreign_keys="Skill.owner_user_id")
+    legacy_skills = relationship("LegacySkill", back_populates="user", cascade="all, delete-orphan", foreign_keys="LegacySkill.user_id")
     memories = relationship("Memory", back_populates="user", cascade="all, delete-orphan")
 
 
@@ -208,32 +211,87 @@ class Agent(Base):
 
 
 class Skill(Base):
-    """System and user-level skills."""
+    """Terminal stable Skill identity.
+
+    Legacy BIGINT rows live in ``legacy_skills`` during the migration window.
+    New code must treat this UUID primary key as the Skill business identity.
+    """
 
     __tablename__ = "skills"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="Skill ID")
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        comment="Stable Skill identity",
+    )
+    owner_user_id = Column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+        comment="System or community owner user ID",
+    )
+    name = Column(String(255), nullable=False, comment="Skill name")
+    display_name = Column(String(255), nullable=True, comment="Display name")
+    description = Column(Text, nullable=True, comment="Skill description")
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        comment="Created at",
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        comment="Updated at",
+    )
+    deleted_at = Column(DateTime(timezone=True), nullable=True, comment="Soft delete timestamp")
+
+    owner_user = relationship("User", back_populates="skills", foreign_keys=[owner_user_id])
+    legacy_identity_mapping = relationship("SkillIdentityMigrationMap", back_populates="skill", uselist=False, cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index(
+            "uq_skills_owner_name_active",
+            "owner_user_id",
+            "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index("ix_skills_owner_user_id", "owner_user_id"),
+        Index("ix_skills_deleted_at", "deleted_at"),
+    )
+
+
+class LegacySkill(Base):
+    """Legacy BIGINT skill rows kept only as migration input."""
+
+    __tablename__ = "legacy_skills"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="Legacy skill row ID")
     user_id = Column(
         BigInteger,
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=True,
-        comment="User ID (NULL for public skills)",
+        comment="Legacy user ID (NULL for public skills)",
     )
     owner_user_id = Column(
         BigInteger,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
-        comment="Publisher user ID for display/audit only",
+        comment="Legacy publisher user ID for display/audit only",
     )
-    name = Column(String(255), nullable=False, comment="Skill name")
-    display_name = Column(String(255), nullable=True, comment="Display name")
-    description = Column(Text, nullable=True, comment="Skill description")
-    file_path = Column(String(500), nullable=False, comment="Shared skills filesystem path")
+    name = Column(String(255), nullable=False, comment="Legacy skill name")
+    display_name = Column(String(255), nullable=True, comment="Legacy display name")
+    description = Column(Text, nullable=True, comment="Legacy skill description")
+    file_path = Column(String(500), nullable=False, comment="Legacy shared skills filesystem path")
     skill_definition_id = Column(
         BigInteger,
         ForeignKey("skill_definitions.id", ondelete="SET NULL"),
         nullable=True,
-        comment="Stable platform skill definition ID for install-aware catalog rows",
+        comment="Legacy SkillDefinition bridge",
     )
     created_at = Column(
         DateTime(timezone=True),
@@ -250,39 +308,40 @@ class Skill(Base):
     )
     deleted_at = Column(DateTime(timezone=True), nullable=True, comment="Soft delete timestamp")
 
-    user = relationship("User", back_populates="skills", foreign_keys=[user_id])
+    user = relationship("User", back_populates="legacy_skills", foreign_keys=[user_id])
     owner_user = relationship("User", foreign_keys=[owner_user_id])
-    definition = relationship("SkillDefinition", foreign_keys=[skill_definition_id])
+    definition = relationship("SkillDefinition", foreign_keys=[skill_definition_id], back_populates="legacy_skills")
     agent_skills = relationship("AgentSkill", back_populates="skill", cascade="all, delete-orphan")
     source_releases = relationship("SkillRelease", foreign_keys="SkillRelease.source_skill_id", back_populates="source_skill")
     published_releases = relationship("SkillRelease", foreign_keys="SkillRelease.published_skill_id", back_populates="published_skill")
+    terminal_identity_mappings = relationship("SkillIdentityMigrationMap", back_populates="legacy_skill")
 
     __table_args__ = (
         Index(
-            "uq_skills_user_definition_active",
+            "uq_legacy_skills_user_definition_active",
             "user_id",
             "skill_definition_id",
             unique=True,
             postgresql_where=text("deleted_at IS NULL AND user_id IS NOT NULL AND skill_definition_id IS NOT NULL"),
         ),
         Index(
-            "uq_skills_user_name_legacy_active",
+            "uq_legacy_skills_user_name_active",
             "user_id",
             "name",
             unique=True,
             postgresql_where=text("deleted_at IS NULL AND user_id IS NOT NULL AND skill_definition_id IS NULL"),
         ),
         Index(
-            "uq_skills_public_owner_name_active",
+            "uq_legacy_skills_public_owner_name_active",
             "owner_user_id",
             "name",
             unique=True,
             postgresql_where=text("deleted_at IS NULL AND user_id IS NULL AND owner_user_id IS NOT NULL"),
         ),
-        Index("ix_skills_user_id", "user_id"),
-        Index("ix_skills_owner_user_id", "owner_user_id"),
-        Index("ix_skills_skill_definition_id", "skill_definition_id"),
-        Index("ix_skills_deleted_at", "deleted_at"),
+        Index("ix_legacy_skills_user_id", "user_id"),
+        Index("ix_legacy_skills_owner_user_id", "owner_user_id"),
+        Index("ix_legacy_skills_skill_definition_id", "skill_definition_id"),
+        Index("ix_legacy_skills_deleted_at", "deleted_at"),
     )
 
 
@@ -321,6 +380,8 @@ class SkillDefinition(Base):
     owner_user = relationship("User", foreign_keys=[owner_user_id])
     versions = relationship("SkillVersion", back_populates="definition", cascade="all, delete-orphan")
     installs = relationship("SkillInstall", back_populates="definition", cascade="all, delete-orphan")
+    legacy_skills = relationship("LegacySkill", back_populates="definition")
+    terminal_identity_mapping = relationship("SkillIdentityMigrationMap", back_populates="definition", uselist=False, cascade="all, delete-orphan")
 
     __table_args__ = (
         Index(
@@ -333,6 +394,49 @@ class SkillDefinition(Base):
         ),
         Index("ix_skill_definitions_source", "source_type", "source_identifier"),
         Index("ix_skill_definitions_deleted_at", "deleted_at"),
+    )
+
+
+class SkillIdentityMigrationMap(Base):
+    """Deterministic bridge from legacy SkillDefinition identity to terminal Skill UUID."""
+
+    __tablename__ = "skill_identity_migration_map"
+
+    old_skill_definition_id = Column(
+        BigInteger,
+        ForeignKey("skill_definitions.id", ondelete="CASCADE"),
+        primary_key=True,
+        comment="Legacy SkillDefinition ID",
+    )
+    skill_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("skills.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="Terminal Skill UUID",
+    )
+    old_skill_id = Column(
+        BigInteger,
+        ForeignKey("legacy_skills.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Representative legacy skills row that contributed display/path migration input",
+    )
+    migration_source = Column(String(255), nullable=False, comment="Deterministic UUIDv5 source string")
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        comment="Created at",
+    )
+
+    definition = relationship("SkillDefinition", back_populates="terminal_identity_mapping", foreign_keys=[old_skill_definition_id])
+    skill = relationship("Skill", back_populates="legacy_identity_mapping", foreign_keys=[skill_id])
+    legacy_skill = relationship("LegacySkill", back_populates="terminal_identity_mappings", foreign_keys=[old_skill_id])
+
+    __table_args__ = (
+        UniqueConstraint("skill_id", name="uq_skill_identity_migration_map_skill_id"),
+        UniqueConstraint("migration_source", name="uq_skill_identity_migration_map_migration_source"),
+        Index("ix_skill_identity_migration_map_skill_id", "skill_id"),
+        Index("ix_skill_identity_migration_map_old_skill_id", "old_skill_id"),
     )
 
 
@@ -465,15 +569,15 @@ class SkillRelease(Base):
     )
     source_skill_id = Column(
         BigInteger,
-        ForeignKey("skills.id", ondelete="SET NULL"),
+        ForeignKey("legacy_skills.id", ondelete="SET NULL"),
         nullable=True,
-        comment="Source custom skill ID",
+        comment="Legacy source custom skill ID",
     )
     published_skill_id = Column(
         BigInteger,
-        ForeignKey("skills.id", ondelete="SET NULL"),
+        ForeignKey("legacy_skills.id", ondelete="SET NULL"),
         nullable=True,
-        comment="Public latest skill row produced by this release",
+        comment="Legacy public latest skill row produced by this release",
     )
     skill_version_id = Column(
         BigInteger,
@@ -489,8 +593,8 @@ class SkillRelease(Base):
     )
 
     publisher_user = relationship("User", foreign_keys=[publisher_user_id])
-    source_skill = relationship("Skill", foreign_keys=[source_skill_id], back_populates="source_releases")
-    published_skill = relationship("Skill", foreign_keys=[published_skill_id], back_populates="published_releases")
+    source_skill = relationship("LegacySkill", foreign_keys=[source_skill_id], back_populates="source_releases")
+    published_skill = relationship("LegacySkill", foreign_keys=[published_skill_id], back_populates="published_releases")
     skill_version = relationship("SkillVersion", back_populates="releases")
 
     __table_args__ = (
@@ -555,7 +659,7 @@ class PendingSkillForkClaim(Base):
 
 
 class AgentSkill(Base):
-    """Many-to-many relationship between agents and skills."""
+    """Many-to-many relationship between agents and legacy Skill bridge rows."""
 
     __tablename__ = "agents_skills"
 
@@ -568,7 +672,7 @@ class AgentSkill(Base):
     )
     skill_id = Column(
         BigInteger,
-        ForeignKey("skills.id", ondelete="CASCADE"),
+        ForeignKey("legacy_skills.id", ondelete="CASCADE"),
         nullable=True,
         comment="Legacy skill ID",
     )
@@ -601,7 +705,7 @@ class AgentSkill(Base):
     deleted_at = Column(DateTime(timezone=True), nullable=True, comment="Soft delete timestamp")
 
     agent = relationship("Agent", back_populates="agent_skills")
-    skill = relationship("Skill", back_populates="agent_skills")
+    skill = relationship("LegacySkill", back_populates="agent_skills")
     skill_install = relationship("SkillInstall", back_populates="agent_skills")
     system_skill_definition = relationship("SkillDefinition", foreign_keys=[system_skill_definition_id])
     system_skill_version = relationship("SkillVersion", foreign_keys=[system_skill_version_id])

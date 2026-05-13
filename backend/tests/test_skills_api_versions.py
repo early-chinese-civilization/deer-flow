@@ -4,7 +4,8 @@ from datetime import UTC, datetime
 import pytest
 from fastapi import HTTPException
 
-from app.gateway.db.models import Skill, SkillDefinition, SkillInstall, SkillRelease, SkillVersion, User
+from app.gateway.db.models import LegacySkill as Skill
+from app.gateway.db.models import SkillDefinition, SkillInstall, SkillRelease, SkillVersion, User
 from app.gateway.db.repository import SkillRepository
 from app.gateway.routers import skills as skills_router
 

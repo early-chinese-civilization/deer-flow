@@ -18,7 +18,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
-from app.gateway.db.models import Agent, PendingSkillForkClaim, Skill, SkillDefinition, SkillInstall, SkillRelease, SkillVersion, User
+from app.gateway.db.models import Agent, PendingSkillForkClaim, SkillDefinition, SkillInstall, SkillRelease, SkillVersion, User
+from app.gateway.db.models import LegacySkill as Skill
 from app.gateway.db.repository import (
     PendingSkillForkClaimRepository,
     SkillDefinitionRepository,

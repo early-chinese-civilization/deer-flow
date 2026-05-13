@@ -32,11 +32,12 @@
 
 1. [00-terminal-state.md](00-terminal-state.md) 中的终态总览。
 2. [flows/01-db-er-design.md](flows/01-db-er-design.md)、[flows/02-agent-runtime-design.md](flows/02-agent-runtime-design.md)、[flows/03-core-relationship-diagrams.md](flows/03-core-relationship-diagrams.md) 中的核心关系图。
-3. [08-open-decisions.md](08-open-decisions.md) 中尚未关闭的高影响决策。
-4. 用户在当前 brainstorm 中补充的明确业务语义。
-5. 当前代码和测试事实，只用于判断现状和迁移成本。
-6. `/Users/sayori/Desktop/work/docs/skills-version` 下的高优先级整理资料。
-7. `docs-qy/skills-design` 下的旧设计资料。
+3. [11-current-vs-terminal-baseline.md](11-current-vs-terminal-baseline.md) 中的当前代码现状与终态差距基线。
+4. [08-open-decisions.md](08-open-decisions.md) 中尚未关闭的高影响决策。
+5. 用户在当前 brainstorm 中补充的明确业务语义。
+6. 当前代码和测试事实，只用于判断现状和迁移成本。
+7. `/Users/sayori/Desktop/work/docs/skills-version` 下的高优先级整理资料。
+8. `docs-qy/skills-design` 下的旧设计资料。
 
 `docs-qy/skills-design` 视为归档和旧状态参考，不再作为 `feature/skill-version-new` 的目标口径。
 
@@ -63,6 +64,7 @@
 9. [08-open-decisions.md](08-open-decisions.md)：必须回到用户确认的高影响不确定项。
 10. [09-follow-up-task-map.md](09-follow-up-task-map.md)：从终态反推的后续任务拆分草案。
 11. [10-default-system-skill-install.md](10-default-system-skill-install.md)：默认聊天系统 Skill 平台配置；文件名沿用历史编号，正文不采用默认安装模型。
-12. [flows/01-db-er-design.md](flows/01-db-er-design.md)：终态 DB ER 和平台配置边界。
-13. [flows/02-agent-runtime-design.md](flows/02-agent-runtime-design.md)：默认聊天与自定义 Agent 的 runtime 解析。
-14. [flows/03-core-relationship-diagrams.md](flows/03-core-relationship-diagrams.md)：核心关系图。
+12. [11-current-vs-terminal-baseline.md](11-current-vs-terminal-baseline.md)：当前代码现状与终态差距基线；后续 migration/code agent 必读。
+13. [flows/01-db-er-design.md](flows/01-db-er-design.md)：终态 DB ER 和平台配置边界。
+14. [flows/02-agent-runtime-design.md](flows/02-agent-runtime-design.md)：默认聊天与自定义 Agent 的 runtime 解析。
+15. [flows/03-core-relationship-diagrams.md](flows/03-core-relationship-diagrams.md)：核心关系图。

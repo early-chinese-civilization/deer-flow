@@ -15,13 +15,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.gateway.db.models import (
+    INTERNAL_SYSTEM_EXTERNAL_AUTH_ID,
     Agent,
     AgentSkill,
+    LegacySkill,
     Memory,
     PendingSkillForkClaim,
     RuntimeManifest,
     Skill,
     SkillDefinition,
+    SkillIdentityMigrationMap,
     SkillInstall,
     SkillRelease,
     SkillVersion,
@@ -205,6 +208,11 @@ class UserRepository:
         """Load a user by external authentication subject."""
         result = await db.execute(select(User).where(User.external_auth_id == external_auth_id))
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_internal_system_user(db: AsyncSession) -> User | None:
+        """Load DeerFlow's protected internal system user."""
+        return await UserRepository.get_user_by_external_auth_id(db, INTERNAL_SYSTEM_EXTERNAL_AUTH_ID)
 
 
 class ThreadRepository:
@@ -746,6 +754,46 @@ class AgentRepository:
         if refreshed is None:
             raise ValueError(f"Agent {reloaded_agent.id} disappeared during skill replacement")
         return refreshed
+
+
+class TerminalSkillRepository:
+    """Persistence helpers for terminal UUID skill identities."""
+
+    @staticmethod
+    async def get_by_id(db: AsyncSession, *, skill_id: str | uuid.UUID) -> Skill | None:
+        """Load a terminal Skill by UUID identity."""
+        terminal_skill_id = _as_optional_uuid(skill_id)
+        if terminal_skill_id is None:
+            return None
+        result = await db.execute(
+            select(Skill)
+            .options(selectinload(Skill.owner_user))
+            .where(
+                Skill.id == terminal_skill_id,
+                Skill.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_by_legacy_definition_id(db: AsyncSession, *, skill_definition_id: int) -> Skill | None:
+        """Load the terminal Skill mapped from a legacy SkillDefinition row."""
+        result = await db.execute(
+            select(Skill)
+            .join(SkillIdentityMigrationMap, SkillIdentityMigrationMap.skill_id == Skill.id)
+            .options(selectinload(Skill.owner_user))
+            .where(
+                SkillIdentityMigrationMap.old_skill_definition_id == skill_definition_id,
+                Skill.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_id_by_legacy_definition_id(db: AsyncSession, *, skill_definition_id: int) -> uuid.UUID | None:
+        """Resolve the terminal Skill UUID for a legacy SkillDefinition ID."""
+        skill = await TerminalSkillRepository.get_by_legacy_definition_id(db, skill_definition_id=skill_definition_id)
+        return skill.id if skill is not None else None
 
 
 class SkillDefinitionRepository:
@@ -1290,20 +1338,20 @@ class PendingSkillForkClaimRepository:
 
 
 class SkillRepository:
-    """Persistence helpers for skill records."""
+    """Compatibility helpers for legacy BIGINT skill rows."""
 
     @staticmethod
     def _active_skill_stmt():
-        return select(Skill).where(Skill.deleted_at.is_(None))
+        return select(LegacySkill).where(LegacySkill.deleted_at.is_(None))
 
     @staticmethod
     def _with_owner_user(stmt):
-        return stmt.options(selectinload(Skill.owner_user), selectinload(Skill.definition).selectinload(SkillDefinition.owner_user))
+        return stmt.options(selectinload(LegacySkill.owner_user), selectinload(LegacySkill.definition).selectinload(SkillDefinition.owner_user))
 
     @staticmethod
-    def _dedupe_public_skills(skills: list[Skill]) -> list[Skill]:
+    def _dedupe_public_skills(skills: list[LegacySkill]) -> list[LegacySkill]:
         """Collapse only exact legacy duplicate public rows, preserving source collisions."""
-        deduped: list[Skill] = []
+        deduped: list[LegacySkill] = []
         seen_public_keys: set[tuple[str, int | None, int | None]] = set()
         for skill in skills:
             if skill.user_id is not None:
@@ -1317,26 +1365,14 @@ class SkillRepository:
         return deduped
 
     @staticmethod
-    def _dedupe_visible_skills(skills: list[Skill]) -> list[Skill]:
+    def _dedupe_visible_skills(skills: list[LegacySkill]) -> list[LegacySkill]:
         """Collapse visible-list duplicates caused by stale user rows for direct-use System Skills."""
         deduped = SkillRepository._dedupe_public_skills(skills)
-        public_system_definition_ids = {
-            skill.skill_definition_id
-            for skill in deduped
-            if skill.user_id is None and skill.skill_definition_id is not None and is_system_skill_definition(skill.definition)
-        }
+        public_system_definition_ids = {skill.skill_definition_id for skill in deduped if skill.user_id is None and skill.skill_definition_id is not None and is_system_skill_definition(skill.definition)}
         if not public_system_definition_ids:
             return deduped
 
-        return [
-            skill
-            for skill in deduped
-            if not (
-                skill.user_id is not None
-                and skill.skill_definition_id in public_system_definition_ids
-                and is_system_skill_definition(skill.definition)
-            )
-        ]
+        return [skill for skill in deduped if not (skill.user_id is not None and skill.skill_definition_id in public_system_definition_ids and is_system_skill_definition(skill.definition))]
 
     @staticmethod
     async def create_skill(
@@ -1350,9 +1386,9 @@ class SkillRepository:
         owner_user_id: int | None = None,
         skill_definition_id: int | None = None,
         commit: bool = True,
-    ) -> Skill:
-        """Create a skill record."""
-        skill = Skill(
+    ) -> LegacySkill:
+        """Create a legacy skill record during the migration window."""
+        skill = LegacySkill(
             user_id=user_id,
             owner_user_id=owner_user_id,
             name=name,
@@ -1370,70 +1406,70 @@ class SkillRepository:
         return skill
 
     @staticmethod
-    async def get_skill_by_id(db: AsyncSession, skill_id: int) -> Skill | None:
-        """Load a skill by ID."""
-        stmt = SkillRepository._with_owner_user(select(Skill).where(Skill.id == skill_id, Skill.deleted_at.is_(None)))
+    async def get_skill_by_id(db: AsyncSession, skill_id: int) -> LegacySkill | None:
+        """Load a legacy skill row by BIGINT ID."""
+        stmt = SkillRepository._with_owner_user(select(LegacySkill).where(LegacySkill.id == skill_id, LegacySkill.deleted_at.is_(None)))
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def list_skills(db: AsyncSession, user_id: int | None = None) -> list[Skill]:
-        """List skills (public only if user_id is None, else public plus current user's custom skills)."""
+    async def list_skills(db: AsyncSession, user_id: int | None = None) -> list[LegacySkill]:
+        """List legacy skills (public only if user_id is None, else public plus current user's custom skills)."""
         stmt = SkillRepository._with_owner_user(SkillRepository._active_skill_stmt())
         if user_id is not None:
-            stmt = stmt.where((Skill.user_id == user_id) | (Skill.user_id.is_(None)))
+            stmt = stmt.where((LegacySkill.user_id == user_id) | (LegacySkill.user_id.is_(None)))
         else:
-            stmt = stmt.where(Skill.user_id.is_(None))
-        result = await db.execute(stmt.order_by(Skill.created_at.desc()))
+            stmt = stmt.where(LegacySkill.user_id.is_(None))
+        result = await db.execute(stmt.order_by(LegacySkill.created_at.desc()))
         return result.scalars().all()
 
     @staticmethod
-    async def list_visible_skills(db: AsyncSession, *, user_id: int) -> list[Skill]:
-        """List public skills plus the current user's skills."""
+    async def list_visible_skills(db: AsyncSession, *, user_id: int) -> list[LegacySkill]:
+        """List public legacy skills plus the current user's legacy skills."""
         stmt = SkillRepository._with_owner_user(
             SkillRepository._active_skill_stmt()
-            .where((Skill.user_id == user_id) | (Skill.user_id.is_(None)))
+            .where((LegacySkill.user_id == user_id) | (LegacySkill.user_id.is_(None)))
             .order_by(
-                Skill.user_id.is_(None).desc(),
-                Skill.name.asc(),
-                Skill.updated_at.desc(),
-                Skill.created_at.desc(),
+                LegacySkill.user_id.is_(None).desc(),
+                LegacySkill.name.asc(),
+                LegacySkill.updated_at.desc(),
+                LegacySkill.created_at.desc(),
             )
         )
         result = await db.execute(stmt)
         return SkillRepository._dedupe_visible_skills(list(result.scalars().all()))
 
     @staticmethod
-    async def list_public_skills(db: AsyncSession) -> list[Skill]:
-        """List all active public skills, preferring the newest row per name."""
-        stmt = SkillRepository._with_owner_user(SkillRepository._active_skill_stmt().where(Skill.user_id.is_(None)).order_by(Skill.name.asc(), Skill.updated_at.desc(), Skill.created_at.desc()))
+    async def list_public_skills(db: AsyncSession) -> list[LegacySkill]:
+        """List all active public legacy skills, preferring the newest row per name."""
+        stmt = SkillRepository._with_owner_user(SkillRepository._active_skill_stmt().where(LegacySkill.user_id.is_(None)).order_by(LegacySkill.name.asc(), LegacySkill.updated_at.desc(), LegacySkill.created_at.desc()))
         result = await db.execute(stmt)
         return SkillRepository._dedupe_public_skills(list(result.scalars().all()))
 
     @staticmethod
-    async def list_custom_skills(db: AsyncSession, *, user_id: int) -> list[Skill]:
-        """List all active custom skills owned by the current user."""
-        stmt = SkillRepository._with_owner_user(SkillRepository._active_skill_stmt().where(Skill.user_id == user_id).order_by(Skill.name.asc(), Skill.created_at.desc()))
+    async def list_custom_skills(db: AsyncSession, *, user_id: int) -> list[LegacySkill]:
+        """List all active custom legacy skills owned by the current user."""
+        stmt = SkillRepository._with_owner_user(SkillRepository._active_skill_stmt().where(LegacySkill.user_id == user_id).order_by(LegacySkill.name.asc(), LegacySkill.created_at.desc()))
         result = await db.execute(stmt)
         return result.scalars().all()
 
     @staticmethod
-    async def get_user_skill_by_name(db: AsyncSession, *, user_id: int, name: str) -> Skill | None:
-        """Load the current user's active skill by name."""
-        stmt = SkillRepository._with_owner_user(SkillRepository._active_skill_stmt().where(Skill.user_id == user_id, Skill.name == name).order_by(Skill.updated_at.desc(), Skill.created_at.desc()).limit(1))
+    async def get_user_skill_by_name(db: AsyncSession, *, user_id: int, name: str) -> LegacySkill | None:
+        """Load the current user's active legacy skill by name."""
+        stmt = SkillRepository._with_owner_user(SkillRepository._active_skill_stmt().where(LegacySkill.user_id == user_id, LegacySkill.name == name).order_by(LegacySkill.updated_at.desc(), LegacySkill.created_at.desc()).limit(1))
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def list_user_skills_by_name(db: AsyncSession, *, user_id: int, name: str) -> list[Skill]:
-        """List the current user's active skill rows for a compatibility name."""
+    async def list_user_skills_by_name(db: AsyncSession, *, user_id: int, name: str) -> list[LegacySkill]:
+        """List the current user's active legacy skill rows for a compatibility name."""
         stmt = SkillRepository._with_owner_user(
             SkillRepository._active_skill_stmt()
             .where(
-                Skill.user_id == user_id,
-                Skill.name == name,
+                LegacySkill.user_id == user_id,
+                LegacySkill.name == name,
             )
-            .order_by(Skill.updated_at.desc(), Skill.created_at.desc())
+            .order_by(LegacySkill.updated_at.desc(), LegacySkill.created_at.desc())
         )
         result = await db.execute(stmt)
         return list(result.scalars().all())
@@ -1444,11 +1480,11 @@ class SkillRepository:
         *,
         user_id: int,
         skill_definition_id: int,
-    ) -> Skill | None:
+    ) -> LegacySkill | None:
         stmt = SkillRepository._with_owner_user(
             SkillRepository._active_skill_stmt().where(
-                Skill.user_id == user_id,
-                Skill.skill_definition_id == skill_definition_id,
+                LegacySkill.user_id == user_id,
+                LegacySkill.skill_definition_id == skill_definition_id,
             )
         )
         result = await db.execute(stmt)
@@ -1460,15 +1496,15 @@ class SkillRepository:
         *,
         name: str,
         owner_user_id: int | None,
-    ) -> Skill | None:
-        """Load an active public skill by name and publisher when provided."""
+    ) -> LegacySkill | None:
+        """Load an active public legacy skill by name and publisher when provided."""
         stmt = SkillRepository._active_skill_stmt().where(
-            Skill.user_id.is_(None),
-            Skill.name == name,
+            LegacySkill.user_id.is_(None),
+            LegacySkill.name == name,
         )
         if owner_user_id is not None:
-            stmt = stmt.where(Skill.owner_user_id == owner_user_id)
-        stmt = SkillRepository._with_owner_user(stmt.order_by(Skill.updated_at.desc(), Skill.created_at.desc()).limit(1))
+            stmt = stmt.where(LegacySkill.owner_user_id == owner_user_id)
+        stmt = SkillRepository._with_owner_user(stmt.order_by(LegacySkill.updated_at.desc(), LegacySkill.created_at.desc()).limit(1))
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -1477,51 +1513,51 @@ class SkillRepository:
         db: AsyncSession,
         *,
         skill_definition_id: int,
-    ) -> Skill | None:
-        """Load an active public skill by concrete definition identity."""
+    ) -> LegacySkill | None:
+        """Load an active public legacy skill by concrete definition identity."""
         stmt = SkillRepository._with_owner_user(
             SkillRepository._active_skill_stmt()
             .where(
-                Skill.user_id.is_(None),
-                Skill.skill_definition_id == skill_definition_id,
+                LegacySkill.user_id.is_(None),
+                LegacySkill.skill_definition_id == skill_definition_id,
             )
-            .order_by(Skill.updated_at.desc(), Skill.created_at.desc())
+            .order_by(LegacySkill.updated_at.desc(), LegacySkill.created_at.desc())
             .limit(1)
         )
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def get_system_public_skill_by_name(db: AsyncSession, *, name: str) -> Skill | None:
-        """Load an active public skill by name."""
+    async def get_system_public_skill_by_name(db: AsyncSession, *, name: str) -> LegacySkill | None:
+        """Load an active public legacy skill by name."""
         return await SkillRepository.get_public_skill_by_name(db, name=name)
 
     @staticmethod
-    async def get_public_skill_by_name(db: AsyncSession, *, name: str) -> Skill | None:
-        """Load the active public skill for ``name``, preferring the newest row."""
+    async def get_public_skill_by_name(db: AsyncSession, *, name: str) -> LegacySkill | None:
+        """Load the active public legacy skill for ``name``, preferring the newest row."""
         result = await db.execute(
             SkillRepository._with_owner_user(
                 SkillRepository._active_skill_stmt()
                 .where(
-                    Skill.user_id.is_(None),
-                    Skill.name == name,
+                    LegacySkill.user_id.is_(None),
+                    LegacySkill.name == name,
                 )
-                .order_by(Skill.updated_at.desc(), Skill.created_at.desc())
+                .order_by(LegacySkill.updated_at.desc(), LegacySkill.created_at.desc())
             )
         )
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def list_public_skills_by_name(db: AsyncSession, *, name: str) -> list[Skill]:
+    async def list_public_skills_by_name(db: AsyncSession, *, name: str) -> list[LegacySkill]:
         """List all active public rows for a given skill name."""
         result = await db.execute(
             SkillRepository._with_owner_user(
                 SkillRepository._active_skill_stmt()
                 .where(
-                    Skill.user_id.is_(None),
-                    Skill.name == name,
+                    LegacySkill.user_id.is_(None),
+                    LegacySkill.name == name,
                 )
-                .order_by(Skill.updated_at.desc(), Skill.created_at.desc())
+                .order_by(LegacySkill.updated_at.desc(), LegacySkill.created_at.desc())
             )
         )
         return list(result.scalars().all())
@@ -1532,23 +1568,23 @@ class SkillRepository:
         *,
         name: str,
         owner_user_id: int,
-    ) -> list[Skill]:
+    ) -> list[LegacySkill]:
         """List active public rows for a given skill name and publisher."""
         result = await db.execute(
             SkillRepository._with_owner_user(
                 SkillRepository._active_skill_stmt()
                 .where(
-                    Skill.user_id.is_(None),
-                    Skill.name == name,
-                    Skill.owner_user_id == owner_user_id,
+                    LegacySkill.user_id.is_(None),
+                    LegacySkill.name == name,
+                    LegacySkill.owner_user_id == owner_user_id,
                 )
-                .order_by(Skill.updated_at.desc(), Skill.created_at.desc())
+                .order_by(LegacySkill.updated_at.desc(), LegacySkill.created_at.desc())
             )
         )
         return list(result.scalars().all())
 
     @staticmethod
-    async def get_visible_skill_by_name(db: AsyncSession, *, user_id: int, name: str) -> Skill | None:
+    async def get_visible_skill_by_name(db: AsyncSession, *, user_id: int, name: str) -> LegacySkill | None:
         """Load a visible skill, preferring the current user's copy over the public one."""
         user_skill = await SkillRepository.get_user_skill_by_name(db, user_id=user_id, name=name)
         if user_skill is not None:
@@ -1628,10 +1664,10 @@ class SkillRepository:
     async def soft_delete_skill(
         db: AsyncSession,
         *,
-        skill: Skill,
+        skill: LegacySkill,
         commit: bool = True,
     ) -> None:
-        """Soft-delete a specific skill row."""
+        """Soft-delete a specific legacy skill row."""
         now = datetime.now(UTC)
         skill.deleted_at = now
         skill.updated_at = now
@@ -1640,7 +1676,7 @@ class SkillRepository:
             await db.commit()
 
     @staticmethod
-    async def touch_user_skill(db: AsyncSession, *, user_id: int, name: str, commit: bool = True) -> Skill | None:
+    async def touch_user_skill(db: AsyncSession, *, user_id: int, name: str, commit: bool = True) -> LegacySkill | None:
         """Refresh updated_at for the current user's skill without changing business fields."""
         skill = await SkillRepository.get_user_skill_by_name(db, user_id=user_id, name=name)
         if skill is None:

@@ -12,7 +12,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.gateway.db.models import Agent, AgentSkill, RuntimeManifest, Skill, SkillDefinition, SkillInstall, SkillRelease, SkillVersion, User
+from app.gateway.db.models import Agent, AgentSkill, RuntimeManifest, SkillDefinition, SkillInstall, SkillRelease, SkillVersion, User
+from app.gateway.db.models import LegacySkill as Skill
 from app.gateway.db.repository import AgentRepository, MemoryRepository, RuntimeManifestResolutionError, build_runtime_manifest_hash
 from app.gateway.routers import agents as agents_router
 from app.gateway.routers import skills as skills_router
