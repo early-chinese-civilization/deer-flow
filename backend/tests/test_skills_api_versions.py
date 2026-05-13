@@ -790,9 +790,15 @@ def test_update_preview_uses_selected_install_id_for_same_name_collision(monkeyp
     assert response.status == "up_to_date"
 
 
-def test_delete_installed_skill_row_does_not_delete_immutable_artifact(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "artifact_uri",
+    [
+        "artifacts/skills/100/v1/demo-skill",
+        "12345678-1234-5678-1234-567812345678/1",
+    ],
+)
+def test_delete_installed_skill_row_does_not_delete_immutable_artifact(tmp_path, monkeypatch, artifact_uri):
     db = FakeDb()
-    artifact_uri = "artifacts/skills/100/v1/demo-skill"
     artifact_dir = tmp_path / artifact_uri
     artifact_dir.mkdir(parents=True)
     (artifact_dir / "SKILL.md").write_text("artifact", encoding="utf-8")

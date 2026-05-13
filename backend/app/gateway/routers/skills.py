@@ -27,6 +27,7 @@ from app.gateway.db.repository import (
     SkillReleaseRepository,
     SkillRepository,
     SkillVersionRepository,
+    TerminalSkillRepository,
     is_system_skill_definition,
 )
 from app.gateway.deps import get_current_user, get_db
@@ -37,6 +38,8 @@ from deerflow.skills.installer import SkillAlreadyExistsError, install_skill_fro
 from deerflow.skills.path_utils import (
     build_private_skill_file_path,
     build_public_skill_file_path,
+    build_terminal_skill_version_relative_path,
+    is_terminal_skill_version_relative_path,
     normalize_skill_file_path,
     resolve_skill_storage_dir,
 )
@@ -706,7 +709,7 @@ def _resolve_skill_record_dir(skill: Skill) -> Path:
 
 def _is_immutable_artifact_path(file_path: str | None) -> bool:
     normalized = str(file_path or "").replace("\\", "/").strip("/")
-    return normalized == "artifacts" or normalized.startswith("artifacts/")
+    return normalized == "artifacts" or normalized.startswith("artifacts/") or is_terminal_skill_version_relative_path(normalized)
 
 
 def _build_definition_editable_skill_file_path(*, user_id: int, skill_name: str, skill_definition_id: int) -> str:
@@ -1078,18 +1081,35 @@ def _hash_skill_directory(skill_dir: Path) -> tuple[str, str]:
     return hash_skill_directory(skill_dir)
 
 
-def _build_version_artifact_uri(*, definition_id: int, version_number: int, content_hash: str, skill_name: str) -> str:
-    """Build the immutable artifact path for a platform SkillVersion."""
-    return f"artifacts/skills/{definition_id}/v{version_number}-{content_hash[:12]}/{skill_name}"
+def _build_version_artifact_uri(*, skill_id: str, version_number: int) -> str:
+    """Build the temporary compatibility artifact_uri from terminal identity."""
+    return build_terminal_skill_version_relative_path(skill_id, version_number)
 
 
-def _copy_version_artifact(source_dir: Path, artifact_uri: str) -> None:
-    """Copy a skill directory into its immutable artifact path."""
+def _copy_version_artifact(
+    source_dir: Path,
+    artifact_uri: str,
+    *,
+    expected_content_hash: str,
+    expected_file_manifest_hash: str,
+) -> None:
+    """Copy a skill directory into an immutable terminal version path."""
+    if not source_dir.exists() or not source_dir.is_dir():
+        raise ValueError(f"Skill directory '{source_dir}' does not exist")
     target_dir = _resolve_skill_dir(artifact_uri)
     if target_dir.exists():
-        return
+        if not target_dir.is_dir():
+            raise ValueError("Skill version destination already exists and is not a directory")
+        actual_content_hash, actual_file_manifest_hash = _hash_skill_directory(target_dir)
+        if actual_content_hash == expected_content_hash and actual_file_manifest_hash == expected_file_manifest_hash:
+            return
+        raise ValueError("Skill version destination already exists with different content")
     target_dir.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source_dir, target_dir)
+    actual_content_hash, actual_file_manifest_hash = _hash_skill_directory(target_dir)
+    if actual_content_hash != expected_content_hash or actual_file_manifest_hash != expected_file_manifest_hash:
+        shutil.rmtree(target_dir, ignore_errors=True)
+        raise ValueError("Skill version destination failed hash verification")
 
 
 def _load_uploaded_fork_claim(skill_dir: Path) -> ParsedForkClaim | None:
@@ -1281,13 +1301,18 @@ async def _ensure_skill_version_from_dir(
 
     latest = await SkillVersionRepository.get_latest_for_definition(db, skill_definition_id=definition.id)
     next_number = 1 if latest is None else latest.version_number + 1
+    terminal_skill = await TerminalSkillRepository.ensure_for_legacy_definition(db, definition=definition)
     artifact_uri = _build_version_artifact_uri(
-        definition_id=definition.id,
+        skill_id=str(terminal_skill.id),
         version_number=next_number,
-        content_hash=content_hash,
-        skill_name=skill_name,
     )
-    await asyncio.to_thread(_copy_version_artifact, skill_dir, artifact_uri)
+    await asyncio.to_thread(
+        _copy_version_artifact,
+        skill_dir,
+        artifact_uri,
+        expected_content_hash=content_hash,
+        expected_file_manifest_hash=file_manifest_hash,
+    )
     version = await SkillVersionRepository.create_version(
         db,
         definition=definition,

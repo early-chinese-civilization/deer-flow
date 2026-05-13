@@ -33,7 +33,7 @@ from app.gateway.db.models import (
     Workspace,
 )
 from deerflow.skills.hashing import hash_skill_file_manifest
-from deerflow.skills.path_utils import build_skill_virtual_path, resolve_skill_storage_dir
+from deerflow.skills.path_utils import build_skill_virtual_path, build_terminal_skill_version_relative_path, is_terminal_skill_version_relative_path, resolve_skill_storage_dir
 
 
 @dataclass(frozen=True)
@@ -110,12 +110,20 @@ def build_runtime_manifest_hash(manifest_json: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
 
 
+def _is_immutable_version_storage_path(normalized_artifact: str) -> bool:
+    parts = [part for part in normalized_artifact.split("/") if part]
+    if any(part in {".", ".."} for part in parts):
+        return False
+    if len(parts) >= 3 and parts[0] == "artifacts" and parts[1] == "skills":
+        return True
+    return is_terminal_skill_version_relative_path(normalized_artifact)
+
+
 def _ensure_artifact_integrity(artifact_uri: str, *, skill_name: str, expected_file_manifest_hash: str) -> None:
     """Fail manifest resolution if an immutable artifact is missing or drifted."""
     normalized_artifact = artifact_uri.replace("\\", "/").strip("/")
-    parts = [part for part in normalized_artifact.split("/") if part]
-    if len(parts) < 2 or parts[0] != "artifacts" or any(part in {".", ".."} for part in parts):
-        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact must use immutable artifacts scope: {artifact_uri}")
+    if not _is_immutable_version_storage_path(normalized_artifact):
+        raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact must use immutable version storage scope: {artifact_uri}")
     if not expected_file_manifest_hash:
         raise RuntimeManifestResolutionError(f"Skill '{skill_name}' artifact is missing file manifest hash")
     try:
@@ -992,6 +1000,9 @@ class SkillVersionRepository:
         latest = await SkillVersionRepository.get_latest_for_definition(db, skill_definition_id=definition.id)
         next_number = 1 if latest is None else latest.version_number + 1
         terminal_skill = await TerminalSkillRepository.ensure_for_legacy_definition(db, definition=definition)
+        terminal_artifact_uri = build_terminal_skill_version_relative_path(terminal_skill.id, next_number)
+        if artifact_uri != terminal_artifact_uri:
+            raise ValueError("SkillVersion artifact_uri must be derived from skill_id and version_number")
         version = SkillVersion(
             skill_id=terminal_skill.id,
             skill_definition_id=definition.id,
@@ -1000,7 +1011,7 @@ class SkillVersionRepository:
             description=description,
             content_hash=content_hash,
             file_manifest_hash=file_manifest_hash,
-            artifact_uri=artifact_uri,
+            artifact_uri=terminal_artifact_uri,
             created_by_user_id=created_by_user_id,
         )
         db.add(version)

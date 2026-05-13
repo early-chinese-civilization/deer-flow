@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from pathlib import Path, PurePosixPath
 
 PUBLIC_SKILLS_DIR = "public"
@@ -30,6 +31,42 @@ def build_skill_virtual_root(skill_name: str, *, container_base_path: str = "/mn
 def build_skill_virtual_path(skill_name: str, *, container_base_path: str = "/mnt/skills", identity_suffix: str | int | None = None) -> str:
     """Return the stable virtual SKILL.md path exposed to the model."""
     return f"{build_skill_virtual_root(skill_name, container_base_path=container_base_path, identity_suffix=identity_suffix)}/SKILL.md"
+
+
+def build_terminal_skill_version_relative_path(skill_id: str | uuid.UUID, version_number: int | str) -> str:
+    """Return the terminal relative content path for an immutable Skill version."""
+    try:
+        terminal_skill_id = str(skill_id) if isinstance(skill_id, uuid.UUID) else str(uuid.UUID(str(skill_id)))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ValueError("skill_id must be a valid UUID") from exc
+
+    if isinstance(version_number, bool):
+        raise ValueError("version_number must be a positive integer")
+    try:
+        terminal_version_number = int(version_number)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("version_number must be a positive integer") from exc
+    if terminal_version_number <= 0:
+        raise ValueError("version_number must be a positive integer")
+
+    return f"{terminal_skill_id}/{terminal_version_number}"
+
+
+def is_terminal_skill_version_relative_path(file_path: str | None) -> bool:
+    """Return whether a relative path is exactly ``{skill_id}/{version_number}``."""
+    normalized = str(file_path or "").replace("\\", "/").strip("/")
+    parts = [part for part in normalized.split("/") if part]
+    if len(parts) != 2 or any(part in {".", ".."} for part in parts):
+        return False
+    try:
+        return build_terminal_skill_version_relative_path(parts[0], parts[1]) == normalized
+    except ValueError:
+        return False
+
+
+def resolve_terminal_skill_version_dir(skills_root: Path, skill_id: str | uuid.UUID, version_number: int | str) -> Path:
+    """Resolve the terminal immutable Skill version directory under the skills root."""
+    return resolve_skill_storage_dir(skills_root, build_terminal_skill_version_relative_path(skill_id, version_number))
 
 
 def normalize_skill_file_path(

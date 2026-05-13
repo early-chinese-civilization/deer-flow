@@ -662,6 +662,45 @@ def test_derive_skill_scope_materializes_bundle_for_manifest_artifacts(tmp_path)
     assert not (bundle_dir / "public" / "probe-skill" / "SKILL.md").exists()
 
 
+def test_derive_skill_scope_materializes_bundle_for_terminal_skill_version_path(tmp_path) -> None:
+    skills_root = tmp_path / "skills"
+    artifact_uri = "12345678-1234-5678-1234-567812345678/1"
+    artifact_dir = skills_root / artifact_uri
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "SKILL.md").write_text("terminal authorized", encoding="utf-8")
+    file_manifest_hash = hash_skill_file_manifest(artifact_dir)
+
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "user_id": 7,
+                "skills": [
+                    {
+                        "name": "probe-skill",
+                        "artifact_uri": artifact_uri,
+                        "file_path": artifact_uri,
+                        "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
+                        "skill_version_id": 101,
+                        "content_hash": "hash-v1",
+                        "file_manifest_hash": file_manifest_hash,
+                    }
+                ],
+            }
+        },
+        config={},
+    )
+
+    with patch(
+        "deerflow.sandbox.skill_scope._get_skills_root_path",
+        return_value=skills_root,
+    ):
+        scope = derive_skill_scope_from_runtime(runtime)
+
+    assert scope is not None
+    assert (skills_root / scope / "probe-skill" / "SKILL.md").read_text(encoding="utf-8") == "terminal authorized"
+
+
 def test_derive_skill_scope_reuses_system_skill_bundle_for_repeated_direct_bindings(tmp_path) -> None:
     skills_root = tmp_path / "skills"
     artifact_dir = skills_root / "artifacts" / "skills" / "1" / "v1" / "system-skill"
@@ -842,7 +881,7 @@ def test_derive_skill_scope_rejects_public_latest_artifact_uri() -> None:
         config={},
     )
 
-    with pytest.raises(SandboxRuntimeError, match="immutable artifacts scope"):
+    with pytest.raises(SandboxRuntimeError, match="immutable version storage scope"):
         derive_skill_scope_from_runtime(runtime)
 
 
@@ -866,11 +905,18 @@ def test_derive_skill_scope_rejects_private_latest_artifact_uri() -> None:
         config={},
     )
 
-    with pytest.raises(SandboxRuntimeError, match="immutable artifacts scope"):
+    with pytest.raises(SandboxRuntimeError, match="immutable version storage scope"):
         derive_skill_scope_from_runtime(runtime)
 
 
-def test_derive_skill_scope_rejects_artifact_uri_traversal() -> None:
+@pytest.mark.parametrize(
+    "artifact_uri",
+    [
+        "artifacts/../public/probe-skill",
+        "artifacts/legacy/skills/legacy-id/probe-skill",
+    ],
+)
+def test_derive_skill_scope_rejects_non_runtime_artifact_uri(artifact_uri) -> None:
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
         context={
@@ -879,8 +925,8 @@ def test_derive_skill_scope_rejects_artifact_uri_traversal() -> None:
                 "skills": [
                     {
                         "name": "probe-skill",
-                        "artifact_uri": "artifacts/../public/probe-skill",
-                        "file_path": "artifacts/../public/probe-skill",
+                        "artifact_uri": artifact_uri,
+                        "file_path": artifact_uri,
                         "virtual_path": "/mnt/skills/probe-skill/SKILL.md",
                         "skill_version_id": 1,
                     },
@@ -890,7 +936,7 @@ def test_derive_skill_scope_rejects_artifact_uri_traversal() -> None:
         config={},
     )
 
-    with pytest.raises(SandboxRuntimeError, match="immutable artifacts scope"):
+    with pytest.raises(SandboxRuntimeError, match="immutable version storage scope"):
         derive_skill_scope_from_runtime(runtime)
 
 

@@ -6,7 +6,7 @@ from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -26,6 +26,10 @@ def _write_artifact(skills_root: Path, artifact_uri: str, marker: str) -> str:
     artifact_dir.mkdir(parents=True)
     (artifact_dir / "SKILL.md").write_text(marker, encoding="utf-8")
     return hash_skill_file_manifest(artifact_dir)
+
+
+def _terminal_skill_id(definition_id: int) -> UUID:
+    return UUID(int=definition_id)
 
 
 def _runtime_config(skills_root: Path):
@@ -159,15 +163,19 @@ class _ApiFlowStore:
         created_by_user_id,
     ):
         latest = await self.get_latest_version(db, skill_definition_id=definition.id)
+        version_number = 1 if latest is None else latest.version_number + 1
+        terminal_artifact_uri = f"{_terminal_skill_id(definition.id)}/{version_number}"
+        assert artifact_uri == terminal_artifact_uri
         version = SkillVersion(
             id=self.next_version_id,
+            skill_id=_terminal_skill_id(definition.id),
             skill_definition_id=definition.id,
-            version_number=1 if latest is None else latest.version_number + 1,
+            version_number=version_number,
             source_package_version=source_package_version,
             description=description,
             content_hash=content_hash,
             file_manifest_hash=file_manifest_hash,
-            artifact_uri=artifact_uri,
+            artifact_uri=terminal_artifact_uri,
             created_by_user_id=created_by_user_id,
             definition=definition,
         )
@@ -377,6 +385,9 @@ class _ApiFlowStore:
     async def list_bound_agents_for_install(self, db, *, user_id, skill_install_id):
         return [agent for agent in self.agents if agent.user_id == user_id and any(association.skill_install_id == skill_install_id and association.enabled and association.deleted_at is None for association in agent.agent_skills)]
 
+    async def ensure_terminal_skill_for_legacy_definition(self, db, *, definition):
+        return SimpleNamespace(id=_terminal_skill_id(definition.id))
+
 
 def _skill_zip_bytes(
     *,
@@ -404,6 +415,7 @@ def _install_api_flow_repositories(monkeypatch, store: _ApiFlowStore) -> None:
     monkeypatch.setattr(skills_router.SkillVersionRepository, "get_latest_for_definition", store.get_latest_version)
     monkeypatch.setattr(skills_router.SkillVersionRepository, "create_version", store.create_version)
     monkeypatch.setattr(skills_router.SkillVersionRepository, "get_by_id", store.get_version_by_id)
+    monkeypatch.setattr(skills_router.TerminalSkillRepository, "ensure_for_legacy_definition", store.ensure_terminal_skill_for_legacy_definition)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_definition", store.get_install_by_user_and_definition)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_name", store.get_install_by_user_and_name)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "list_by_user_and_name", store.list_install_by_user_and_name)
@@ -560,8 +572,8 @@ def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_
         assert v2.version_number == 2
         assert v1.source_package_version == "99.0.0"
         assert v2.source_package_version == "100.0.0"
-        assert v1.artifact_uri.startswith(f"artifacts/skills/{definition.id}/v1-")
-        assert v2.artifact_uri.startswith(f"artifacts/skills/{definition.id}/v2-")
+        assert v1.artifact_uri == f"{_terminal_skill_id(definition.id)}/1"
+        assert v2.artifact_uri == f"{_terminal_skill_id(definition.id)}/2"
         assert publisher_install.current_version_id == v2.id
         assert release_v1.skill_version_id == v1.id
         assert release_v1.artifact_path == v1.artifact_uri
@@ -1131,6 +1143,38 @@ def test_runtime_manifest_rejects_artifact_file_manifest_hash_mismatch(tmp_path,
         AgentRepository._active_runtime_skills(_bound_agent_with_install(install))
 
 
+def test_runtime_manifest_accepts_terminal_skill_version_artifact_uri(tmp_path, monkeypatch):
+    skills_root = tmp_path / "skills"
+    artifact_uri = "12345678-1234-5678-1234-567812345678/1"
+    file_manifest_hash = _write_artifact(skills_root, artifact_uri, "SKILL_RUNTIME_OK_V1")
+    monkeypatch.setattr("deerflow.config.get_app_config", lambda: _runtime_config(skills_root))
+
+    definition = SkillDefinition(id=1, name="probe-skill", description="Probe")
+    version = SkillVersion(
+        id=101,
+        skill_definition_id=1,
+        version_number=1,
+        description="Probe",
+        content_hash="hash-v1",
+        file_manifest_hash=file_manifest_hash,
+        artifact_uri=artifact_uri,
+        definition=definition,
+    )
+    install = SkillInstall(
+        id=201,
+        user_id=22,
+        skill_definition_id=1,
+        installed_version_id=101,
+        current_version_id=101,
+        definition=definition,
+        current_version=version,
+    )
+
+    descriptors = AgentRepository._active_runtime_skills(_bound_agent_with_install(install))
+
+    assert descriptors[0].artifact_uri == artifact_uri
+
+
 def test_runtime_manifest_rejects_missing_current_version(tmp_path, monkeypatch):
     skills_root = tmp_path / "skills"
     monkeypatch.setattr("deerflow.config.get_app_config", lambda: _runtime_config(skills_root))
@@ -1223,7 +1267,7 @@ def test_runtime_manifest_rejects_missing_skill_md(tmp_path, monkeypatch):
         "artifacts/../public/probe-skill",
     ],
 )
-def test_runtime_manifest_rejects_non_artifacts_scope_artifact_uri(tmp_path, monkeypatch, artifact_uri):
+def test_runtime_manifest_rejects_non_immutable_storage_artifact_uri(tmp_path, monkeypatch, artifact_uri):
     skills_root = tmp_path / "skills"
     _write_artifact(skills_root, artifact_uri, "fallback should never authorize")
     monkeypatch.setattr("deerflow.config.get_app_config", lambda: _runtime_config(skills_root))
@@ -1249,7 +1293,7 @@ def test_runtime_manifest_rejects_non_artifacts_scope_artifact_uri(tmp_path, mon
         current_version=version,
     )
 
-    with pytest.raises(RuntimeManifestResolutionError, match="immutable artifacts scope"):
+    with pytest.raises(RuntimeManifestResolutionError, match="immutable version storage scope"):
         AgentRepository._active_runtime_skills(_bound_agent_with_install(install))
 
 

@@ -8,11 +8,11 @@ import shutil
 import time
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, cast
 
 from deerflow.sandbox.exceptions import SandboxRuntimeError
 from deerflow.skills.hashing import hash_skill_file_manifest
-from deerflow.skills.path_utils import resolve_skill_storage_dir
+from deerflow.skills.path_utils import is_terminal_skill_version_relative_path, resolve_skill_storage_dir
 
 _ARTIFACTS_SCOPE_ROOT = "artifacts"
 _RUNTIME_BUNDLE_SCOPE_ROOT = ".runtime-skill-bundles"
@@ -21,6 +21,15 @@ _RUNTIME_BUNDLE_RETENTION_SECONDS = 7 * 24 * 60 * 60
 _RUNTIME_BUNDLE_TMP_RETENTION_SECONDS = 60 * 60
 
 logger = logging.getLogger(__name__)
+
+
+def _is_immutable_runtime_artifact_uri(normalized_artifact: str) -> bool:
+    parts = [part for part in normalized_artifact.split("/") if part]
+    if any(part in {".", ".."} for part in parts):
+        return False
+    if len(parts) >= 3 and parts[0] == _ARTIFACTS_SCOPE_ROOT and parts[1] == "skills":
+        return True
+    return is_terminal_skill_version_relative_path(normalized_artifact)
 
 
 def get_runtime_agent_context(
@@ -80,9 +89,8 @@ def normalize_runtime_artifact_uri(artifact_uri: Any, *, index: int | None = Non
         raise SandboxRuntimeError(f"{label} is missing artifact_uri")
 
     normalized_artifact = artifact_uri.replace("\\", "/").strip("/")
-    parts = [part for part in normalized_artifact.split("/") if part]
-    if len(parts) < 2 or parts[0] != _ARTIFACTS_SCOPE_ROOT or any(part in {".", ".."} for part in parts):
-        raise SandboxRuntimeError(f"{label} artifact_uri must use the immutable artifacts scope: {artifact_uri!r}")
+    if not _is_immutable_runtime_artifact_uri(normalized_artifact):
+        raise SandboxRuntimeError(f"{label} artifact_uri must use the immutable version storage scope: {artifact_uri!r}")
     return normalized_artifact
 
 
@@ -281,7 +289,7 @@ def derive_skill_scope_from_runtime_agent(runtime_agent: Mapping[str, Any] | Non
         if not isinstance(skill, Mapping):
             raise SandboxRuntimeError(f"Runtime skill metadata at index {index} is malformed")
 
-        artifact_entries.append(_runtime_bundle_entry(index, skill, container_base_path=container_base_path))
+        artifact_entries.append(_runtime_bundle_entry(index, cast(Mapping[str, Any], skill), container_base_path=container_base_path))
 
     if artifact_entries:
         return _materialize_runtime_skill_bundle(artifact_entries)
