@@ -83,8 +83,18 @@ def build_skill_definition_source(owner_user_id: int | None) -> tuple[str, str]:
 
 
 def is_system_skill_definition(definition: SkillDefinition | None) -> bool:
-    """Return whether a definition represents a platform-provided System Skill."""
+    """Return whether a legacy definition represents a platform System Skill."""
     return definition is not None and definition.source_type == "legacy" and definition.source_identifier == "legacy"
+
+
+def is_internal_system_user(user: User | None) -> bool:
+    """Return whether a user row is DeerFlow's protected internal system user."""
+    return user is not None and user.external_auth_id == INTERNAL_SYSTEM_EXTERNAL_AUTH_ID
+
+
+def is_system_owned_skill(skill: Skill | None) -> bool:
+    """Return whether a terminal Skill is owned by DeerFlow's internal system user."""
+    return skill is not None and is_internal_system_user(skill.owner_user)
 
 
 def _as_optional_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
@@ -427,6 +437,7 @@ class AgentRepository:
     def _with_agent_skills(stmt):
         return stmt.options(
             selectinload(Agent.agent_skills).selectinload(AgentSkill.skill),
+            selectinload(Agent.agent_skills).selectinload(AgentSkill.skill_install).selectinload(SkillInstall.skill).selectinload(Skill.owner_user),
             selectinload(Agent.agent_skills).selectinload(AgentSkill.skill_install).selectinload(SkillInstall.definition).selectinload(SkillDefinition.owner_user),
             selectinload(Agent.agent_skills).selectinload(AgentSkill.skill_install).selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
             selectinload(Agent.agent_skills).selectinload(AgentSkill.system_skill_definition).selectinload(SkillDefinition.owner_user),
@@ -515,21 +526,21 @@ class AgentRepository:
 
     @staticmethod
     def _build_runtime_system_skill_descriptor(version: SkillVersion, explicit_definition: SkillDefinition | None = None) -> RuntimeSkillDescriptor:
-        """Project a direct system SkillVersion binding into runtime manifest metadata."""
+        """Project a configured default-chat system SkillVersion into runtime metadata."""
         definition = explicit_definition or version.definition
         if definition is None:
             raise RuntimeManifestResolutionError(f"System skill version {version.id} has no definition")
         if version.skill_definition_id != definition.id:
             raise RuntimeManifestResolutionError(f"System skill version {version.id} points to another definition")
-        if not is_system_skill_definition(definition):
-            raise RuntimeManifestResolutionError(f"Skill definition {definition.id} is not a system skill")
+        if not is_system_owned_skill(version.skill):
+            raise RuntimeManifestResolutionError(f"Skill {version.skill_id} is not owned by the internal system user")
         file_path = version.artifact_uri
         _ensure_artifact_integrity(file_path, skill_name=definition.name, expected_file_manifest_hash=version.file_manifest_hash)
         return RuntimeSkillDescriptor(
             name=definition.name,
             description=version.description or definition.description or "",
             file_path=file_path,
-            virtual_path=build_skill_virtual_path(definition.name, container_base_path=_get_skills_container_path(), identity_suffix=f"system-{definition.id}-version-{version.id}"),
+            virtual_path=build_skill_virtual_path(definition.name, container_base_path=_get_skills_container_path(), identity_suffix=f"system-{version.skill_id}-version-{version.version_number}"),
             skill_definition_id=definition.id,
             skill_version_id=version.id,
             skill_install_id=None,
@@ -545,6 +556,29 @@ class AgentRepository:
         )
 
     @staticmethod
+    async def _default_chat_runtime_skills(db: AsyncSession) -> list[RuntimeSkillDescriptor]:
+        """Resolve default-chat system Skills from platform config."""
+        try:
+            from deerflow.config import get_app_config
+
+            configured_skills = get_app_config().default_chat.system_skills
+        except Exception as exc:
+            raise RuntimeManifestResolutionError("Default chat system Skill config cannot be loaded") from exc
+
+        descriptors: list[RuntimeSkillDescriptor] = []
+        seen_versions: set[tuple[uuid.UUID, int]] = set()
+        for entry in configured_skills:
+            key = (entry.skill_id, entry.version_number)
+            if key in seen_versions:
+                raise RuntimeManifestResolutionError(f"Duplicate default chat system Skill version ({entry.skill_id}, {entry.version_number})")
+            seen_versions.add(key)
+            version = await SkillVersionRepository.get_by_skill_version(db, skill_id=entry.skill_id, version_number=entry.version_number)
+            if version is None:
+                raise RuntimeManifestResolutionError(f"Default chat system Skill version ({entry.skill_id}, {entry.version_number}) not found")
+            descriptors.append(AgentRepository._build_runtime_system_skill_descriptor(version))
+        return descriptors
+
+    @staticmethod
     def _active_runtime_skills(agent: Agent) -> list[RuntimeSkillDescriptor]:
         """Return ordered active skill descriptors for an agent."""
         active_associations = [association for association in agent.agent_skills if association.deleted_at is None and association.enabled]
@@ -554,13 +588,14 @@ class AgentRepository:
             if association.skill_install is not None:
                 if association.skill_install.deleted_at is not None:
                     raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
+                if association.skill_install.status != "active":
+                    raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
+                if agent.user_id is None or association.skill_install.user_id != agent.user_id:
+                    raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding owned by another user")
                 descriptors.append(AgentRepository._build_runtime_skill_descriptor(association.skill_install))
                 continue
-            if association.system_skill_version is not None:
-                descriptors.append(AgentRepository._build_runtime_system_skill_descriptor(association.system_skill_version, association.system_skill_definition))
-                continue
-            if association.system_skill_version_id is not None:
-                raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a system skill binding without an active version")
+            if association.system_skill_version is not None or association.system_skill_version_id is not None:
+                raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a direct system skill binding; use default_chat.system_skills or an install-backed binding")
             else:
                 raise RuntimeManifestResolutionError(f"Agent '{agent.name}' has a skill binding without an active install")
         return descriptors
@@ -621,12 +656,13 @@ class AgentRepository:
 
         normalized_agent_name = agent_name.strip().lower() if isinstance(agent_name, str) and agent_name.strip() else None
         if normalized_agent_name is None:
+            skills = await AgentRepository._default_chat_runtime_skills(db)
             return RuntimeAgentBundle(
                 user_id=user_id,
                 agent_name=None,
                 memory_json=memory_json,
                 soul=None,
-                skills=[],
+                skills=skills,
             )
 
         agent = await AgentRepository.get_agent_by_name(db, user_id=user_id, name=normalized_agent_name)
@@ -702,9 +738,15 @@ class AgentRepository:
         commit: bool = True,
     ) -> Agent:
         """Replace the agent's active skill associations with the provided skills."""
+        if skill_ids:
+            raise ValueError("Custom Agent skill bindings must use skill_installation IDs")
+        if system_skill_version_ids:
+            raise ValueError("Direct system Skill bindings are removed from custom Agent paths")
         reloaded_agent = await AgentRepository.get_agent_by_id(db, agent.id)
         if reloaded_agent is None:
             raise ValueError(f"Agent {agent.id} disappeared before skill replacement")
+        if reloaded_agent.user_id is None:
+            raise ValueError(f"Agent {reloaded_agent.id} is not a user-owned custom Agent")
 
         now = datetime.now(UTC)
         for association in reloaded_agent.agent_skills:
@@ -712,46 +754,22 @@ class AgentRepository:
                 association.deleted_at = now
 
         install_ids = skill_install_ids if skill_install_ids is not None else []
-        if skill_install_ids is None:
-            install_ids = []
-        system_version_ids = system_skill_version_ids if system_skill_version_ids is not None else []
-
-        for display_order, skill_id in enumerate(skill_ids):
-            association = AgentSkill(
-                agent_id=reloaded_agent.id,
-                skill_id=skill_id,
-                display_order=display_order,
-                enabled=True,
-            )
-            db.add(association)
-
-        display_order = 0
+        seen_install_ids: set[int] = set()
         for install_id in install_ids:
+            if install_id in seen_install_ids:
+                raise ValueError(f"Duplicate skill installation {install_id}")
+            seen_install_ids.add(install_id)
+            install = await SkillInstallRepository.get_by_id_for_user(db, user_id=reloaded_agent.user_id, skill_install_id=install_id)
+            if install is None or install.status != "active" or install.deleted_at is not None:
+                raise ValueError(f"Skill installation {install_id} is not available for this Agent")
             association = AgentSkill(
                 agent_id=reloaded_agent.id,
                 skill_id=None,
-                skill_install_id=install_id,
-                display_order=display_order,
+                skill_install_id=install.id,
+                display_order=len(seen_install_ids) - 1,
                 enabled=True,
             )
             db.add(association)
-            display_order += 1
-
-        for system_version_id in system_version_ids:
-            version = await SkillVersionRepository.get_by_id(db, skill_version_id=system_version_id)
-            if version is None or version.definition is None or not is_system_skill_definition(version.definition):
-                raise ValueError(f"System skill version {system_version_id} is not available")
-            association = AgentSkill(
-                agent_id=reloaded_agent.id,
-                skill_id=None,
-                skill_install_id=None,
-                system_skill_definition_id=version.skill_definition_id,
-                system_skill_version_id=version.id,
-                display_order=display_order,
-                enabled=True,
-            )
-            db.add(association)
-            display_order += 1
 
         reloaded_agent.updated_at = now
         await db.flush()

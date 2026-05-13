@@ -4,9 +4,11 @@ import json
 import os
 from pathlib import Path
 
+import pytest
 import yaml
+from pydantic import ValidationError
 
-from deerflow.config.app_config import get_app_config, reset_app_config
+from deerflow.config.app_config import AppConfig, get_app_config, reset_app_config
 
 
 def _write_config(path: Path, *, model_name: str, supports_thinking: bool) -> None:
@@ -30,6 +32,47 @@ def _write_config(path: Path, *, model_name: str, supports_thinking: bool) -> No
 
 def _write_extensions_config(path: Path) -> None:
     path.write_text(json.dumps({"mcpServers": {}, "skills": {}}), encoding="utf-8")
+
+
+def _minimal_config(**overrides):
+    config = {"sandbox": {"use": "deerflow.sandbox.local:LocalSandboxProvider"}}
+    config.update(overrides)
+    return config
+
+
+def test_app_config_parses_default_chat_system_skill_versions():
+    skill_id = "12345678-1234-5678-1234-567812345678"
+
+    config = AppConfig.model_validate(
+        _minimal_config(
+            default_chat={
+                "system_skills": [
+                    {
+                        "skill_id": skill_id,
+                        "version_number": 1,
+                    }
+                ]
+            }
+        )
+    )
+
+    assert str(config.default_chat.system_skills[0].skill_id) == skill_id
+    assert config.default_chat.system_skills[0].version_number == 1
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"skill_id": "not-a-uuid", "version_number": 1},
+        {"skill_id": "12345678-1234-5678-1234-567812345678"},
+        {"skill_id": "12345678-1234-5678-1234-567812345678", "version_number": 0},
+        {"skill_id": "12345678-1234-5678-1234-567812345678", "version_number": True},
+        {"skill_id": "12345678-1234-5678-1234-567812345678", "version_number": 1, "name": "legacy"},
+    ],
+)
+def test_app_config_rejects_invalid_default_chat_system_skill_entries(entry):
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate(_minimal_config(default_chat={"system_skills": [entry]}))
 
 
 def test_get_app_config_reloads_when_file_changes(tmp_path, monkeypatch):

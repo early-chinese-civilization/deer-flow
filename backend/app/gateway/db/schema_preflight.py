@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -288,6 +289,22 @@ _INDEXES_SQL = text("select tablename, indexname from pg_indexes where schemanam
 _CONSTRAINTS_SQL = text("select table_name, constraint_name from information_schema.table_constraints where table_schema=:schema and table_name = any(:tables) order by table_name, constraint_name")
 _ALEMBIC_VERSION_SQL = text("select version_num from alembic_version order by version_num")
 _SYSTEM_USER_SQL = text("select count(*) from users where external_auth_id=:external_auth_id")
+_DEFAULT_CHAT_SKILL_SQL = text(
+    """
+    select skills.deleted_at, users.external_auth_id
+    from skills
+    join users on users.id = skills.owner_user_id
+    where skills.id = :skill_id
+    """
+)
+_DEFAULT_CHAT_VERSION_SQL = text(
+    """
+    select count(*)
+    from skill_versions
+    where skill_id = :skill_id
+      and version_number = :version_number
+    """
+)
 
 
 @dataclass(frozen=True)
@@ -402,3 +419,35 @@ async def assert_gateway_schema_ready(engine: AsyncEngine) -> None:
     status = await inspect_gateway_schema(engine)
     if status.missing_tables or status.missing_columns or status.missing_indexes or status.missing_constraints or status.failed_checks:
         raise RuntimeError(_build_schema_error(status))
+
+
+async def assert_default_chat_system_skills_ready(engine: AsyncEngine, system_skills: list[Any]) -> None:
+    """Validate configured default-chat system Skill versions against terminal DB rows."""
+    if not system_skills:
+        return
+
+    failed_checks: list[str] = []
+    async with engine.connect() as connection:
+        for index, entry in enumerate(system_skills):
+            skill_id = getattr(entry, "skill_id", None)
+            version_number = getattr(entry, "version_number", None)
+            if skill_id is None or version_number is None:
+                failed_checks.append(f"default_chat.system_skills[{index}] must contain skill_id and version_number")
+                continue
+            skill_row = (await connection.execute(_DEFAULT_CHAT_SKILL_SQL, {"skill_id": skill_id})).first()
+            if skill_row is None:
+                failed_checks.append(f"default_chat.system_skills[{index}] skill_id {skill_id} does not exist")
+                continue
+            deleted_at, external_auth_id = skill_row[0], skill_row[1]
+            if deleted_at is not None:
+                failed_checks.append(f"default_chat.system_skills[{index}] skill_id {skill_id} is deleted")
+                continue
+            if external_auth_id != INTERNAL_SYSTEM_EXTERNAL_AUTH_ID:
+                failed_checks.append(f'default_chat.system_skills[{index}] skill_id {skill_id} must be owned by "{INTERNAL_SYSTEM_EXTERNAL_AUTH_ID}"')
+                continue
+            version_count = int((await connection.execute(_DEFAULT_CHAT_VERSION_SQL, {"skill_id": skill_id, "version_number": version_number})).scalar_one())
+            if version_count != 1:
+                failed_checks.append(f"default_chat.system_skills[{index}] version ({skill_id}, {version_number}) does not exist")
+
+    if failed_checks:
+        raise RuntimeError("Default chat system Skill config is invalid. " + "; ".join(failed_checks))

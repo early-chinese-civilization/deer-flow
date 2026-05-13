@@ -581,7 +581,7 @@ def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_
 
         create_agent = client.post(
             "/api/agents",
-            json={"name": "probe-agent", "description": "Probe Agent", "skills": ["probe-skill"], "soul": "probe"},
+            json={"name": "probe-agent", "description": "Probe Agent", "skill_install_ids": [installer_install.id], "soul": "probe"},
         )
         assert create_agent.status_code == 201, create_agent.text
         agent = asyncio.run(store.get_agent_by_name(db, user_id=installer.id, name="probe-agent"))
@@ -692,6 +692,8 @@ def test_api_backed_max_flow_keeps_runtime_truth_on_install_current_version(tmp_
 
 
 def _bound_agent_with_install(install: SkillInstall, *, legacy_skill: Skill | None = None) -> Agent:
+    if install.status is None:
+        install.status = "active"
     agent = Agent(id=10, user_id=22, name="probe-agent", soul="probe")
     agent.agent_skills = [
         AgentSkill(
@@ -829,6 +831,7 @@ def test_runtime_manifest_uses_install_identity_for_same_name_virtual_roots(tmp_
     first_install = SkillInstall(
         id=201,
         user_id=22,
+        status="active",
         skill_definition_id=1,
         installed_version_id=101,
         current_version_id=101,
@@ -838,6 +841,7 @@ def test_runtime_manifest_uses_install_identity_for_same_name_virtual_roots(tmp_
     second_install = SkillInstall(
         id=202,
         user_id=22,
+        status="active",
         skill_definition_id=2,
         installed_version_id=102,
         current_version_id=102,
@@ -870,7 +874,7 @@ def test_runtime_manifest_uses_install_identity_for_same_name_virtual_roots(tmp_
     assert _load_skill(runtime, skills_root, second_entry["virtual_path"]) == "SECOND_SOURCE"
 
 
-def test_runtime_manifest_resolves_direct_system_skill_without_install(tmp_path, monkeypatch):
+def test_runtime_manifest_rejects_direct_system_skill_without_install(tmp_path, monkeypatch):
     skills_root = tmp_path / "skills"
     system_uri = "artifacts/skills/9/v1-system/system-skill"
     system_file_manifest_hash = _write_artifact(skills_root, system_uri, "SYSTEM_SOURCE")
@@ -909,29 +913,8 @@ def test_runtime_manifest_resolves_direct_system_skill_without_install(tmp_path,
         )
     ]
 
-    descriptors = AgentRepository._active_runtime_skills(agent)
-    manifest = asyncio.run(
-        AgentRepository._create_runtime_manifest(
-            _FakeManifestSession(),
-            user_id=22,
-            agent=agent,
-            skills=descriptors,
-        )
-    )
-    entry = manifest.manifest_json["skills"][0]
-    runtime = _runtime_for_manifest(tmp_path, manifest)
-
-    assert entry["skill_definition_id"] == definition.id
-    assert entry["skill_version_id"] == version.id
-    assert entry["skill_install_id"] is None
-    assert entry["system_skill_definition_id"] == definition.id
-    assert entry["system_skill_version_id"] == version.id
-    assert entry["source_kind"] == "system"
-    assert entry["binding_kind"] == "system"
-    assert entry["virtual_path"] == "/mnt/skills/system-skill--system-9-version-901/SKILL.md"
-    assert entry["artifact_uri"] == system_uri
-    assert manifest.manifest_hash == build_runtime_manifest_hash(manifest.manifest_json)
-    assert _load_skill(runtime, skills_root, entry["virtual_path"]) == "SYSTEM_SOURCE"
+    with pytest.raises(RuntimeManifestResolutionError, match="direct system skill binding"):
+        AgentRepository._active_runtime_skills(agent)
 
 
 def test_skills_max_flow_backend_truth_uses_install_manifest_and_exact_artifacts(tmp_path, monkeypatch):

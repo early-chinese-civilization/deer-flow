@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from app.gateway.auth import routes as auth_routes
 from app.gateway.config import get_gateway_config
 from app.gateway.db.engine import get_engine
-from app.gateway.db.schema_preflight import assert_gateway_schema_ready
+from app.gateway.db.schema_preflight import assert_default_chat_system_skills_ready, assert_gateway_schema_ready
 from app.gateway.deps import langgraph_runtime
 from app.gateway.memory_storage import register_gateway_memory_storage
 from app.gateway.routers import (
@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Load config and check necessary environment variables at startup
     try:
-        get_app_config()
+        app_config = get_app_config()
         register_gateway_memory_storage()
         logger.info("Configuration loaded successfully")
     except Exception as e:
@@ -55,7 +55,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting API Gateway on %s:%s", config.host, config.port)
 
     try:
-        await assert_gateway_schema_ready(get_engine())
+        engine = get_engine()
+        await assert_gateway_schema_ready(engine)
+        await assert_default_chat_system_skills_ready(engine, app_config.default_chat.system_skills)
         logger.info("Gateway database schema preflight passed")
     except RuntimeError:
         logger.exception("Gateway database schema preflight failed")

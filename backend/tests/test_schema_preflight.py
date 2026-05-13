@@ -34,9 +34,23 @@ class _RowsResult:
     def __iter__(self):
         return iter(self._rows)
 
+    def first(self):
+        return self._rows[0] if self._rows else None
+
 
 class _FakeConnection:
-    def __init__(self, tables, revisions=None, columns=None, column_signatures=None, indexes=None, constraints=None, system_user_count=1):
+    def __init__(
+        self,
+        tables,
+        revisions=None,
+        columns=None,
+        column_signatures=None,
+        indexes=None,
+        constraints=None,
+        system_user_count=1,
+        default_chat_skills=None,
+        default_chat_versions=None,
+    ):
         self._tables = tables
         self._revisions = revisions or []
         self._columns = columns or {}
@@ -44,6 +58,8 @@ class _FakeConnection:
         self._indexes = indexes if indexes is not None else _complete_indexes()
         self._constraints = constraints if constraints is not None else _complete_constraints()
         self._system_user_count = system_user_count
+        self._default_chat_skills = default_chat_skills or {}
+        self._default_chat_versions = default_chat_versions or set()
 
     async def execute(self, statement, parameters=None):
         sql = str(statement)
@@ -70,6 +86,13 @@ class _FakeConnection:
             requested_tables = (parameters or {}).get("tables", [])
             rows = [(table, constraint_name) for table in requested_tables for constraint_name in self._constraints.get(table, ())]
             return _RowsResult(rows)
+        if "from skills" in sql and "join users" in sql:
+            skill_id = (parameters or {}).get("skill_id")
+            row = self._default_chat_skills.get(skill_id)
+            return _RowsResult([] if row is None else [row])
+        if "from skill_versions" in sql:
+            key = ((parameters or {}).get("skill_id"), (parameters or {}).get("version_number"))
+            return _ScalarResult([1 if key in self._default_chat_versions else 0])
         if "external_auth_id" in sql:
             return _ScalarResult([self._system_user_count])
         raise AssertionError(f"Unexpected SQL: {sql}")
@@ -326,3 +349,70 @@ async def test_assert_gateway_schema_ready_accepts_terminal_skill_identity_found
     )
 
     await assert_gateway_schema_ready(engine)
+
+
+@pytest.mark.anyio
+async def test_default_chat_system_skill_preflight_accepts_system_owned_version():
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from app.gateway.db.models import INTERNAL_SYSTEM_EXTERNAL_AUTH_ID
+    from app.gateway.db.schema_preflight import assert_default_chat_system_skills_ready
+
+    skill_id = uuid4()
+    engine = SimpleNamespace(
+        connect=lambda: _FakeConnectContext(
+            _FakeConnection(
+                tables=_all_required_tables(),
+                default_chat_skills={skill_id: (None, INTERNAL_SYSTEM_EXTERNAL_AUTH_ID)},
+                default_chat_versions={(skill_id, 1)},
+            )
+        )
+    )
+
+    await assert_default_chat_system_skills_ready(engine, [SimpleNamespace(skill_id=skill_id, version_number=1)])
+
+
+@pytest.mark.anyio
+async def test_default_chat_system_skill_preflight_rejects_non_system_owner():
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from app.gateway.db.schema_preflight import assert_default_chat_system_skills_ready
+
+    skill_id = uuid4()
+    engine = SimpleNamespace(
+        connect=lambda: _FakeConnectContext(
+            _FakeConnection(
+                tables=_all_required_tables(),
+                default_chat_skills={skill_id: (None, "user-sub")},
+                default_chat_versions={(skill_id, 1)},
+            )
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="system:deerflow"):
+        await assert_default_chat_system_skills_ready(engine, [SimpleNamespace(skill_id=skill_id, version_number=1)])
+
+
+@pytest.mark.anyio
+async def test_default_chat_system_skill_preflight_rejects_missing_version():
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from app.gateway.db.models import INTERNAL_SYSTEM_EXTERNAL_AUTH_ID
+    from app.gateway.db.schema_preflight import assert_default_chat_system_skills_ready
+
+    skill_id = uuid4()
+    engine = SimpleNamespace(
+        connect=lambda: _FakeConnectContext(
+            _FakeConnection(
+                tables=_all_required_tables(),
+                default_chat_skills={skill_id: (None, INTERNAL_SYSTEM_EXTERNAL_AUTH_ID)},
+                default_chat_versions=set(),
+            )
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="does not exist"):
+        await assert_default_chat_system_skills_ready(engine, [SimpleNamespace(skill_id=skill_id, version_number=1)])

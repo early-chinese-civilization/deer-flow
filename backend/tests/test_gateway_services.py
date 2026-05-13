@@ -430,12 +430,86 @@ async def test_runtime_agent_bundle_without_agent_name_does_not_fallback_to_publ
         "app.gateway.db.repository.MemoryRepository.get_memory_by_user_id",
         AsyncMock(return_value=SimpleNamespace(memory_json={"facts": []})),
     )
+    monkeypatch.setattr(
+        "deerflow.config.get_app_config",
+        lambda: SimpleNamespace(default_chat=SimpleNamespace(system_skills=[])),
+    )
 
     bundle = await AgentRepository.get_runtime_agent_bundle(fake_db, user_id=9, agent_name=None)
 
     assert bundle.user_id == 9
     assert bundle.agent_name is None
     assert bundle.skills == []
+
+
+@pytest.mark.anyio
+async def test_runtime_agent_bundle_without_agent_name_loads_default_chat_system_skills(tmp_path, monkeypatch):
+    from app.gateway.db.models import INTERNAL_SYSTEM_EXTERNAL_AUTH_ID, Skill, SkillDefinition, SkillVersion, User
+    from app.gateway.db.repository import AgentRepository
+    from deerflow.skills.hashing import hash_skill_file_manifest
+
+    skill_id = uuid4()
+    artifact_uri = f"{skill_id}/1"
+    artifact_dir = tmp_path / "skills" / artifact_uri
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "SKILL.md").write_text("DEFAULT_CHAT_SYSTEM_SKILL", encoding="utf-8")
+    file_manifest_hash = hash_skill_file_manifest(artifact_dir)
+    system_user = User(id=1, external_auth_id=INTERNAL_SYSTEM_EXTERNAL_AUTH_ID, username="system", display_name="System")
+    terminal_skill = Skill(id=skill_id, owner_user_id=system_user.id, name="system-skill", owner_user=system_user)
+    definition = SkillDefinition(
+        id=10,
+        name="system-skill",
+        description="System skill",
+        owner_user_id=system_user.id,
+        owner_user=system_user,
+    )
+    version = SkillVersion(
+        id=101,
+        skill_id=skill_id,
+        skill=terminal_skill,
+        skill_definition_id=definition.id,
+        definition=definition,
+        version_number=1,
+        description="System skill",
+        content_hash="content-hash",
+        file_manifest_hash=file_manifest_hash,
+        artifact_uri=artifact_uri,
+    )
+
+    class _FakeDb:
+        def add(self, value):
+            raise AssertionError(f"default chat must not create rows: {value!r}")
+
+    async def get_by_skill_version(_db, *, skill_id: str, version_number: int):
+        assert skill_id == version.skill_id
+        assert version_number == version.version_number
+        return version
+
+    monkeypatch.setattr(
+        "app.gateway.db.repository.MemoryRepository.get_memory_by_user_id",
+        AsyncMock(return_value=SimpleNamespace(memory_json={"facts": []})),
+    )
+    monkeypatch.setattr(
+        "app.gateway.db.repository.SkillVersionRepository.get_by_skill_version",
+        get_by_skill_version,
+    )
+    monkeypatch.setattr(
+        "deerflow.config.get_app_config",
+        lambda: SimpleNamespace(
+            default_chat=SimpleNamespace(system_skills=[SimpleNamespace(skill_id=skill_id, version_number=1)]),
+            skills=SimpleNamespace(container_path="/mnt/skills", get_skills_path=lambda: tmp_path / "skills"),
+        ),
+    )
+
+    bundle = await AgentRepository.get_runtime_agent_bundle(_FakeDb(), user_id=9, agent_name=None)
+
+    assert bundle.agent_name is None
+    assert bundle.manifest_id is None
+    assert bundle.skills[0].name == "system-skill"
+    assert bundle.skills[0].source_kind == "system"
+    assert bundle.skills[0].binding_kind == "system"
+    assert bundle.skills[0].skill_install_id is None
+    assert bundle.skills[0].system_skill_version_id == 101
 
 
 @pytest.mark.anyio

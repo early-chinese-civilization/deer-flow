@@ -2,10 +2,11 @@ import logging
 import os
 from pathlib import Path
 from typing import Any, Self
+from uuid import UUID
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from deerflow.config.acp_config import load_acp_config_from_dict
 from deerflow.config.checkpointer_config import CheckpointerConfig, load_checkpointer_config_from_dict
@@ -29,10 +30,28 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+class DefaultChatSystemSkillConfig(BaseModel):
+    """Exact system Skill version configured for default chat."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    skill_id: UUID = Field(..., description="Terminal system Skill UUID")
+    version_number: StrictInt = Field(..., gt=0, description="Exact terminal Skill version number")
+
+
+class DefaultChatConfig(BaseModel):
+    """Platform-level default chat configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    system_skills: list[DefaultChatSystemSkillConfig] = Field(default_factory=list, description="System-owned Skill versions enabled for default chat")
+
+
 class AppConfig(BaseModel):
     """Config for the DeerFlow application"""
 
     log_level: str = Field(default="info", description="Logging level for deerflow modules (debug/info/warning/error)")
+    default_chat: DefaultChatConfig = Field(default_factory=DefaultChatConfig, description="Default chat runtime configuration")
     token_usage: TokenUsageConfig = Field(default_factory=TokenUsageConfig, description="Token usage tracking configuration")
     models: list[ModelConfig] = Field(default_factory=list, description="Available models")
     sandbox: SandboxConfig = Field(description="Sandbox configuration")

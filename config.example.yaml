@@ -12,13 +12,26 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 7
+config_version: 8
 
 # ============================================================================
 # Logging
 # ============================================================================
 # Log level for deerflow modules (debug/info/warning/error)
 log_level: info
+
+# ============================================================================
+# Default Chat Configuration
+# ============================================================================
+# Platform-level system Skill versions loaded by ordinary chats where
+# thread.agent_id is null. Entries must reference terminal Skills owned by the
+# internal system user (users.external_auth_id = "system:deerflow") and exact
+# existing SkillVersion rows.
+
+default_chat:
+  system_skills: []
+  # - skill_id: "00000000-0000-0000-0000-000000000001"
+  #   version_number: 1
 
 # ============================================================================
 # Token Usage Tracking

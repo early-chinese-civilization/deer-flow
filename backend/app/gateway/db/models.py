@@ -777,6 +777,15 @@ class AgentSkill(Base):
     system_skill_definition = relationship("SkillDefinition", foreign_keys=[system_skill_definition_id])
     system_skill_version = relationship("SkillVersion", foreign_keys=[system_skill_version_id])
 
+    @property
+    def skill_installation_id(self) -> int | None:
+        """Terminal name for the install-backed Agent binding column."""
+        return self.skill_install_id
+
+    @skill_installation_id.setter
+    def skill_installation_id(self, value: int | None) -> None:
+        self.skill_install_id = value
+
     __table_args__ = (
         CheckConstraint(
             "skill_id IS NOT NULL OR skill_install_id IS NOT NULL OR system_skill_version_id IS NOT NULL",

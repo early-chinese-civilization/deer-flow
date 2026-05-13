@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
 
-from app.gateway.db.models import Agent, AgentSkill, LegacySkill, SkillDefinition, SkillInstall, SkillVersion, User
+from app.gateway.db.models import INTERNAL_SYSTEM_EXTERNAL_AUTH_ID, Agent, AgentSkill, LegacySkill, Skill, SkillDefinition, SkillInstall, SkillVersion, User
+from app.gateway.db.repository import AgentRepository, SkillInstallRepository
 from app.gateway.routers import agents as agents_router
 
 
@@ -55,15 +57,19 @@ class _FakeDb:
         self.rolled_back = True
 
 
-def _agent_with_install(*, current_version: SkillVersion | None, definition: SkillDefinition, install_deleted: bool = False) -> Agent:
+def _agent_with_install(*, current_version: SkillVersion | None, definition: SkillDefinition, install_deleted: bool = False, terminal_skill: Skill | None = None) -> Agent:
     install = SkillInstall(
         id=201,
         user_id=22,
+        skill_id=terminal_skill.id if terminal_skill is not None else None,
+        version_number=current_version.version_number if current_version is not None else None,
+        status="active",
         skill_definition_id=definition.id,
         installed_version_id=101,
         current_version_id=101,
         definition=definition,
         current_version=current_version,
+        skill=terminal_skill,
         deleted_at=datetime.now(UTC) if install_deleted else None,
     )
     return Agent(
@@ -184,7 +190,24 @@ def test_agent_response_keeps_legacy_skill_binding_visible_but_unavailable() -> 
     assert metadata.status == "unavailable"
 
 
-def test_agent_response_labels_official_skill_source_without_namespace() -> None:
+def test_agent_response_labels_system_source_from_terminal_skill_owner() -> None:
+    system_user = User(id=1, external_auth_id=INTERNAL_SYSTEM_EXTERNAL_AUTH_ID, username="system", display_name="System")
+    definition = _definition(owner_user_id=system_user.id)
+    definition.owner_user = system_user
+    current_version = _version(definition, version_id=101, version_number=1)
+    terminal_skill = Skill(id=UUID("12345678-1234-5678-1234-567812345678"), owner_user_id=system_user.id, name="probe-skill", owner_user=system_user)
+    agent = _agent_with_install(current_version=current_version, definition=definition, terminal_skill=terminal_skill)
+
+    response = agents_router._agent_to_response(agent)
+
+    assert response.skill_metadata is not None
+    metadata = response.skill_metadata[0]
+    assert metadata.source == "system"
+    assert metadata.source_label == "System"
+    assert metadata.available is True
+
+
+def test_agent_response_ignores_direct_system_binding_metadata() -> None:
     definition = _definition(owner_user_id=None)
     current_version = _version(definition, version_id=101, version_number=1)
     agent = Agent(
@@ -207,41 +230,22 @@ def test_agent_response_labels_official_skill_source_without_namespace() -> None
 
     response = agents_router._agent_to_response(agent)
 
-    assert response.skills == ["probe-skill"]
-    assert response.skill_metadata is not None
-    metadata = response.skill_metadata[0]
-    assert metadata.skill_install_id is None
-    assert metadata.system_skill_definition_id == definition.id
-    assert metadata.system_skill_version_id == current_version.id
-    assert metadata.source == "system"
-    assert metadata.source_label == "System"
-    assert metadata.current_platform_version == 1
-    assert metadata.available is True
+    assert response.skills is None
+    assert response.skill_metadata is None
 
 
-def test_agent_request_resolves_system_skill_definition_without_install(monkeypatch) -> None:
-    definition = _definition(owner_user_id=None)
-    version = _version(definition, version_id=101, version_number=1)
-
-    async def get_latest_published_release_for_definition(_db, *, skill_definition_id):
-        assert skill_definition_id == definition.id
-        return type("Release", (), {"skill_version": version})()
-
-    async def get_by_id_for_user(*_args, **_kwargs):
-        raise AssertionError("system skill binding must not resolve or create user installs")
-
-    monkeypatch.setattr(agents_router.SkillReleaseRepository, "get_latest_published_release_for_definition", get_latest_published_release_for_definition)
-    monkeypatch.setattr(agents_router.SkillInstallRepository, "get_by_id_for_user", get_by_id_for_user)
-
-    result = asyncio.run(
-        agents_router._resolve_system_skill_version_ids_for_request(
-            object(),
-            system_skill_version_ids=None,
-            system_skill_definition_ids=[definition.id],
+def test_agent_request_rejects_direct_system_skill_definition_without_install() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            agents_router._resolve_system_skill_version_ids_for_request(
+                object(),
+                system_skill_version_ids=None,
+                system_skill_definition_ids=[10],
+            )
         )
-    )
 
-    assert result == [version.id]
+    assert exc_info.value.status_code == 400
+    assert "Direct system Skill bindings are removed" in exc_info.value.detail
 
 
 def test_agent_metadata_publish_v2_keeps_bound_runtime_on_installed_v1_until_manual_update() -> None:
@@ -284,7 +288,7 @@ def test_agent_skill_name_resolution_rejects_missing_or_uninstalled_names(monkey
 
 
 def test_agent_skill_install_id_resolution_selects_collision_install(monkeypatch) -> None:
-    install = SkillInstall(id=202, user_id=22, skill_definition_id=11, installed_version_id=101, current_version_id=101)
+    install = SkillInstall(id=202, user_id=22, status="active", skill_definition_id=11, installed_version_id=101, current_version_id=101)
 
     async def get_by_id_for_user(_db, *, user_id, skill_install_id):
         assert user_id == 22
@@ -307,6 +311,77 @@ def test_agent_skill_install_id_resolution_selects_collision_install(monkeypatch
     )
 
     assert result == [202]
+
+
+def test_agent_repository_replace_agent_skills_rejects_foreign_install(monkeypatch) -> None:
+    agent = Agent(id=501, user_id=22, name="probe-agent", agent_skills=[])
+
+    async def get_agent_by_id(_db, agent_id):
+        assert agent_id == agent.id
+        return agent
+
+    async def get_by_id_for_user(_db, *, user_id, skill_install_id):
+        assert user_id == 22
+        assert skill_install_id == 999
+        return None
+
+    monkeypatch.setattr(AgentRepository, "get_agent_by_id", get_agent_by_id)
+    monkeypatch.setattr(SkillInstallRepository, "get_by_id_for_user", get_by_id_for_user)
+
+    with pytest.raises(ValueError, match="Skill installation 999 is not available"):
+        asyncio.run(
+            AgentRepository.replace_agent_skills(
+                object(),
+                agent=agent,
+                skill_ids=[],
+                skill_install_ids=[999],
+                system_skill_version_ids=None,
+                commit=False,
+            )
+        )
+
+
+def test_agent_repository_replace_agent_skills_rejects_disabled_install(monkeypatch) -> None:
+    agent = Agent(id=501, user_id=22, name="probe-agent", agent_skills=[])
+    install = SkillInstall(id=202, user_id=22, status="disabled", skill_definition_id=11, installed_version_id=101, current_version_id=101)
+
+    async def get_agent_by_id(_db, agent_id):
+        assert agent_id == agent.id
+        return agent
+
+    async def get_by_id_for_user(_db, *, user_id, skill_install_id):
+        assert user_id == 22
+        assert skill_install_id == install.id
+        return install
+
+    monkeypatch.setattr(AgentRepository, "get_agent_by_id", get_agent_by_id)
+    monkeypatch.setattr(SkillInstallRepository, "get_by_id_for_user", get_by_id_for_user)
+
+    with pytest.raises(ValueError, match="Skill installation 202 is not available"):
+        asyncio.run(
+            AgentRepository.replace_agent_skills(
+                object(),
+                agent=agent,
+                skill_ids=[],
+                skill_install_ids=[install.id],
+                system_skill_version_ids=None,
+                commit=False,
+            )
+        )
+
+
+def test_agent_repository_replace_agent_skills_rejects_direct_system_ids() -> None:
+    with pytest.raises(ValueError, match="Direct system Skill bindings are removed"):
+        asyncio.run(
+            AgentRepository.replace_agent_skills(
+                object(),
+                agent=Agent(id=501, user_id=22, name="probe-agent", agent_skills=[]),
+                skill_ids=[],
+                skill_install_ids=[],
+                system_skill_version_ids=[101],
+                commit=False,
+            )
+        )
 
 
 def test_create_agent_rejects_uninstalled_skill_name_and_rolls_back(monkeypatch) -> None:
@@ -341,7 +416,7 @@ def test_create_agent_rejects_uninstalled_skill_name_and_rolls_back(monkeypatch)
         )
 
     assert exc_info.value.status_code == 400
-    assert exc_info.value.detail == "Skill install 'missing-skill' not found"
+    assert exc_info.value.detail == "Agent skill name bindings are removed. Submit skill_install_ids."
     assert db.rolled_back is True
 
 
@@ -379,5 +454,5 @@ def test_update_agent_rejects_uninstalled_skill_name_and_rolls_back(monkeypatch)
         )
 
     assert exc_info.value.status_code == 400
-    assert exc_info.value.detail == "Skill install 'missing-skill' not found"
+    assert exc_info.value.detail == "Agent skill name bindings are removed. Submit skill_install_ids."
     assert db.rolled_back is True
