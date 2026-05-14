@@ -10,6 +10,7 @@ import textwrap
 import requests
 
 from deerflow.config import get_app_config
+from deerflow.sandbox.skill_scope import CANONICAL_RUNTIME_SKILLS_SCOPE
 
 from .backend import SandboxBackend
 from .sandbox_info import SandboxInfo
@@ -102,12 +103,14 @@ class RemoteSandboxBackend(SandboxBackend):
 
         mount_specs: list[tuple[str, str, str, str]] = []
         if skill_scope:
+            if skill_scope != CANONICAL_RUNTIME_SKILLS_SCOPE:
+                raise RuntimeError(f"Unsupported remote sandbox skill_scope: {skill_scope}")
             mount_specs.append(
                 (
                     "/mnt/skills",
                     "/tmp/ossfs2-skills.conf",
                     "/tmp/ossfs2-log/skills",
-                    self._mount_prefix(f"skills/{skill_scope}"),
+                    self._mount_prefix("skills"),
                 )
             )
         mount_specs.append(

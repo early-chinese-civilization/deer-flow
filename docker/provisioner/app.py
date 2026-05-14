@@ -62,7 +62,8 @@ SANDBOX_IMAGE = os.environ.get(
 SKILLS_HOST_PATH = os.environ.get("SKILLS_HOST_PATH", "/skills")
 SAFE_THREAD_ID_PATTERN = r"^[A-Za-z0-9_\-]+$"
 SAFE_WORKSPACE_ID_PATTERN = r"^[A-Za-z0-9._\-]+$"
-SAFE_SKILL_SCOPE_PATTERN = r"^(public|[0-9]+)$"
+CANONICAL_RUNTIME_SKILLS_SCOPE = "."
+SAFE_SKILL_SCOPE_PATTERN = r"^\.$"
 SHARED_FS_HOST_PATH = os.environ.get("SHARED_FS_HOST_PATH") or os.environ.get("DEER_FLOW_HOST_SHARED_FS_ROOT")
 WORKSPACES_HOST_PATH = os.environ.get("WORKSPACES_HOST_PATH")
 
@@ -123,7 +124,7 @@ def _validate_skill_scope(skill_scope: str | None) -> str | None:
     if skill_scope is None:
         return None
     if not re.match(SAFE_SKILL_SCOPE_PATTERN, skill_scope):
-        raise ValueError("Invalid skill_scope: only 'public' or decimal user ids are allowed.")
+        raise ValueError("Invalid skill_scope: only the canonical skills root scope is allowed.")
     return skill_scope
 
 

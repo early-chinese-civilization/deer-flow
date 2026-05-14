@@ -39,6 +39,8 @@ _LOCAL_BASH_SYSTEM_PATH_PREFIXES = (
 _DEFAULT_SKILLS_CONTAINER_PATH = "/mnt/skills"
 _ACP_WORKSPACE_VIRTUAL_PATH = "/mnt/acp-workspace"
 _DIRECT_FS_LOCK_OWNER = SimpleNamespace(id="shared-fs")
+_PARENT_PATH_SEGMENT_PATTERN = re.compile(r"(^|[/\\\s;|&<>()'\"`])\.\.($|[/\\\s;|&<>()'\"`])")
+_SKILLS_DIRECTORY_CHANGE_PREFIX_PATTERN = re.compile(r"(?:^|[\s;&|()'\"`])\\?(?:(?:builtin|command)(?:\s+(?:--|-[A-Za-z]+))*\s+)?\\?(?:cd|pushd)(?:\s+(?:--|-[A-Za-z]+|\+\d+|-\d+))*(?:\s+|\$IFS|\$\{IFS\})+['\"]?$")
 
 
 @dataclass(frozen=True)
@@ -550,6 +552,40 @@ def _reject_path_traversal(path: str) -> None:
             raise PermissionError("Access denied: path traversal detected")
 
 
+def _iter_absolute_paths(command: str) -> list[str]:
+    return _ABSOLUTE_PATH_PATTERN.findall(command)
+
+
+def _iter_skills_path_matches(command: str) -> list[re.Match[str]]:
+    skills_container = re.escape(_get_skills_container_path().rstrip("/"))
+    pattern = re.compile(rf"{skills_container}(?:/[^\s\"'`;&|<>()]*)?(?=$|[\s\"'`;&|<>()])")
+    return list(pattern.finditer(command))
+
+
+def _iter_skills_paths(command: str) -> list[str]:
+    return [match.group(0) for match in _iter_skills_path_matches(command)]
+
+
+def _reject_unsafe_skill_bash_patterns(command: str) -> None:
+    """Reject shell patterns that can escape a bound skill root.
+
+    The remote sandbox mounts the canonical skills root at one container path,
+    so every skill file access must remain an absolute path that can be
+    checked against the runtime allowlist. Once a command changes cwd into
+    that mount, later relative paths are not visible to the allowlist check.
+    """
+    skill_path_matches = _iter_skills_path_matches(command)
+    if not skill_path_matches:
+        return
+
+    if _PARENT_PATH_SEGMENT_PATTERN.search(command):
+        raise PermissionError("Access denied: path traversal is not allowed in bash commands that reference skills paths")
+
+    for match in skill_path_matches:
+        if _SKILLS_DIRECTORY_CHANGE_PREFIX_PATTERN.search(command[: match.start()]):
+            raise PermissionError("Access denied: changing directory into skills paths is not allowed in bash commands")
+
+
 def validate_local_tool_path(path: str, thread_data: ThreadDataState | None, *, read_only: bool = False) -> None:
     """Validate that a virtual path is allowed for local-sandbox access.
 
@@ -647,8 +683,10 @@ def validate_local_bash_command_paths(
     boundary and must not be treated as isolation from the host filesystem.
 
     In local mode, commands must use virtual paths under /mnt/user-data for
-    user data access. Skills paths under /mnt/skills and ACP workspace paths
-    under /mnt/acp-workspace are allowed (path-traversal checks only; write
+    user data access. Skills paths under /mnt/skills are allowed only as
+    absolute validated paths; commands may not change directory into the skills
+    mount or combine it with parent traversal. ACP workspace paths under
+    /mnt/acp-workspace are allowed (path-traversal checks only; write
     prevention for bash commands is not enforced here).
     A small allowlist of common system path prefixes is kept for executable
     and device references (e.g. /bin/sh, /dev/null).
@@ -661,10 +699,19 @@ def validate_local_bash_command_paths(
     if file_url_match:
         raise PermissionError(f"Unsafe file:// URL in command: {file_url_match.group()}. Use paths under {VIRTUAL_PATH_PREFIX}")
 
+    _reject_unsafe_skill_bash_patterns(command)
+
+    validated_skill_paths: set[str] = set()
+    for skill_path in _iter_skills_paths(command):
+        _reject_path_traversal(skill_path)
+        if runtime is not None:
+            _resolve_runtime_skill_path(skill_path, runtime)
+        validated_skill_paths.add(skill_path)
+
     unsafe_paths: list[str] = []
     allowed_paths = _get_mcp_allowed_paths()
 
-    for absolute_path in _ABSOLUTE_PATH_PATTERN.findall(command):
+    for absolute_path in _iter_absolute_paths(command):
         # Check for MCP filesystem server allowed paths
         if any(absolute_path.startswith(path) or absolute_path == path.rstrip("/") for path in allowed_paths):
             _reject_path_traversal(absolute_path)
@@ -676,9 +723,10 @@ def validate_local_bash_command_paths(
 
         # Allow skills container path (resolved by tools.py before passing to sandbox)
         if _is_skills_path(absolute_path):
-            _reject_path_traversal(absolute_path)
-            if runtime is not None:
-                _resolve_runtime_skill_path(absolute_path, runtime)
+            if absolute_path not in validated_skill_paths:
+                _reject_path_traversal(absolute_path)
+                if runtime is not None:
+                    _resolve_runtime_skill_path(absolute_path, runtime)
             continue
 
         # Allow ACP workspace path (path-traversal check only)
@@ -694,6 +742,26 @@ def validate_local_bash_command_paths(
     if unsafe_paths:
         unsafe = ", ".join(sorted(dict.fromkeys(unsafe_paths)))
         raise PermissionError(f"Unsafe absolute paths in command: {unsafe}. Use paths under {VIRTUAL_PATH_PREFIX}")
+
+
+def validate_bash_command_runtime_skill_paths(
+    command: str,
+    runtime: ToolRuntime[ContextT, ThreadState] | None = None,
+) -> None:
+    """Validate `/mnt/skills` paths in sandbox bash commands against runtime Skills."""
+    _reject_unsafe_skill_bash_patterns(command)
+
+    validated_skill_paths: set[str] = set()
+    for skill_path in _iter_skills_paths(command):
+        _reject_path_traversal(skill_path)
+        _resolve_runtime_skill_path(skill_path, runtime)
+        validated_skill_paths.add(skill_path)
+
+    for absolute_path in _iter_absolute_paths(command):
+        if _is_skills_path(absolute_path):
+            if absolute_path not in validated_skill_paths:
+                _reject_path_traversal(absolute_path)
+                _resolve_runtime_skill_path(absolute_path, runtime)
 
 
 def replace_virtual_paths_in_command(
@@ -1075,6 +1143,7 @@ def bash_tool(runtime: ToolRuntime[ContextT, ThreadState], description: str, com
             max_chars = _get_bash_output_max_chars()
             return _truncate_bash_output(mask_local_paths_in_output(output, thread_data), max_chars)
         sandbox = ensure_sandbox_initialized(runtime)
+        validate_bash_command_runtime_skill_paths(command, runtime)
         output = sandbox.execute_command(command)
         return _truncate_bash_output(output, _get_bash_output_max_chars())
     except SandboxError as e:

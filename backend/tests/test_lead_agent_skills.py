@@ -4,11 +4,12 @@ from deerflow.agents.lead_agent.prompt import get_skills_prompt_section
 
 
 def _make_runtime_skill(name: str) -> dict:
+    skill_id = str(uuid5(NAMESPACE_DNS, f"deerflow-test:{name}"))
     return {
         "name": name,
         "description": f"Description for {name}",
-        "skill_id": str(uuid5(NAMESPACE_DNS, f"deerflow-test:{name}")),
-        "virtual_path": f"/mnt/skills/{name}/SKILL.md",
+        "skill_id": skill_id,
+        "virtual_path": f"/mnt/skills/{skill_id}/1/SKILL.md",
         "version_number": 1,
         "file_manifest_hash": f"{name}-hash",
     }

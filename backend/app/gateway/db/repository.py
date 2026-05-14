@@ -32,7 +32,7 @@ from app.gateway.db.models import (
     Workspace,
 )
 from deerflow.skills.hashing import hash_skill_file_manifest
-from deerflow.skills.path_utils import build_skill_virtual_path, build_terminal_skill_version_relative_path, resolve_terminal_skill_version_dir
+from deerflow.skills.path_utils import build_terminal_skill_version_relative_path, build_terminal_skill_virtual_path, resolve_terminal_skill_version_dir
 
 
 @dataclass(frozen=True)
@@ -512,7 +512,7 @@ class AgentRepository:
             skill_id=str(terminal_skill_id),
             version_number=version.version_number,
             file_manifest_hash=version.file_manifest_hash,
-            virtual_path=build_skill_virtual_path(display_name, container_base_path=_get_skills_container_path(), identity_suffix=f"{terminal_skill_id}-v{version.version_number}"),
+            virtual_path=build_terminal_skill_virtual_path(terminal_skill_id, version.version_number, container_base_path=_get_skills_container_path()),
         )
 
     @staticmethod
@@ -537,7 +537,7 @@ class AgentRepository:
             skill_id=str(terminal_skill_id),
             version_number=version.version_number,
             file_manifest_hash=version.file_manifest_hash,
-            virtual_path=build_skill_virtual_path(display_name, container_base_path=_get_skills_container_path(), identity_suffix=f"{terminal_skill_id}-v{version.version_number}"),
+            virtual_path=build_terminal_skill_virtual_path(terminal_skill_id, version.version_number, container_base_path=_get_skills_container_path()),
         )
 
     @staticmethod
@@ -1452,6 +1452,7 @@ class SkillReleaseRepository:
             .limit(1)
         )
         return result.scalar_one_or_none()
+
 
 class SkillRepository:
     """Compatibility helpers for legacy BIGINT skill rows."""

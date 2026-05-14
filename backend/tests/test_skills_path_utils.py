@@ -2,7 +2,7 @@ from uuid import UUID
 
 import pytest
 
-from deerflow.skills.path_utils import build_terminal_skill_version_relative_path, is_terminal_skill_version_relative_path, normalize_skill_file_path
+from deerflow.skills.path_utils import build_terminal_skill_version_relative_path, build_terminal_skill_virtual_path, is_terminal_skill_version_relative_path, normalize_skill_file_path
 
 
 def test_build_terminal_skill_version_relative_path_normalizes_uuid_and_version():
@@ -12,6 +12,16 @@ def test_build_terminal_skill_version_relative_path_normalizes_uuid_and_version(
     )
 
     assert relative_path == "12345678-1234-5678-1234-567812345678/2"
+
+
+def test_build_terminal_skill_virtual_path_uses_canonical_mount_path():
+    virtual_path = build_terminal_skill_virtual_path(
+        UUID("12345678-1234-5678-1234-567812345678"),
+        "2",
+        container_base_path="/mnt/skills/",
+    )
+
+    assert virtual_path == "/mnt/skills/12345678-1234-5678-1234-567812345678/2/SKILL.md"
 
 
 @pytest.mark.parametrize(

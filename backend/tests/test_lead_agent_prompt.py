@@ -12,12 +12,13 @@ def _skill_id(name: str) -> str:
 
 
 def _runtime_skill(name: str, *, version_number: int = 1, file_manifest_hash: str | None = None, virtual_path: str | None = None, **extra) -> dict:
+    skill_id = _skill_id(name)
     return {
         "name": name,
         "description": f"{name} description",
-        "skill_id": _skill_id(name),
+        "skill_id": skill_id,
         "version_number": version_number,
-        "virtual_path": virtual_path or f"/mnt/skills/{name}/SKILL.md",
+        "virtual_path": virtual_path or f"/mnt/skills/{skill_id}/{version_number}/SKILL.md",
         "file_manifest_hash": file_manifest_hash or f"manifest-{name}",
         **extra,
     }
@@ -111,7 +112,7 @@ def test_get_skills_prompt_section_uses_runtime_context(monkeypatch):
 
     assert "sql-review" in section
     assert "Review SQL changes." in section
-    assert "/mnt/skills/sql-review/SKILL.md" in section
+    assert f"/mnt/skills/{_skill_id('sql-review')}/1/SKILL.md" in section
     assert "api-design" in section
     assert f"<skill_id>{_skill_id('sql-review')}</skill_id>" in section
     assert "<skill_version_id>" not in section
@@ -149,7 +150,7 @@ def test_runtime_skill_prompt_descriptors_use_terminal_identity():
         {
             "name": "terminal-skill",
             "description": "Allowed.",
-            "location": "/mnt/skills/terminal-skill/SKILL.md",
+            "location": f"/mnt/skills/{_skill_id('terminal-skill')}/2/SKILL.md",
             "skill_id": _skill_id("terminal-skill"),
             "version_number": "2",
             "file_manifest_hash": "manifest-hash",

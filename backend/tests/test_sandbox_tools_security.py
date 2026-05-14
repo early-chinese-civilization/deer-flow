@@ -7,9 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from deerflow.sandbox import skill_scope as skill_scope_module
 from deerflow.sandbox.exceptions import SandboxRuntimeError
-from deerflow.sandbox.skill_scope import derive_skill_scope_from_runtime
+from deerflow.sandbox.skill_scope import CANONICAL_RUNTIME_SKILLS_SCOPE, derive_skill_scope_from_runtime
 from deerflow.sandbox.tools import (
     VIRTUAL_PATH_PREFIX,
     _apply_cwd_prefix,
@@ -26,6 +25,7 @@ from deerflow.sandbox.tools import (
     replace_virtual_paths_in_command,
     skill_load_tool,
     str_replace_tool,
+    validate_bash_command_runtime_skill_paths,
     validate_local_bash_command_paths,
     validate_local_tool_path,
     write_file_tool,
@@ -54,7 +54,7 @@ def _terminal_runtime_skill(
     virtual_root_name: str | None = None,
     **extra,
 ) -> dict:
-    root_name = virtual_root_name or name
+    root_name = virtual_root_name or _terminal_skill_path(skill_id, version_number)
     return {
         "name": name,
         "description": f"{name} skill",
@@ -64,6 +64,33 @@ def _terminal_runtime_skill(
         "file_manifest_hash": file_manifest_hash,
         **extra,
     }
+
+
+def _runtime_with_bound_terminal_skill(
+    tmp_path: Path,
+    *,
+    file_manifest_hash: str | None = None,
+    sandbox_state: dict | None = None,
+) -> tuple[Path, SimpleNamespace]:
+    skills_root = tmp_path / "skills"
+    skill_dir = skills_root / _terminal_skill_path()
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("authorized", encoding="utf-8")
+    expected_hash = file_manifest_hash or hash_skill_file_manifest(skill_dir)
+    state = {"thread_data": _THREAD_DATA.copy()}
+    if sandbox_state is not None:
+        state["sandbox"] = sandbox_state
+    runtime = SimpleNamespace(
+        state=state,
+        context={
+            "thread_id": "thread-1",
+            "runtime_agent": {
+                "skills": [_terminal_runtime_skill("sql-review", file_manifest_hash=expected_hash)],
+            },
+        },
+        config={},
+    )
+    return skills_root, runtime
 
 
 # ---------- replace_virtual_path ----------
@@ -315,11 +342,21 @@ def test_bash_tool_rejects_host_bash_when_local_sandbox_default(monkeypatch) -> 
     assert "Host bash execution is disabled" in result
 
 
-def test_bash_tool_remote_reuses_initialized_sandbox(monkeypatch) -> None:
+def test_bash_tool_remote_reuses_initialized_sandbox(tmp_path, monkeypatch) -> None:
+    skills_root = tmp_path / "skills"
+    skill_dir = skills_root / _terminal_skill_path()
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("authorized", encoding="utf-8")
+    file_manifest_hash = hash_skill_file_manifest(skill_dir)
     executed_commands: list[str] = []
     runtime = SimpleNamespace(
-        state={"sandbox": {"sandbox_id": "remote", "skill_scope": "public"}, "thread_data": _THREAD_DATA.copy()},
-        context={"thread_id": "thread-1"},
+        state={"sandbox": {"sandbox_id": "remote", "skill_scope": CANONICAL_RUNTIME_SKILLS_SCOPE}, "thread_data": _THREAD_DATA.copy()},
+        context={
+            "thread_id": "thread-1",
+            "runtime_agent": {
+                "skills": [_terminal_runtime_skill("sql-review", file_manifest_hash=file_manifest_hash)],
+            },
+        },
     )
 
     monkeypatch.setattr(
@@ -333,15 +370,178 @@ def test_bash_tool_remote_reuses_initialized_sandbox(monkeypatch) -> None:
             destroy=lambda _sandbox_id: pytest.fail("sandbox destroy should not be used"),
         ),
     )
+    monkeypatch.setattr("deerflow.sandbox.tools._get_skills_container_path", lambda: "/mnt/skills")
+    monkeypatch.setattr("deerflow.sandbox.tools._get_skills_host_path", lambda: str(skills_root))
+
+    command = f"cat /mnt/skills/{_terminal_skill_path()}/SKILL.md"
+    result = bash_tool.func(
+        runtime=runtime,
+        description="run command",
+        command=command,
+    )
+
+    assert result == "remote ok"
+    assert executed_commands == [command]
+
+
+def test_bash_tool_remote_rejects_unbound_canonical_skill_path(tmp_path, monkeypatch) -> None:
+    skills_root = tmp_path / "skills"
+    bound_dir = skills_root / _terminal_skill_path()
+    other_dir = skills_root / _terminal_skill_path(_TERMINAL_SKILL_ID_ALT, 2)
+    bound_dir.mkdir(parents=True)
+    other_dir.mkdir(parents=True)
+    (bound_dir / "SKILL.md").write_text("authorized", encoding="utf-8")
+    (other_dir / "SKILL.md").write_text("unbound", encoding="utf-8")
+    file_manifest_hash = hash_skill_file_manifest(bound_dir)
+    executed_commands: list[str] = []
+    runtime = SimpleNamespace(
+        state={"sandbox": {"sandbox_id": "remote", "skill_scope": CANONICAL_RUNTIME_SKILLS_SCOPE}, "thread_data": _THREAD_DATA.copy()},
+        context={
+            "thread_id": "thread-1",
+            "runtime_agent": {
+                "skills": [_terminal_runtime_skill("sql-review", file_manifest_hash=file_manifest_hash)],
+            },
+        },
+    )
+
+    monkeypatch.setattr(
+        "deerflow.sandbox.tools.ensure_sandbox_initialized",
+        lambda runtime: SimpleNamespace(execute_command=lambda command: executed_commands.append(command) or "remote ok"),
+    )
+    monkeypatch.setattr("deerflow.sandbox.tools._get_skills_container_path", lambda: "/mnt/skills")
+    monkeypatch.setattr("deerflow.sandbox.tools._get_skills_host_path", lambda: str(skills_root))
 
     result = bash_tool.func(
         runtime=runtime,
         description="run command",
-        command="cat /mnt/skills/sql-review/SKILL.md",
+        command=f"cat /mnt/skills/{_terminal_skill_path(_TERMINAL_SKILL_ID_ALT, 2)}/SKILL.md",
     )
 
-    assert result == "remote ok"
-    assert executed_commands == ["cat /mnt/skills/sql-review/SKILL.md"]
+    assert "Skill path is not available in this runtime" in result
+    assert executed_commands == []
+
+
+def test_bash_tool_remote_rejects_skill_cd_relative_traversal(tmp_path, monkeypatch) -> None:
+    skills_root = tmp_path / "skills"
+    bound_dir = skills_root / _terminal_skill_path()
+    other_dir = skills_root / _terminal_skill_path(_TERMINAL_SKILL_ID_ALT, 2)
+    bound_dir.mkdir(parents=True)
+    other_dir.mkdir(parents=True)
+    (bound_dir / "SKILL.md").write_text("authorized", encoding="utf-8")
+    (other_dir / "SKILL.md").write_text("unbound", encoding="utf-8")
+    file_manifest_hash = hash_skill_file_manifest(bound_dir)
+    executed_commands: list[str] = []
+    runtime = SimpleNamespace(
+        state={"sandbox": {"sandbox_id": "remote", "skill_scope": CANONICAL_RUNTIME_SKILLS_SCOPE}, "thread_data": _THREAD_DATA.copy()},
+        context={
+            "thread_id": "thread-1",
+            "runtime_agent": {
+                "skills": [_terminal_runtime_skill("sql-review", file_manifest_hash=file_manifest_hash)],
+            },
+        },
+    )
+
+    monkeypatch.setattr(
+        "deerflow.sandbox.tools.ensure_sandbox_initialized",
+        lambda runtime: SimpleNamespace(execute_command=lambda command: executed_commands.append(command) or "remote ok"),
+    )
+    monkeypatch.setattr("deerflow.sandbox.tools._get_skills_container_path", lambda: "/mnt/skills")
+    monkeypatch.setattr("deerflow.sandbox.tools._get_skills_host_path", lambda: str(skills_root))
+
+    result = bash_tool.func(
+        runtime=runtime,
+        description="run command",
+        command=f"cd /mnt/skills/{_terminal_skill_path()} && cat ../../{_terminal_skill_path(_TERMINAL_SKILL_ID_ALT, 2)}/SKILL.md",
+    )
+
+    assert "path traversal is not allowed" in result
+    assert executed_commands == []
+
+
+@pytest.mark.parametrize(
+    "command_template",
+    [
+        "pushd /mnt/skills/{bound} && cat SKILL.md",
+        "builtin cd /mnt/skills/{bound} && cat SKILL.md",
+        "command cd /mnt/skills/{bound} && cat SKILL.md",
+        "\\cd /mnt/skills/{bound} && cat SKILL.md",
+        "cd$IFS/mnt/skills/{bound} && cat SKILL.md",
+    ],
+)
+def test_bash_tool_remote_rejects_skill_directory_change_variants(tmp_path, monkeypatch, command_template: str) -> None:
+    skills_root, runtime = _runtime_with_bound_terminal_skill(
+        tmp_path,
+        sandbox_state={"sandbox_id": "remote", "skill_scope": CANONICAL_RUNTIME_SKILLS_SCOPE},
+    )
+    executed_commands: list[str] = []
+
+    monkeypatch.setattr(
+        "deerflow.sandbox.tools.ensure_sandbox_initialized",
+        lambda runtime: SimpleNamespace(execute_command=lambda command: executed_commands.append(command) or "remote ok"),
+    )
+    monkeypatch.setattr("deerflow.sandbox.tools._get_skills_container_path", lambda: "/mnt/skills")
+    monkeypatch.setattr("deerflow.sandbox.tools._get_skills_host_path", lambda: str(skills_root))
+
+    result = bash_tool.func(
+        runtime=runtime,
+        description="run command",
+        command=command_template.format(bound=_terminal_skill_path()),
+    )
+
+    assert "changing directory into skills paths is not allowed" in result
+    assert executed_commands == []
+
+
+def test_bash_tool_remote_validates_shell_expanded_skill_paths(tmp_path, monkeypatch) -> None:
+    skills_root, runtime = _runtime_with_bound_terminal_skill(
+        tmp_path,
+        sandbox_state={"sandbox_id": "remote", "skill_scope": CANONICAL_RUNTIME_SKILLS_SCOPE},
+    )
+    other_dir = skills_root / _terminal_skill_path(_TERMINAL_SKILL_ID_ALT, 2)
+    other_dir.mkdir(parents=True)
+    (other_dir / "SKILL.md").write_text("unbound", encoding="utf-8")
+    executed_commands: list[str] = []
+
+    monkeypatch.setattr(
+        "deerflow.sandbox.tools.ensure_sandbox_initialized",
+        lambda runtime: SimpleNamespace(execute_command=lambda command: executed_commands.append(command) or "remote ok"),
+    )
+    monkeypatch.setattr("deerflow.sandbox.tools._get_skills_container_path", lambda: "/mnt/skills")
+    monkeypatch.setattr("deerflow.sandbox.tools._get_skills_host_path", lambda: str(skills_root))
+
+    result = bash_tool.func(
+        runtime=runtime,
+        description="run command",
+        command=f"cat$IFS/mnt/skills/{_terminal_skill_path(_TERMINAL_SKILL_ID_ALT, 2)}/SKILL.md",
+    )
+
+    assert "Skill path is not available in this runtime" in result
+    assert executed_commands == []
+
+
+def test_bash_tool_remote_rejects_skill_hash_mismatch(tmp_path, monkeypatch) -> None:
+    skills_root, runtime = _runtime_with_bound_terminal_skill(
+        tmp_path,
+        file_manifest_hash="wrong-file-manifest-hash",
+        sandbox_state={"sandbox_id": "remote", "skill_scope": CANONICAL_RUNTIME_SKILLS_SCOPE},
+    )
+    executed_commands: list[str] = []
+
+    monkeypatch.setattr(
+        "deerflow.sandbox.tools.ensure_sandbox_initialized",
+        lambda runtime: SimpleNamespace(execute_command=lambda command: executed_commands.append(command) or "remote ok"),
+    )
+    monkeypatch.setattr("deerflow.sandbox.tools._get_skills_container_path", lambda: "/mnt/skills")
+    monkeypatch.setattr("deerflow.sandbox.tools._get_skills_host_path", lambda: str(skills_root))
+
+    result = bash_tool.func(
+        runtime=runtime,
+        description="run command",
+        command=f"cat /mnt/skills/{_terminal_skill_path()}/SKILL.md",
+    )
+
+    assert "file manifest hash mismatch" in result
+    assert executed_commands == []
 
 
 # ---------- Skills path tests ----------
@@ -418,12 +618,12 @@ def test_local_bash_skills_paths_use_terminal_runtime_allowlist(tmp_path) -> Non
         patch("deerflow.sandbox.tools._get_skills_host_path", return_value=str(skills_root)),
     ):
         validate_local_bash_command_paths(
-            "cat /mnt/skills/probe-skill/SKILL.md",
+            f"cat /mnt/skills/{_terminal_skill_path()}/SKILL.md",
             _THREAD_DATA,
             runtime,
         )
         resolved = replace_virtual_paths_in_command(
-            "cat /mnt/skills/probe-skill/SKILL.md",
+            f"cat /mnt/skills/{_terminal_skill_path()}/SKILL.md",
             _THREAD_DATA,
             runtime,
         )
@@ -438,6 +638,109 @@ def test_local_bash_skills_paths_use_terminal_runtime_allowlist(tmp_path) -> Non
     assert "public" not in resolved
 
 
+def test_validate_local_bash_command_paths_blocks_skill_cd_relative_traversal(tmp_path) -> None:
+    skills_root = tmp_path / "skills"
+    bound_dir = skills_root / _terminal_skill_path()
+    other_dir = skills_root / _terminal_skill_path(_TERMINAL_SKILL_ID_ALT, 2)
+    bound_dir.mkdir(parents=True)
+    other_dir.mkdir(parents=True)
+    (bound_dir / "SKILL.md").write_text("authorized", encoding="utf-8")
+    (other_dir / "SKILL.md").write_text("unbound", encoding="utf-8")
+    file_manifest_hash = hash_skill_file_manifest(bound_dir)
+    runtime = SimpleNamespace(
+        state={"thread_data": _THREAD_DATA.copy()},
+        context={
+            "runtime_agent": {
+                "skills": [_terminal_runtime_skill("sql-review", file_manifest_hash=file_manifest_hash)],
+            },
+        },
+        config={},
+    )
+
+    with (
+        patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"),
+        patch("deerflow.sandbox.tools._get_skills_host_path", return_value=str(skills_root)),
+    ):
+        with pytest.raises(PermissionError, match="path traversal is not allowed"):
+            validate_local_bash_command_paths(
+                f"cd /mnt/skills/{_terminal_skill_path()} && cat ../../{_terminal_skill_path(_TERMINAL_SKILL_ID_ALT, 2)}/SKILL.md",
+                _THREAD_DATA,
+                runtime,
+            )
+
+
+@pytest.mark.parametrize(
+    "command_template",
+    [
+        "pushd /mnt/skills/{bound} && cat SKILL.md",
+        "builtin cd /mnt/skills/{bound} && cat SKILL.md",
+        "command cd /mnt/skills/{bound} && cat SKILL.md",
+        "\\cd /mnt/skills/{bound} && cat SKILL.md",
+        "cd$IFS/mnt/skills/{bound} && cat SKILL.md",
+    ],
+)
+def test_validate_local_bash_command_paths_blocks_skill_directory_change_variants(tmp_path, command_template: str) -> None:
+    skills_root, runtime = _runtime_with_bound_terminal_skill(tmp_path)
+
+    with (
+        patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"),
+        patch("deerflow.sandbox.tools._get_skills_host_path", return_value=str(skills_root)),
+    ):
+        with pytest.raises(PermissionError, match="changing directory into skills paths"):
+            validate_local_bash_command_paths(
+                command_template.format(bound=_terminal_skill_path()),
+                _THREAD_DATA,
+                runtime,
+            )
+
+
+def test_validate_local_bash_command_paths_validates_shell_expanded_skill_paths(tmp_path) -> None:
+    skills_root, runtime = _runtime_with_bound_terminal_skill(tmp_path)
+    other_dir = skills_root / _terminal_skill_path(_TERMINAL_SKILL_ID_ALT, 2)
+    other_dir.mkdir(parents=True)
+    (other_dir / "SKILL.md").write_text("unbound", encoding="utf-8")
+
+    with (
+        patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"),
+        patch("deerflow.sandbox.tools._get_skills_host_path", return_value=str(skills_root)),
+    ):
+        with pytest.raises(PermissionError, match="not available"):
+            validate_local_bash_command_paths(
+                f"cat$IFS/mnt/skills/{_terminal_skill_path(_TERMINAL_SKILL_ID_ALT, 2)}/SKILL.md",
+                _THREAD_DATA,
+                runtime,
+            )
+
+
+def test_validate_local_bash_command_paths_rejects_skill_hash_mismatch(tmp_path) -> None:
+    skills_root, runtime = _runtime_with_bound_terminal_skill(tmp_path, file_manifest_hash="wrong-file-manifest-hash")
+
+    with (
+        patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"),
+        patch("deerflow.sandbox.tools._get_skills_host_path", return_value=str(skills_root)),
+    ):
+        with pytest.raises(RuntimeError, match="file manifest hash mismatch"):
+            validate_local_bash_command_paths(
+                f"cat /mnt/skills/{_terminal_skill_path()}/SKILL.md",
+                _THREAD_DATA,
+                runtime,
+            )
+
+
+def test_validate_bash_command_runtime_skill_paths_rejects_skill_hash_mismatch(tmp_path) -> None:
+    skills_root, runtime = _runtime_with_bound_terminal_skill(tmp_path, file_manifest_hash="wrong-file-manifest-hash")
+
+    with (
+        patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"),
+        patch("deerflow.sandbox.tools._get_skills_host_path", return_value=str(skills_root)),
+    ):
+        with pytest.raises(RuntimeError, match="file manifest hash mismatch"):
+            validate_bash_command_runtime_skill_paths(
+                f"cat /mnt/skills/{_terminal_skill_path()}/SKILL.md",
+                runtime,
+            )
+
+
 def test_skill_load_uses_runtime_virtual_mapping_for_terminal_descriptor(tmp_path: Path) -> None:
     skills_root = tmp_path / "skills"
     skill_dir = skills_root / _terminal_skill_path()
@@ -447,13 +750,7 @@ def test_skill_load_uses_runtime_virtual_mapping_for_terminal_descriptor(tmp_pat
 
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
-        context={
-            "runtime_agent": {
-                "skills": [
-                    _terminal_runtime_skill("sql-review", file_manifest_hash=file_manifest_hash)
-                ]
-            }
-        },
+        context={"runtime_agent": {"skills": [_terminal_runtime_skill("sql-review", file_manifest_hash=file_manifest_hash)]}},
         config={},
     )
 
@@ -464,7 +761,7 @@ def test_skill_load_uses_runtime_virtual_mapping_for_terminal_descriptor(tmp_pat
         result = skill_load_tool.func(
             runtime=runtime,
             description="load skill",
-            path="/mnt/skills/sql-review/SKILL.md",
+            path=f"/mnt/skills/{_terminal_skill_path()}/SKILL.md",
         )
 
     assert result == "review sql"
@@ -479,13 +776,7 @@ def test_skill_load_rejects_paths_not_in_runtime_allowlist(tmp_path: Path) -> No
 
     runtime = SimpleNamespace(
         state={"thread_data": _THREAD_DATA.copy()},
-        context={
-            "runtime_agent": {
-                "skills": [
-                    _terminal_runtime_skill("sql-review", file_manifest_hash=file_manifest_hash)
-                ]
-            }
-        },
+        context={"runtime_agent": {"skills": [_terminal_runtime_skill("sql-review", file_manifest_hash=file_manifest_hash)]}},
         config={},
     )
 
@@ -496,7 +787,7 @@ def test_skill_load_rejects_paths_not_in_runtime_allowlist(tmp_path: Path) -> No
         result = skill_load_tool.func(
             runtime=runtime,
             description="load missing skill",
-            path="/mnt/skills/other-skill/SKILL.md",
+            path=f"/mnt/skills/{_terminal_skill_path(_TERMINAL_SKILL_ID_ALT, 2)}/SKILL.md",
         )
 
     assert "Permission denied" in result
@@ -535,7 +826,7 @@ def test_skill_load_rejects_legacy_public_virtual_root(tmp_path: Path) -> None:
         result = skill_load_tool.func(
             runtime=runtime,
             description="load skill",
-            path="/mnt/skills/sql-review/SKILL.md",
+            path=f"/mnt/skills/{_terminal_skill_path()}/SKILL.md",
         )
 
     assert "public latest" not in result
@@ -574,11 +865,11 @@ def test_ls_uses_runtime_virtual_mapping_for_skill_directories(tmp_path: Path) -
         result = ls_tool.func(
             runtime=runtime,
             description="list skill files",
-            path="/mnt/skills/table-tools",
+            path=f"/mnt/skills/{_terminal_skill_path(_TERMINAL_SKILL_ID_ALT, 2)}",
         )
 
-    assert "/mnt/skills/table-tools/SKILL.md" in result
-    assert "/mnt/skills/table-tools/notes.md" in result
+    assert f"/mnt/skills/{_terminal_skill_path(_TERMINAL_SKILL_ID_ALT, 2)}/SKILL.md" in result
+    assert f"/mnt/skills/{_terminal_skill_path(_TERMINAL_SKILL_ID_ALT, 2)}/notes.md" in result
 
 
 def test_ls_skills_root_lists_runtime_skill_directories() -> None:
@@ -602,8 +893,8 @@ def test_ls_skills_root_lists_runtime_skill_directories() -> None:
             path="/mnt/skills",
         )
 
-    assert "/mnt/skills/chart-visualization/" in result
-    assert "/mnt/skills/table-tools/" in result
+    assert f"/mnt/skills/{_terminal_skill_path()}/" in result
+    assert f"/mnt/skills/{_terminal_skill_path(_TERMINAL_SKILL_ID_ALT, 2)}/" in result
 
 
 def test_derive_skill_scope_returns_none_when_runtime_skills_are_missing() -> None:
@@ -616,7 +907,7 @@ def test_derive_skill_scope_returns_none_when_runtime_skills_are_missing() -> No
     assert derive_skill_scope_from_runtime(runtime) is None
 
 
-def test_derive_skill_scope_materializes_bundle_for_terminal_descriptor(tmp_path) -> None:
+def test_derive_skill_scope_returns_canonical_root_without_materializing_bundle(tmp_path) -> None:
     skills_root = tmp_path / "skills"
     artifact_dir = skills_root / _terminal_skill_path()
     artifact_dir.mkdir(parents=True)
@@ -630,9 +921,7 @@ def test_derive_skill_scope_materializes_bundle_for_terminal_descriptor(tmp_path
         context={
             "runtime_agent": {
                 "user_id": 7,
-                "skills": [
-                    _terminal_runtime_skill("probe-skill", file_manifest_hash=file_manifest_hash)
-                ],
+                "skills": [_terminal_runtime_skill("probe-skill", file_manifest_hash=file_manifest_hash)],
             }
         },
         config={},
@@ -644,14 +933,11 @@ def test_derive_skill_scope_materializes_bundle_for_terminal_descriptor(tmp_path
     ):
         scope = derive_skill_scope_from_runtime(runtime)
 
-    assert scope is not None
-    assert scope.startswith(".runtime-skill-bundles/")
-    bundle_dir = skills_root / scope
-    assert (bundle_dir / "probe-skill" / "SKILL.md").read_text(encoding="utf-8") == "authorized"
-    assert not (bundle_dir / "public" / "probe-skill" / "SKILL.md").exists()
+    assert scope == CANONICAL_RUNTIME_SKILLS_SCOPE
+    assert not (skills_root / ".runtime-skill-bundles").exists()
 
 
-def test_derive_skill_scope_materializes_bundle_for_terminal_skill_version_path(tmp_path) -> None:
+def test_derive_skill_scope_uses_terminal_skill_version_path(tmp_path) -> None:
     skills_root = tmp_path / "skills"
     artifact_dir = skills_root / _terminal_skill_path()
     artifact_dir.mkdir(parents=True)
@@ -683,11 +969,11 @@ def test_derive_skill_scope_materializes_bundle_for_terminal_skill_version_path(
     ):
         scope = derive_skill_scope_from_runtime(runtime)
 
-    assert scope is not None
-    assert (skills_root / scope / "probe-skill" / "SKILL.md").read_text(encoding="utf-8") == "terminal authorized"
+    assert scope == CANONICAL_RUNTIME_SKILLS_SCOPE
+    assert not (skills_root / ".runtime-skill-bundles").exists()
 
 
-def test_derive_skill_scope_reuses_system_skill_bundle_for_repeated_direct_bindings(tmp_path) -> None:
+def test_derive_skill_scope_reuses_canonical_root_for_repeated_direct_bindings(tmp_path) -> None:
     skills_root = tmp_path / "skills"
     artifact_dir = skills_root / _terminal_skill_path()
     artifact_dir.mkdir(parents=True)
@@ -700,9 +986,7 @@ def test_derive_skill_scope_reuses_system_skill_bundle_for_repeated_direct_bindi
             context={
                 "runtime_agent": {
                     "user_id": user_id,
-                    "skills": [
-                        _terminal_runtime_skill("system-skill", file_manifest_hash=file_manifest_hash)
-                    ],
+                    "skills": [_terminal_runtime_skill("system-skill", file_manifest_hash=file_manifest_hash)],
                 }
             },
             config={},
@@ -715,12 +999,11 @@ def test_derive_skill_scope_reuses_system_skill_bundle_for_repeated_direct_bindi
         first_scope = derive_skill_scope_from_runtime(runtime_for_user(7))
         second_scope = derive_skill_scope_from_runtime(runtime_for_user(9))
 
-    assert first_scope == second_scope
-    assert len([path for path in (skills_root / ".runtime-skill-bundles").iterdir() if path.is_dir()]) == 1
-    assert (skills_root / first_scope / "system-skill" / "SKILL.md").read_text(encoding="utf-8") == "system authorized"
+    assert first_scope == second_scope == CANONICAL_RUNTIME_SKILLS_SCOPE
+    assert not (skills_root / ".runtime-skill-bundles").exists()
 
 
-def test_derive_skill_scope_prunes_stale_runtime_skill_bundles(tmp_path, monkeypatch) -> None:
+def test_derive_skill_scope_does_not_prune_stale_runtime_skill_bundles(tmp_path) -> None:
     skills_root = tmp_path / "skills"
     artifact_dir = skills_root / _terminal_skill_path()
     artifact_dir.mkdir(parents=True)
@@ -740,24 +1023,20 @@ def test_derive_skill_scope_prunes_stale_runtime_skill_bundles(tmp_path, monkeyp
         context={
             "runtime_agent": {
                 "user_id": 7,
-                "skills": [
-                    _terminal_runtime_skill("probe-skill", file_manifest_hash=file_manifest_hash)
-                ],
+                "skills": [_terminal_runtime_skill("probe-skill", file_manifest_hash=file_manifest_hash)],
             }
         },
         config={},
     )
 
-    monkeypatch.setattr(skill_scope_module, "_RUNTIME_BUNDLE_RETENTION_SECONDS", 1)
     with patch(
         "deerflow.sandbox.skill_scope._get_skills_root_path",
         return_value=skills_root,
     ):
         current_scope = derive_skill_scope_from_runtime(runtime)
 
-    assert current_scope is not None
-    assert not stale_bundle.exists()
-    assert (skills_root / current_scope / "probe-skill" / "SKILL.md").exists()
+    assert current_scope == CANONICAL_RUNTIME_SKILLS_SCOPE
+    assert stale_bundle.exists()
 
 
 def test_derive_skill_scope_rejects_missing_terminal_storage(tmp_path) -> None:
@@ -768,9 +1047,7 @@ def test_derive_skill_scope_rejects_missing_terminal_storage(tmp_path) -> None:
         context={
             "runtime_agent": {
                 "user_id": 7,
-                "skills": [
-                    _terminal_runtime_skill("probe-skill", file_manifest_hash="expected-file-manifest-hash")
-                ],
+                "skills": [_terminal_runtime_skill("probe-skill", file_manifest_hash="expected-file-manifest-hash")],
             }
         },
         config={},
@@ -795,9 +1072,7 @@ def test_derive_skill_scope_rejects_terminal_file_manifest_hash_mismatch(tmp_pat
         context={
             "runtime_agent": {
                 "user_id": 7,
-                "skills": [
-                    _terminal_runtime_skill("probe-skill", file_manifest_hash="wrong-file-manifest-hash")
-                ],
+                "skills": [_terminal_runtime_skill("probe-skill", file_manifest_hash="wrong-file-manifest-hash")],
             }
         },
         config={},

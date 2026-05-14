@@ -115,11 +115,7 @@ class _ApiFlowStore:
         return next((skill for skill in self.skills if skill.id == skill_id and skill.deleted_at is None), None)
 
     def latest_release_for_definition(self, definition_id: int) -> SkillRelease | None:
-        releases = [
-            release
-            for release in self.releases
-            if release.status == "published" and self.version_by_skill_version(release.skill_id, release.version_number).skill_definition_id == definition_id
-        ]
+        releases = [release for release in self.releases if release.status == "published" and self.version_by_skill_version(release.skill_id, release.version_number).skill_definition_id == definition_id]
         return max(releases, key=lambda release: release.version_number, default=None)
 
     async def get_or_create_definition(self, db, *, name, display_name, description, owner_user_id, source_type=None, source_identifier=None):
@@ -860,8 +856,8 @@ def test_runtime_manifest_uses_skill_identity_for_same_name_virtual_roots(tmp_pa
     assert first_entry["name"] == second_entry["name"] == "same-skill"
     assert first_entry["skill_id"] == str(first_skill_id)
     assert second_entry["skill_id"] == str(second_skill_id)
-    assert first_entry["virtual_path"] == f"/mnt/skills/same-skill--{first_skill_id}-v1/SKILL.md"
-    assert second_entry["virtual_path"] == f"/mnt/skills/same-skill--{second_skill_id}-v1/SKILL.md"
+    assert first_entry["virtual_path"] == f"/mnt/skills/{first_skill_id}/1/SKILL.md"
+    assert second_entry["virtual_path"] == f"/mnt/skills/{second_skill_id}/1/SKILL.md"
     assert first_entry["virtual_path"] != second_entry["virtual_path"]
     assert _load_skill(runtime, skills_root, first_entry["virtual_path"]) == "FIRST_SOURCE"
     assert _load_skill(runtime, skills_root, second_entry["virtual_path"]) == "SECOND_SOURCE"
@@ -940,7 +936,7 @@ def test_skills_max_flow_backend_truth_uses_install_manifest_and_terminal_storag
                 "skill_id": str(skill_id),
                 "version_number": 1,
                 "file_manifest_hash": v1_file_manifest_hash,
-                "virtual_path": f"/mnt/skills/probe-skill--{skill_id}-v1/SKILL.md",
+                "virtual_path": f"/mnt/skills/{skill_id}/1/SKILL.md",
             }
         ],
     }
@@ -963,7 +959,7 @@ def test_skills_max_flow_backend_truth_uses_install_manifest_and_terminal_storag
     assert after_update_manifest.manifest_json["skills"][0]["skill_id"] == str(skill_id)
     assert after_update_manifest.manifest_json["skills"][0]["version_number"] == 2
     assert after_update_manifest.manifest_json["skills"][0]["file_manifest_hash"] == v2_file_manifest_hash
-    assert after_virtual_path == f"/mnt/skills/probe-skill--{skill_id}-v2/SKILL.md"
+    assert after_virtual_path == f"/mnt/skills/{skill_id}/2/SKILL.md"
     assert _load_skill(_runtime_for_manifest(tmp_path, after_update_manifest), skills_root, after_virtual_path) == "SKILL_RUNTIME_OK_V2"
 
 
@@ -1255,7 +1251,7 @@ def test_skill_load_reads_manifest_artifact_and_denies_public_latest_same_name(t
                         "skill_id": str(skill_id),
                         "version_number": 1,
                         "file_manifest_hash": v1_file_manifest_hash,
-                        "virtual_path": f"/mnt/skills/probe-skill--{skill_id}-v1/SKILL.md",
+                        "virtual_path": f"/mnt/skills/{skill_id}/1/SKILL.md",
                     }
                 ],
             }
@@ -1272,7 +1268,7 @@ def test_skill_load_reads_manifest_artifact_and_denies_public_latest_same_name(t
         loaded = skill_load_tool.func(
             runtime=runtime,
             description="load probe",
-            path=f"/mnt/skills/probe-skill--{skill_id}-v1/SKILL.md",
+            path=f"/mnt/skills/{skill_id}/1/SKILL.md",
         )
         denied = skill_load_tool.func(
             runtime=runtime,
@@ -1300,7 +1296,7 @@ def test_skill_load_rejects_manifest_artifact_hash_drift(tmp_path):
                         "skill_id": str(skill_id),
                         "version_number": 1,
                         "file_manifest_hash": expected_hash,
-                        "virtual_path": f"/mnt/skills/probe-skill--{skill_id}-v1/SKILL.md",
+                        "virtual_path": f"/mnt/skills/{skill_id}/1/SKILL.md",
                     }
                 ],
             }
@@ -1317,7 +1313,7 @@ def test_skill_load_rejects_manifest_artifact_hash_drift(tmp_path):
         loaded = skill_load_tool.func(
             runtime=runtime,
             description="load drifted probe",
-            path=f"/mnt/skills/probe-skill--{skill_id}-v1/SKILL.md",
+            path=f"/mnt/skills/{skill_id}/1/SKILL.md",
         )
 
     assert "file manifest hash mismatch" in loaded

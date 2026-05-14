@@ -29,6 +29,7 @@ from deerflow.config import get_app_config
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX, get_paths, join_host_path
 from deerflow.sandbox.sandbox import Sandbox
 from deerflow.sandbox.sandbox_provider import SandboxProvider
+from deerflow.sandbox.skill_scope import CANONICAL_RUNTIME_SKILLS_SCOPE
 
 from .aio_sandbox import AioSandbox
 from .backend import SandboxBackend, wait_for_sandbox_ready
@@ -259,6 +260,9 @@ class AioSandboxProvider(SandboxProvider):
         """
         if skill_scope is None:
             return None
+        if skill_scope != CANONICAL_RUNTIME_SKILLS_SCOPE:
+            logger.warning("Ignoring unsupported legacy skills mount scope: %s", skill_scope)
+            return None
 
         try:
             config = get_app_config()
@@ -269,8 +273,7 @@ class AioSandboxProvider(SandboxProvider):
                 # Prefer the shared filesystem contract so runtime skill loading
                 # and sandbox mounts resolve to the same host path.
                 host_skills_root = join_host_path(get_paths()._host_shared_fs_root_str(), "skills") if os.environ.get("DEER_FLOW_HOST_SHARED_FS_ROOT") else os.environ.get("DEER_FLOW_HOST_SKILLS_PATH") or str(skills_path)
-                host_skills = join_host_path(host_skills_root, skill_scope)
-                return (host_skills, container_path, True)  # Read-only for security
+                return (host_skills_root, container_path, True)  # Read-only for security
         except Exception as e:
             logger.warning(f"Could not setup skills mount: {e}")
         return None

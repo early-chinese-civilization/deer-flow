@@ -176,10 +176,10 @@ def test_create_sandbox_request_validates_skill_scope():
         sandbox_id="sandbox-1",
         thread_id="thread_1",
         workspace_id="workspace.1",
-        skill_scope="public",
+        skill_scope=".",
     )
 
-    assert request.skill_scope == "public"
+    assert request.skill_scope == "."
 
 
 def test_exec_in_sandbox_runs_bash_in_target_pod(monkeypatch):

@@ -508,7 +508,7 @@ async def test_runtime_agent_bundle_without_agent_name_loads_default_chat_system
     assert bundle.skills[0].skill_id == str(skill_id)
     assert bundle.skills[0].version_number == 1
     assert bundle.skills[0].file_manifest_hash == file_manifest_hash
-    assert bundle.skills[0].virtual_path == f"/mnt/skills/system-skill--{skill_id}-v1/SKILL.md"
+    assert bundle.skills[0].virtual_path == f"/mnt/skills/{skill_id}/1/SKILL.md"
     assert not hasattr(bundle.skills[0], "artifact_uri")
     assert not hasattr(bundle.skills[0], "file_path")
     assert not hasattr(bundle.skills[0], "skill_version_id")
@@ -526,7 +526,7 @@ async def test_runtime_agent_payload_serializes_terminal_skill_descriptor(monkey
         skill_id=skill_id,
         version_number=2,
         file_manifest_hash="manifest-hash",
-        virtual_path=f"/mnt/skills/probe-skill--{skill_id}-v2/SKILL.md",
+        virtual_path=f"/mnt/skills/{skill_id}/2/SKILL.md",
     )
     bundle = RuntimeAgentBundle(
         user_id=9,
@@ -556,7 +556,7 @@ async def test_runtime_agent_payload_serializes_terminal_skill_descriptor(monkey
             "skill_id": skill_id,
             "version_number": 2,
             "file_manifest_hash": "manifest-hash",
-            "virtual_path": f"/mnt/skills/probe-skill--{skill_id}-v2/SKILL.md",
+            "virtual_path": f"/mnt/skills/{skill_id}/2/SKILL.md",
         }
     ]
     assert "manifest_id" not in payload

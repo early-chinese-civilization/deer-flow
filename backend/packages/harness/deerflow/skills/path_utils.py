@@ -52,6 +52,16 @@ def build_terminal_skill_version_relative_path(skill_id: str | uuid.UUID, versio
     return f"{terminal_skill_id}/{terminal_version_number}"
 
 
+def build_terminal_skill_virtual_root(skill_id: str | uuid.UUID, version_number: int | str, *, container_base_path: str = "/mnt/skills") -> str:
+    """Return the canonical virtual root for an immutable Skill version."""
+    return f"{container_base_path.rstrip('/')}/{build_terminal_skill_version_relative_path(skill_id, version_number)}"
+
+
+def build_terminal_skill_virtual_path(skill_id: str | uuid.UUID, version_number: int | str, *, container_base_path: str = "/mnt/skills") -> str:
+    """Return the canonical virtual SKILL.md path for an immutable Skill version."""
+    return f"{build_terminal_skill_virtual_root(skill_id, version_number, container_base_path=container_base_path)}/SKILL.md"
+
+
 def is_terminal_skill_version_relative_path(file_path: str | None) -> bool:
     """Return whether a relative path is exactly ``{skill_id}/{version_number}``."""
     normalized = str(file_path or "").replace("\\", "/").strip("/")

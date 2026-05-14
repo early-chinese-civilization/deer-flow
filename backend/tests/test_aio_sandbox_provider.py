@@ -139,7 +139,7 @@ def test_discover_or_create_only_unlocks_when_lock_succeeds(tmp_path, monkeypatc
     assert unlock_calls == []
 
 
-def test_get_skills_mount_scopes_public_skills(tmp_path, monkeypatch):
+def test_get_skills_mount_mounts_canonical_skills_root(tmp_path, monkeypatch):
     aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
     skills_root = tmp_path / "skills"
     skills_root.mkdir()
@@ -151,9 +151,9 @@ def test_get_skills_mount_scopes_public_skills(tmp_path, monkeypatch):
     monkeypatch.delenv("DEER_FLOW_HOST_SHARED_FS_ROOT", raising=False)
     monkeypatch.delenv("DEER_FLOW_HOST_SKILLS_PATH", raising=False)
 
-    mount = aio_mod.AioSandboxProvider._get_skills_mount("public")
+    mount = aio_mod.AioSandboxProvider._get_skills_mount(aio_mod.CANONICAL_RUNTIME_SKILLS_SCOPE)
 
-    assert mount == (str(skills_root / "public"), "/mnt/skills", True)
+    assert mount == (str(skills_root), "/mnt/skills", True)
 
 
 def test_get_skills_mount_skips_skills_when_no_scope(tmp_path, monkeypatch):
@@ -169,7 +169,7 @@ def test_get_skills_mount_skips_skills_when_no_scope(tmp_path, monkeypatch):
     assert aio_mod.AioSandboxProvider._get_skills_mount(None) is None
 
 
-def test_get_skills_mount_scopes_runtime_bundle(tmp_path, monkeypatch):
+def test_get_skills_mount_rejects_runtime_bundle_scope(tmp_path, monkeypatch):
     aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
     skills_root = tmp_path / "skills"
     bundle_scope = ".runtime-skill-bundles/abc123"
@@ -184,7 +184,7 @@ def test_get_skills_mount_scopes_runtime_bundle(tmp_path, monkeypatch):
 
     mount = aio_mod.AioSandboxProvider._get_skills_mount(bundle_scope)
 
-    assert mount == (str(skills_root / bundle_scope), "/mnt/skills", True)
+    assert mount is None
 
 
 def test_get_skills_mount_preserves_windows_private_scope_paths(tmp_path, monkeypatch):
@@ -199,23 +199,20 @@ def test_get_skills_mount_preserves_windows_private_scope_paths(tmp_path, monkey
     monkeypatch.setenv("DEER_FLOW_HOST_SHARED_FS_ROOT", r"C:\Users\demo\deer-flow\backend\.deer-flow")
     monkeypatch.setattr(aio_mod, "get_paths", lambda: Paths(base_dir=tmp_path))
 
-    mount = aio_mod.AioSandboxProvider._get_skills_mount("7")
+    mount = aio_mod.AioSandboxProvider._get_skills_mount(aio_mod.CANONICAL_RUNTIME_SKILLS_SCOPE)
 
-    assert mount == (r"C:\Users\demo\deer-flow\backend\.deer-flow\skills\7", "/mnt/skills", True)
+    assert mount == (r"C:\Users\demo\deer-flow\backend\.deer-flow\skills", "/mnt/skills", True)
 
 
 def test_deterministic_sandbox_id_includes_skill_scope() -> None:
     aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
 
     legacy_id = aio_mod.AioSandboxProvider._deterministic_sandbox_id("thread-1")
-    public_id = aio_mod.AioSandboxProvider._deterministic_sandbox_id("thread-1", "public")
-    private_id = aio_mod.AioSandboxProvider._deterministic_sandbox_id("thread-1", "7")
+    skills_id = aio_mod.AioSandboxProvider._deterministic_sandbox_id("thread-1", aio_mod.CANONICAL_RUNTIME_SKILLS_SCOPE)
 
     assert legacy_id == hashlib.sha256(b"thread-1").hexdigest()[:8]
-    assert public_id == hashlib.sha256(b"thread-1:public").hexdigest()[:8]
-    assert private_id == hashlib.sha256(b"thread-1:7").hexdigest()[:8]
-    assert legacy_id != public_id
-    assert public_id != private_id
+    assert skills_id == hashlib.sha256(b"thread-1:.").hexdigest()[:8]
+    assert legacy_id != skills_id
 
 
 def test_acquire_internal_does_not_reclaim_warm_pool_sandbox_from_wrong_scope():
@@ -234,20 +231,20 @@ def test_acquire_internal_does_not_reclaim_warm_pool_sandbox_from_wrong_scope():
     provider._shutdown_called = False
     provider._idle_checker_thread = None
 
-    public_id = aio_mod.AioSandboxProvider._deterministic_sandbox_id("thread-1", "public")
-    private_id = aio_mod.AioSandboxProvider._deterministic_sandbox_id("thread-1", "7")
-    provider._warm_pool[public_id] = (SimpleNamespace(sandbox_url="http://warm"), 0.0)
-    provider._discover_or_create_with_lock = MagicMock(return_value=private_id)
+    no_skills_id = aio_mod.AioSandboxProvider._deterministic_sandbox_id("thread-1")
+    skills_id = aio_mod.AioSandboxProvider._deterministic_sandbox_id("thread-1", aio_mod.CANONICAL_RUNTIME_SKILLS_SCOPE)
+    provider._warm_pool[no_skills_id] = (SimpleNamespace(sandbox_url="http://warm"), 0.0)
+    provider._discover_or_create_with_lock = MagicMock(return_value=skills_id)
 
-    sandbox_id = provider._acquire_internal("thread-1", skill_scope="7")
+    sandbox_id = provider._acquire_internal("thread-1", skill_scope=aio_mod.CANONICAL_RUNTIME_SKILLS_SCOPE)
 
-    assert sandbox_id == private_id
-    assert public_id in provider._warm_pool
+    assert sandbox_id == skills_id
+    assert no_skills_id in provider._warm_pool
     provider._discover_or_create_with_lock.assert_called_once_with(
         "thread-1",
-        private_id,
+        skills_id,
         workspace_id=None,
-        skill_scope="7",
+        skill_scope=aio_mod.CANONICAL_RUNTIME_SKILLS_SCOPE,
     )
 
 
@@ -270,11 +267,11 @@ def test_create_sandbox_initializes_backend_after_ready(monkeypatch):
 
     monkeypatch.setattr(aio_mod, "wait_for_sandbox_ready", lambda url, timeout=60: True)
 
-    sandbox_id = provider._create_sandbox("thread-1", "sandbox-1", workspace_id="workspace-1", skill_scope="7")
+    sandbox_id = provider._create_sandbox("thread-1", "sandbox-1", workspace_id="workspace-1", skill_scope=aio_mod.CANONICAL_RUNTIME_SKILLS_SCOPE)
 
     assert sandbox_id == "sandbox-1"
     provider._backend.initialize.assert_called_once()
     args, kwargs = provider._backend.initialize.call_args
     assert args[0].sandbox_id == "sandbox-1"
     assert args[1] == "thread-1"
-    assert kwargs == {"workspace_id": "workspace-1", "skill_scope": "7"}
+    assert kwargs == {"workspace_id": "workspace-1", "skill_scope": aio_mod.CANONICAL_RUNTIME_SKILLS_SCOPE}
