@@ -258,6 +258,241 @@ def _upgrade_skill_releases() -> None:
         op.drop_column("skill_releases", "artifact_path")
 
 
+def _create_missing_installations_for_legacy_agent_skills() -> None:
+    if not _has_column("agent_skills", "skill_id"):
+        return
+    op.execute(
+        """
+        WITH latest_versions AS (
+            SELECT DISTINCT ON (skill_definition_id)
+                   id,
+                   skill_definition_id,
+                   skill_id,
+                   version_number
+            FROM skill_versions
+            ORDER BY skill_definition_id, version_number DESC, id DESC
+        ),
+        candidates AS (
+            SELECT DISTINCT
+                   agent.user_id,
+                   version.skill_definition_id,
+                   version.id AS version_id,
+                   version.skill_id,
+                   version.version_number
+            FROM agent_skills AS binding
+            JOIN agents AS agent ON agent.id = binding.agent_id
+            JOIN legacy_skills AS legacy_skill ON legacy_skill.id = binding.skill_id
+            JOIN latest_versions AS version ON version.skill_definition_id = legacy_skill.skill_definition_id
+            WHERE binding.deleted_at IS NULL
+              AND binding.skill_installation_id IS NULL
+              AND binding.skill_id IS NOT NULL
+              AND legacy_skill.skill_definition_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM skill_installations AS existing
+                  WHERE existing.user_id = agent.user_id
+                    AND existing.skill_id = version.skill_id
+                    AND existing.deleted_at IS NULL
+              )
+        )
+        INSERT INTO skill_installations (
+            user_id,
+            skill_definition_id,
+            installed_version_id,
+            current_version_id,
+            skill_id,
+            version_number,
+            status,
+            created_at,
+            updated_at,
+            deleted_at
+        )
+        SELECT user_id,
+               skill_definition_id,
+               version_id,
+               version_id,
+               skill_id,
+               version_number,
+               'active',
+               NOW(),
+               NOW(),
+               NULL
+        FROM candidates
+        """
+    )
+
+
+def _backfill_agent_skills_from_legacy_skill_ids() -> None:
+    if not _has_column("agent_skills", "skill_id"):
+        return
+    op.execute(
+        """
+        UPDATE agent_skills AS binding
+        SET skill_installation_id = install.id
+        FROM agents AS agent,
+             legacy_skills AS legacy_skill,
+             skill_identity_migration_map AS map,
+             skill_installations AS install
+        WHERE binding.deleted_at IS NULL
+          AND binding.skill_installation_id IS NULL
+          AND binding.skill_id IS NOT NULL
+          AND agent.id = binding.agent_id
+          AND legacy_skill.id = binding.skill_id
+          AND map.old_skill_definition_id = legacy_skill.skill_definition_id
+          AND install.user_id = agent.user_id
+          AND install.skill_id = map.skill_id
+          AND install.status = 'active'
+          AND install.deleted_at IS NULL
+        """
+    )
+
+
+def _create_missing_installations_for_direct_system_agent_skills() -> None:
+    if not _has_column("agent_skills", "system_skill_version_id"):
+        return
+    op.execute(
+        """
+        WITH candidates AS (
+            SELECT DISTINCT
+                   agent.user_id,
+                   version.skill_definition_id,
+                   version.id AS version_id,
+                   version.skill_id,
+                   version.version_number
+            FROM agent_skills AS binding
+            JOIN agents AS agent ON agent.id = binding.agent_id
+            JOIN skill_versions AS version ON version.id = binding.system_skill_version_id
+            WHERE binding.deleted_at IS NULL
+              AND binding.skill_installation_id IS NULL
+              AND binding.system_skill_version_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM skill_installations AS existing
+                  WHERE existing.user_id = agent.user_id
+                    AND existing.skill_id = version.skill_id
+                    AND existing.deleted_at IS NULL
+              )
+        )
+        INSERT INTO skill_installations (
+            user_id,
+            skill_definition_id,
+            installed_version_id,
+            current_version_id,
+            skill_id,
+            version_number,
+            status,
+            created_at,
+            updated_at,
+            deleted_at
+        )
+        SELECT user_id,
+               skill_definition_id,
+               version_id,
+               version_id,
+               skill_id,
+               version_number,
+               'active',
+               NOW(),
+               NOW(),
+               NULL
+        FROM candidates
+        """
+    )
+
+
+def _backfill_agent_skills_from_direct_system_versions() -> None:
+    if not _has_column("agent_skills", "system_skill_version_id"):
+        return
+    op.execute(
+        """
+        UPDATE agent_skills AS binding
+        SET skill_installation_id = install.id
+        FROM agents AS agent,
+             skill_versions AS version,
+             skill_installations AS install
+        WHERE binding.deleted_at IS NULL
+          AND binding.skill_installation_id IS NULL
+          AND binding.system_skill_version_id IS NOT NULL
+          AND agent.id = binding.agent_id
+          AND version.id = binding.system_skill_version_id
+          AND install.user_id = agent.user_id
+          AND install.skill_id = version.skill_id
+          AND install.version_number = version.version_number
+          AND install.status = 'active'
+          AND install.deleted_at IS NULL
+        """
+    )
+
+
+def _retire_unrepresentable_legacy_agent_skills() -> None:
+    if _has_column("agent_skills", "skill_id"):
+        op.execute(
+            """
+            UPDATE agent_skills AS binding
+            SET deleted_at = NOW()
+            FROM legacy_skills AS legacy_skill
+            WHERE binding.deleted_at IS NULL
+              AND binding.skill_installation_id IS NULL
+              AND binding.skill_id IS NOT NULL
+              AND legacy_skill.id = binding.skill_id
+              AND (
+                  legacy_skill.skill_definition_id IS NULL
+                  OR NOT EXISTS (
+                      SELECT 1
+                      FROM skill_versions AS version
+                      WHERE version.skill_definition_id = legacy_skill.skill_definition_id
+                  )
+              )
+            """
+        )
+
+    if _has_column("agent_skills", "system_skill_definition_id") and _has_column("agent_skills", "system_skill_version_id"):
+        op.execute(
+            """
+            UPDATE agent_skills AS binding
+            SET deleted_at = NOW()
+            WHERE binding.deleted_at IS NULL
+              AND binding.skill_installation_id IS NULL
+              AND binding.system_skill_definition_id IS NOT NULL
+              AND binding.system_skill_version_id IS NULL
+            """
+        )
+
+
+def _delete_deleted_agent_skills_without_terminal_installation() -> None:
+    op.execute(
+        """
+        DELETE FROM agent_skills
+        WHERE deleted_at IS NOT NULL
+          AND skill_installation_id IS NULL
+        """
+    )
+
+
+def _dedupe_active_agent_skill_installation_bindings() -> None:
+    op.execute(
+        """
+        WITH ranked AS (
+            SELECT id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY agent_id, skill_installation_id
+                       ORDER BY display_order ASC,
+                                created_at ASC,
+                                id ASC
+                   ) AS row_number
+            FROM agent_skills
+            WHERE deleted_at IS NULL
+              AND skill_installation_id IS NOT NULL
+        )
+        UPDATE agent_skills AS binding
+        SET deleted_at = NOW()
+        FROM ranked
+        WHERE binding.id = ranked.id
+          AND ranked.row_number > 1
+        """
+    )
+
+
 def _upgrade_agent_skills() -> None:
     if _has_table("agents_skills") and not _has_table("agent_skills"):
         op.rename_table("agents_skills", "agent_skills")
@@ -265,6 +500,7 @@ def _upgrade_agent_skills() -> None:
         return
 
     _rename_constraint_if_exists("agent_skills", "agents_skills_pkey", "agent_skills_pkey")
+    _rename_constraint_if_exists("agent_skills", "agents_skills_agent_id_fkey", "fk_agent_skills_agent_id_agents")
     _rename_constraint_if_exists("agent_skills", "fk_agents_skills_agent_id_agents", "fk_agent_skills_agent_id_agents")
     _rename_constraint_if_exists("agent_skills", "fk_agents_skills_skill_install_id_skill_installations", "fk_agent_skills_skill_installation_id_skill_installations")
     _rename_indexes(
@@ -281,12 +517,26 @@ def _upgrade_agent_skills() -> None:
             op.alter_column("agent_skills", "skill_install_id", new_column_name="skill_installation_id", existing_type=sa.BigInteger(), existing_nullable=True)
         else:
             op.drop_column("agent_skills", "skill_install_id")
+    elif not _has_column("agent_skills", "skill_installation_id"):
+        op.add_column("agent_skills", sa.Column("skill_installation_id", sa.BigInteger(), nullable=True, comment="Terminal skill_installations.id binding column"))
 
     _rename_constraint_if_exists("agent_skills", "fk_agents_skills_skill_install_id_skill_installations", "fk_agent_skills_skill_installation_id_skill_installations")
 
+    _create_missing_installations_for_legacy_agent_skills()
+    _backfill_agent_skills_from_legacy_skill_ids()
+    _create_missing_installations_for_direct_system_agent_skills()
+    _backfill_agent_skills_from_direct_system_versions()
+    _retire_unrepresentable_legacy_agent_skills()
+    _delete_deleted_agent_skills_without_terminal_installation()
+    _dedupe_active_agent_skill_installation_bindings()
+
+    _assert_no_rows(
+        "SELECT count(*) FROM agent_skills WHERE deleted_at IS NULL AND skill_installation_id IS NULL",
+        "Cannot migrate agent_skills: every active binding must resolve to a terminal skill_installation_id",
+    )
     _assert_no_rows(
         "SELECT count(*) FROM agent_skills WHERE skill_installation_id IS NULL",
-        "Cannot migrate agent_skills: every active binding must resolve to skill_installation_id",
+        "Cannot migrate agent_skills: deleted historical rows without terminal skill_installation_id must be removed before enforcing NOT NULL",
     )
     op.alter_column("agent_skills", "skill_installation_id", existing_type=sa.BigInteger(), nullable=False)
 

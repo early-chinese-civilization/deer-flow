@@ -30,6 +30,10 @@ def test_terminal_skill_model_uses_uuid_identity() -> None:
     assert "skill_definition_id" not in Skill.__table__.c
 
 
+def test_terminal_skill_model_does_not_use_owner_name_as_identity() -> None:
+    assert "uq_skills_owner_name_active" not in {index.name for index in Skill.__table__.indexes}
+
+
 def test_legacy_skill_bridge_keeps_old_bigint_migration_input() -> None:
     assert LegacySkill.__tablename__ == "legacy_skills"
     assert isinstance(LegacySkill.__table__.c.id.type, BigInteger)
@@ -47,6 +51,9 @@ def test_skill_identity_map_links_skill_definition_to_terminal_uuid() -> None:
     assert any(fk.column.table.name == "skill_definitions" and fk.column.name == "id" for fk in columns.old_skill_definition_id.foreign_keys)
     assert any(fk.column.table.name == "skills" and fk.column.name == "id" for fk in columns.skill_id.foreign_keys)
     assert any(fk.column.table.name == "legacy_skills" and fk.column.name == "id" for fk in columns.old_skill_id.foreign_keys)
+    assert {fk.constraint.name for fk in columns.old_skill_definition_id.foreign_keys} == {"fk_skill_id_map_definition"}
+    assert {fk.constraint.name for fk in columns.skill_id.foreign_keys} == {"fk_skill_id_map_skill"}
+    assert {fk.constraint.name for fk in columns.old_skill_id.foreign_keys} == {"fk_skill_id_map_legacy_skill"}
 
 
 def test_skill_identity_migration_uuidv5_values_are_fixed() -> None:

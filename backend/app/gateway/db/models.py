@@ -256,13 +256,6 @@ class Skill(Base):
     releases = relationship("SkillRelease", back_populates="skill")
 
     __table_args__ = (
-        Index(
-            "uq_skills_owner_name_active",
-            "owner_user_id",
-            "name",
-            unique=True,
-            postgresql_where=text("deleted_at IS NULL"),
-        ),
         Index("ix_skills_owner_user_id", "owner_user_id"),
         Index("ix_skills_deleted_at", "deleted_at"),
     )
@@ -406,19 +399,19 @@ class SkillIdentityMigrationMap(Base):
 
     old_skill_definition_id = Column(
         BigInteger,
-        ForeignKey("skill_definitions.id", ondelete="CASCADE"),
+        ForeignKey("skill_definitions.id", name="fk_skill_id_map_definition", ondelete="CASCADE"),
         primary_key=True,
         comment="Legacy SkillDefinition ID",
     )
     skill_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("skills.id", ondelete="CASCADE"),
+        ForeignKey("skills.id", name="fk_skill_id_map_skill", ondelete="CASCADE"),
         nullable=False,
         comment="Terminal Skill UUID",
     )
     old_skill_id = Column(
         BigInteger,
-        ForeignKey("legacy_skills.id", ondelete="SET NULL"),
+        ForeignKey("legacy_skills.id", name="fk_skill_id_map_legacy_skill", ondelete="SET NULL"),
         nullable=True,
         comment="Representative legacy skills row that contributed display/path migration input",
     )

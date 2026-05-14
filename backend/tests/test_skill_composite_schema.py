@@ -5,7 +5,7 @@ from pathlib import Path
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 
-from app.gateway.db.models import SkillInstall, SkillInstallation, SkillRelease, SkillVersion
+from app.gateway.db.models import AgentSkill, SkillInstall, SkillInstallation, SkillRelease, SkillVersion
 
 
 def _unique_constraint_columns(table: sa.Table, name: str) -> tuple[str, ...]:
@@ -80,6 +80,17 @@ def test_skill_releases_reference_exact_terminal_version_with_status() -> None:
     assert ("version_number",) not in _foreign_key_column_sets(SkillRelease.__table__)
 
 
+def test_agent_skills_bind_only_terminal_installations() -> None:
+    columns = AgentSkill.__table__.columns
+
+    assert AgentSkill.__tablename__ == "agent_skills"
+    assert columns.skill_installation_id.nullable is False
+    assert "skill_install_id" not in columns
+    assert "skill_id" not in columns
+    assert "system_skill_definition_id" not in columns
+    assert "system_skill_version_id" not in columns
+
+
 def test_composite_skill_schema_migration_backfills_and_constrains_terminal_columns() -> None:
     migration_path = Path("alembic/versions/e5f6a7b8c9d0_migrate_composite_skill_version_schema.py")
 
@@ -98,3 +109,29 @@ def test_composite_skill_schema_migration_backfills_and_constrains_terminal_colu
     assert "release.skill_version_id = version.id" in migration
     assert 'op.drop_column("skill_releases", "skill_version_id")' in migration
     assert 'op.drop_column("skill_releases", "artifact_path")' in migration
+
+
+def test_composite_skill_schema_migration_handles_legacy_agent_binding_shapes() -> None:
+    migration_path = Path("alembic/versions/e5f6a7b8c9d0_migrate_composite_skill_version_schema.py")
+
+    migration = migration_path.read_text(encoding="utf-8")
+    assert "_create_missing_installations_for_legacy_agent_skills" in migration
+    assert "legacy_skills AS legacy_skill" in migration
+    assert "latest_versions AS" in migration
+    assert "_create_missing_installations_for_direct_system_agent_skills" in migration
+    assert "binding.system_skill_version_id" in migration
+    assert "INSERT INTO skill_installations" in migration
+    assert "_retire_unrepresentable_legacy_agent_skills" in migration
+    assert "legacy_skill.skill_definition_id IS NULL" in migration
+    assert "DELETE FROM agent_skills" in migration
+    assert "ROW_NUMBER() OVER" in migration
+    assert "deleted_at IS NULL AND skill_installation_id IS NULL" in migration
+
+
+def test_agent_skill_fk_rename_migration_handles_default_constraint_name() -> None:
+    migration_path = Path("alembic/versions/f6a7b8c9d0e1_rename_agent_skills_agent_fk.py")
+
+    migration = migration_path.read_text(encoding="utf-8")
+    assert "agents_skills_agent_id_fkey" in migration
+    assert "fk_agents_skills_agent_id_agents" in migration
+    assert "fk_agent_skills_agent_id_agents" in migration

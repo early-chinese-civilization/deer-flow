@@ -157,7 +157,7 @@ REQUIRED_GATEWAY_COLUMN_SIGNATURES = {
 
 REQUIRED_GATEWAY_INDEXES = {
     "users": frozenset({"ix_users_external_auth_id"}),
-    "skills": frozenset({"uq_skills_owner_name_active", "ix_skills_owner_user_id", "ix_skills_deleted_at"}),
+    "skills": frozenset({"ix_skills_owner_user_id", "ix_skills_deleted_at"}),
     "skill_versions": frozenset({"ix_skill_versions_skill_id_created"}),
     "skill_installations": frozenset({"uq_skill_installations_user_skill_active", "ix_skill_installations_skill_version"}),
     "skill_releases": frozenset({"ix_skill_releases_status_skill_version"}),

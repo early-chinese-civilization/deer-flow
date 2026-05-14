@@ -131,13 +131,6 @@ def _create_terminal_skills_table() -> None:
         sa.ForeignKeyConstraint(["owner_user_id"], ["users.id"], name="fk_skills_owner_user_id_users", ondelete="RESTRICT"),
         sa.PrimaryKeyConstraint("id", name="skills_pkey"),
     )
-    op.create_index(
-        "uq_skills_owner_name_active",
-        "skills",
-        ["owner_user_id", "name"],
-        unique=True,
-        postgresql_where=sa.text("deleted_at IS NULL"),
-    )
     op.create_index("ix_skills_owner_user_id", "skills", ["owner_user_id"])
     op.create_index("ix_skills_deleted_at", "skills", ["deleted_at"])
 
@@ -155,11 +148,11 @@ def _create_identity_map_table() -> None:
         sa.ForeignKeyConstraint(
             ["old_skill_definition_id"],
             ["skill_definitions.id"],
-            name="fk_skill_identity_migration_map_old_skill_definition_id_skill_definitions",
+            name="fk_skill_id_map_definition",
             ondelete="CASCADE",
         ),
-        sa.ForeignKeyConstraint(["skill_id"], ["skills.id"], name="fk_skill_identity_migration_map_skill_id_skills", ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["old_skill_id"], ["legacy_skills.id"], name="fk_skill_identity_migration_map_old_skill_id_legacy_skills", ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(["skill_id"], ["skills.id"], name="fk_skill_id_map_skill", ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["old_skill_id"], ["legacy_skills.id"], name="fk_skill_id_map_legacy_skill", ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("old_skill_definition_id", name="skill_identity_migration_map_pkey"),
         sa.UniqueConstraint("skill_id", name="uq_skill_identity_migration_map_skill_id"),
         sa.UniqueConstraint("migration_source", name="uq_skill_identity_migration_map_migration_source"),
@@ -316,8 +309,6 @@ def downgrade() -> None:
             op.drop_index("ix_skills_deleted_at", table_name="skills")
         if _has_index("skills", "ix_skills_owner_user_id"):
             op.drop_index("ix_skills_owner_user_id", table_name="skills")
-        if _has_index("skills", "uq_skills_owner_name_active"):
-            op.drop_index("uq_skills_owner_name_active", table_name="skills")
         if _has_constraint("skills", "fk_skills_owner_user_id_users"):
             op.drop_constraint("fk_skills_owner_user_id_users", "skills", type_="foreignkey")
         op.drop_table("skills")
