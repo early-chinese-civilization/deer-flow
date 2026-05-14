@@ -1176,6 +1176,31 @@ class SkillInstallRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def list_installed_for_user(
+        db: AsyncSession,
+        *,
+        user_id: int,
+    ) -> list[SkillInstall]:
+        """List active install-backed Skill rows for the current user's My Skills surface."""
+        result = await db.execute(
+            select(SkillInstall)
+            .options(
+                selectinload(SkillInstall.definition).selectinload(SkillDefinition.owner_user),
+                selectinload(SkillInstall.installed_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
+                selectinload(SkillInstall.current_version).selectinload(SkillVersion.definition).selectinload(SkillDefinition.owner_user),
+                selectinload(SkillInstall.current_version).selectinload(SkillVersion.skill).selectinload(Skill.owner_user),
+                selectinload(SkillInstall.skill).selectinload(Skill.owner_user),
+            )
+            .where(
+                SkillInstall.user_id == user_id,
+                SkillInstall.status == "active",
+                SkillInstall.deleted_at.is_(None),
+            )
+            .order_by(SkillInstall.updated_at.desc(), SkillInstall.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
     async def upsert_install(
         db: AsyncSession,
         *,

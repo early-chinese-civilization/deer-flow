@@ -5,6 +5,7 @@ import shutil
 import tempfile
 import uuid
 import zipfile
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -13,6 +14,7 @@ import yaml
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.db.models import Agent, SkillDefinition, SkillInstall, SkillRelease, SkillVersion, User
@@ -151,6 +153,18 @@ class SkillResponse(BaseModel):
     published_at: str | None = Field(default=None, description="Release publish timestamp")
 
 
+@dataclass
+class _SkillResponseProjection:
+    """Non-persistent row shape used to project release/install-backed Skills."""
+
+    user_id: int | None
+    owner_user_id: int | None
+    name: str
+    description: str | None
+    definition: SkillDefinition | None = None
+    owner_user: User | None = None
+
+
 def _display_name_for_user(user: User | None) -> str | None:
     if user is None:
         return None
@@ -170,13 +184,13 @@ def _display_name_for_source_version(version: SkillVersion | None) -> str | None
     return None
 
 
-def _is_official_skill_source(skill: Skill, definition: SkillDefinition | None) -> bool:
+def _is_official_skill_source(skill: Skill | _SkillResponseProjection, definition: SkillDefinition | None) -> bool:
     if definition is not None:
         return is_system_skill_definition(definition)
     return skill.user_id is None and skill.owner_user_id is None
 
 
-def _is_authored_by_current_user(skill: Skill, definition: SkillDefinition | None, current_user_id: int | None) -> bool:
+def _is_authored_by_current_user(skill: Skill | _SkillResponseProjection, definition: SkillDefinition | None, current_user_id: int | None) -> bool:
     if current_user_id is None:
         return False
     if definition is not None:
@@ -188,7 +202,7 @@ def _is_authored_by_current_user(skill: Skill, definition: SkillDefinition | Non
 
 def _derive_skill_source_kind(
     *,
-    skill: Skill,
+    skill: Skill | _SkillResponseProjection,
     definition: SkillDefinition | None,
     space: SkillSpace,
     authored_by_current_user: bool,
@@ -384,13 +398,14 @@ class SkillInstallUpdatePreviewResponse(BaseModel):
 
 
 def _skill_to_response(
-    skill: Skill,
+    skill: Skill | _SkillResponseProjection,
     release: SkillRelease | None = None,
     package_version: str | None = None,
     skill_version: SkillVersion | None = None,
     skill_install: SkillInstall | None = None,
     latest_skill_version: SkillVersion | None = None,
     current_user_id: int | None = None,
+    include_system_install_binding: bool = False,
 ) -> SkillResponse:
     """Convert a database skill row to the API response model."""
     release_package_version = getattr(release, "package_version", None) if release is not None else None
@@ -420,7 +435,7 @@ def _skill_to_response(
         authored_by_current_user=authored_by_current_user,
     )
     space: SkillSpace = "system" if source_kind == "official" else base_space
-    if source_kind == "official":
+    if source_kind == "official" and not include_system_install_binding:
         skill_install = None
         current_platform_version = None
         installed_platform_version = None
@@ -531,20 +546,79 @@ async def _release_to_response(
         install = await SkillInstallRepository.get_by_user_and_skill_id(db, user_id=current_user_id, skill_id=version.skill_id)
 
     terminal_skill = release.skill
-    response_file_path = build_terminal_skill_version_relative_path(version.skill_id, version.version_number)
-    response_skill = Skill(
-        id=None,
+    response_skill = _SkillResponseProjection(
         user_id=None,
         owner_user_id=terminal_skill.owner_user_id if terminal_skill is not None else release.publisher_user_id,
         name=terminal_skill.name if terminal_skill is not None else release.skill_name,
-        display_name=terminal_skill.display_name if terminal_skill is not None else release.skill_name,
         description=release.description,
-        file_path=response_file_path,
-        skill_definition_id=version.skill_definition_id,
+        definition=version.definition,
+        owner_user=terminal_skill.owner_user if terminal_skill is not None else release.publisher_user,
     )
-    response_skill.definition = version.definition
-    response_skill.owner_user = terminal_skill.owner_user if terminal_skill is not None else release.publisher_user
-    return _skill_to_response(response_skill, release=release, skill_version=version, skill_install=install, latest_skill_version=version, current_user_id=current_user_id)
+    return _skill_to_response(
+        response_skill,
+        release=release,
+        skill_version=version,
+        skill_install=install,
+        latest_skill_version=version,
+        current_user_id=current_user_id,
+        include_system_install_binding=install is not None,
+    )
+
+
+async def _install_current_version(db: AsyncSession, install: SkillInstall) -> SkillVersion | None:
+    """Resolve the current immutable version for an install row."""
+    version = install.current_version
+    if version is None and install.skill_id is not None and install.version_number is not None:
+        version = await SkillVersionRepository.get_by_skill_version(db, skill_id=install.skill_id, version_number=install.version_number)
+    return version
+
+
+def _is_system_install(install: SkillInstall, version: SkillVersion | None) -> bool:
+    """Return whether an install points at an official/system Skill."""
+    definition = install.definition
+    if definition is None and version is not None:
+        definition = version.definition
+    return is_system_skill_definition(definition)
+
+
+def _install_to_personal_skill_projection(install: SkillInstall, *, current_user_id: int, version: SkillVersion) -> _SkillResponseProjection:
+    """Build a legacy-compatible personal row from an install-backed Skill."""
+    definition = install.definition or version.definition
+    terminal_skill = install.skill or version.skill
+    name = (terminal_skill.name if terminal_skill is not None else None) or (definition.name if definition is not None else None) or "unknown"
+    description = version.description or (terminal_skill.description if terminal_skill is not None else None) or (definition.description if definition is not None else None) or ""
+    owner_user = None
+    if terminal_skill is not None and terminal_skill.owner_user is not None:
+        owner_user = terminal_skill.owner_user
+    elif definition is not None:
+        owner_user = definition.owner_user
+    return _SkillResponseProjection(
+        user_id=current_user_id,
+        owner_user_id=terminal_skill.owner_user_id if terminal_skill is not None else (definition.owner_user_id if definition is not None else None),
+        name=name,
+        description=description,
+        definition=definition,
+        owner_user=owner_user,
+    )
+
+
+async def _install_to_response(db: AsyncSession, install: SkillInstall, *, current_user_id: int, version: SkillVersion | None = None) -> SkillResponse:
+    """Project an active install as a My Skills row without creating a legacy skill copy."""
+    version = version or await _install_current_version(db, install)
+    if version is None:
+        raise HTTPException(status_code=409, detail=f"Skill installation '{install.id}' has no current platform version")
+    latest_release = await SkillReleaseRepository.get_latest_published_release_for_skill(db, skill_id=version.skill_id)
+    latest_version = await _release_skill_version(db, latest_release)
+    response_skill = _install_to_personal_skill_projection(install, current_user_id=current_user_id, version=version)
+    return _skill_to_response(
+        response_skill,
+        release=latest_release,
+        skill_version=version,
+        skill_install=install,
+        latest_skill_version=latest_version,
+        current_user_id=current_user_id,
+        include_system_install_binding=True,
+    )
 
 
 def _extract_frontmatter(skill_md_path: Path) -> dict:
@@ -807,6 +881,42 @@ def _is_skill_version_artifact_available(version: SkillVersion) -> bool:
     except Exception:
         return False
     return artifact_dir.is_dir() and (artifact_dir / "SKILL.md").is_file()
+
+
+def _get_bundled_public_skill_dir(skill_name: str) -> Path:
+    repo_root = Path(__file__).resolve().parents[4]
+    return repo_root / "skills" / "public" / skill_name
+
+
+def _ensure_skill_version_artifact_available_for_install(version: SkillVersion) -> bool:
+    """Ensure an install target has terminal storage, backfilling bundled system Skills when possible."""
+    if _is_skill_version_artifact_available(version):
+        return True
+
+    definition = version.definition
+    if not is_system_skill_definition(definition):
+        return False
+
+    source_dir = _get_bundled_public_skill_dir(definition.name)
+    if not source_dir.is_dir():
+        return False
+
+    try:
+        _copy_version_artifact(
+            source_dir,
+            build_terminal_skill_version_relative_path(version.skill_id, version.version_number),
+            expected_content_hash=version.content_hash,
+            expected_file_manifest_hash=version.file_manifest_hash,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to backfill bundled system Skill artifact for %s v%s: %s",
+            definition.name,
+            version.version_number,
+            exc,
+        )
+        return False
+    return _is_skill_version_artifact_available(version)
 
 
 def _format_publisher(release: SkillRelease | None) -> str | None:
@@ -1141,13 +1251,19 @@ async def _ensure_skill_version_from_dir(
 ) -> tuple[SkillVersion, bool, SkillDefinition]:
     """Create or reuse the platform SkillVersion for canonical skill content."""
     content_hash, file_manifest_hash = _hash_skill_directory(skill_dir)
-    definition = await SkillDefinitionRepository.get_or_create(
-        db,
-        name=skill_name,
-        display_name=skill_name,
-        description=description,
-        owner_user_id=user_id,
-    )
+    try:
+        definition = await SkillDefinitionRepository.get_or_create(
+            db,
+            name=skill_name,
+            display_name=skill_name,
+            description=description,
+            owner_user_id=user_id,
+        )
+    except IntegrityError:
+        await db.rollback()
+        definition = await SkillDefinitionRepository.get_by_name_and_owner(db, name=skill_name, owner_user_id=user_id)
+        if definition is None:
+            raise
     existing_version = await SkillVersionRepository.get_by_definition_and_hash(
         db,
         skill_definition_id=definition.id,
@@ -1170,15 +1286,27 @@ async def _ensure_skill_version_from_dir(
         expected_content_hash=content_hash,
         expected_file_manifest_hash=file_manifest_hash,
     )
-    version = await SkillVersionRepository.create_version(
-        db,
-        definition=definition,
-        source_package_version=source_package_version,
-        description=description,
-        content_hash=content_hash,
-        file_manifest_hash=file_manifest_hash,
-        created_by_user_id=user_id,
-    )
+    definition_id = definition.id
+    try:
+        version = await SkillVersionRepository.create_version(
+            db,
+            definition=definition,
+            source_package_version=source_package_version,
+            description=description,
+            content_hash=content_hash,
+            file_manifest_hash=file_manifest_hash,
+            created_by_user_id=user_id,
+        )
+    except IntegrityError:
+        await db.rollback()
+        existing_version = await SkillVersionRepository.get_by_definition_and_hash(
+            db,
+            skill_definition_id=definition_id,
+            content_hash=content_hash,
+        )
+        if existing_version is not None:
+            return existing_version, False, existing_version.definition or definition
+        raise
     return version, True, definition
 
 
@@ -1424,6 +1552,16 @@ async def upload_skills(
                     filename=upload_file.filename or "unknown.zip",
                     success=False,
                     message=str(exc),
+                )
+            )
+        except IntegrityError as exc:
+            await db.rollback()
+            logger.warning("Skill upload conflicted for archive %s: %s", upload_file.filename, exc)
+            results.append(
+                SkillUploadResult(
+                    filename=upload_file.filename or "unknown.zip",
+                    success=False,
+                    message="Skill upload conflicted with another in-progress upload. Retry the upload.",
                 )
             )
         except Exception as exc:
@@ -1699,7 +1837,15 @@ async def list_skills(
     try:
         skills = await SkillRepository.list_visible_skills(db, user_id=current_user.id)
         personal_rows = [skill for skill in skills if skill.user_id == current_user.id]
+        represented_definition_ids = {skill.skill_definition_id for skill in personal_rows if skill.skill_definition_id is not None}
         responses = [await _skill_to_response_with_metadata(db, skill, current_user_id=current_user.id) for skill in personal_rows]
+        for install in await SkillInstallRepository.list_installed_for_user(db, user_id=current_user.id):
+            if install.skill_definition_id in represented_definition_ids:
+                continue
+            version = await _install_current_version(db, install)
+            if _is_system_install(install, version):
+                continue
+            responses.append(await _install_to_response(db, install, current_user_id=current_user.id, version=version))
         for release in await SkillReleaseRepository.list_published_releases(db):
             responses.append(await _release_to_response(db, release, current_user_id=current_user.id))
         return SkillsListResponse(skills=responses)
@@ -1869,6 +2015,9 @@ async def install_skill(
             raise HTTPException(status_code=409, detail="Published release has no immutable SkillVersion")
         if version.skill_id != skill_id or version.version_number != version_number:
             raise HTTPException(status_code=409, detail="Published release points at a different SkillVersion")
+        artifact_available = await asyncio.to_thread(_ensure_skill_version_artifact_available_for_install, version)
+        if not artifact_available:
+            raise HTTPException(status_code=409, detail="Published Skill artifact is unavailable")
         install = await SkillInstallRepository.upsert_install(
             db,
             user_id=current_user.id,

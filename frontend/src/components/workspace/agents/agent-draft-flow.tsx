@@ -64,7 +64,9 @@ import {
 } from "@/core/agents/skill-selection";
 import type { AgentDraftMode } from "@/core/agents/types";
 import { useI18n } from "@/core/i18n/hooks";
-import { useSkills } from "@/core/skills/hooks";
+import { getSkillInstallationId, isSystemSkill } from "@/core/skills/display";
+import { useInstallSkillHubSkill, useSkills } from "@/core/skills/hooks";
+import type { Skill } from "@/core/skills/type";
 import { cn } from "@/lib/utils";
 
 const NAME_RE = /^[A-Za-z0-9-]+$/;
@@ -94,6 +96,7 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
   } = useAgent(mode === "edit" ? agentName : null);
   const createAgentMutation = useCreateAgent();
   const updateAgentMutation = useUpdateAgent();
+  const installSkillHubSkillMutation = useInstallSkillHubSkill();
 
   const [form, setForm] = useState<AgentDraftFormState>(
     normalizeAgentDraftPayload(undefined),
@@ -122,16 +125,16 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
     () => getAgentSkillSelectionGroups(skills),
     [skills],
   );
-  const visibleSkills = useMemo(
-    () => [...visibleSkillGroups.mySkills],
+  const visibleSkillRows = useMemo(
+    () => [...visibleSkillGroups.mySkills, ...visibleSkillGroups.systemSkills],
     [visibleSkillGroups],
   );
   const visibleSkillByKey = useMemo(
     () =>
       new Map(
-        visibleSkills.map((skill) => [getSkillSelectionKey(skill), skill]),
+        visibleSkillRows.map((skill) => [getSkillSelectionKey(skill), skill]),
       ),
-    [visibleSkills],
+    [visibleSkillRows],
   );
   const agentSkillMetadataByKey = useMemo(
     () =>
@@ -148,7 +151,7 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
     return getSelectionSkillInstallationIds(form.skills);
   }
 
-  function getSkillSummary(skill: (typeof visibleSkills)[number]) {
+  function getSkillSummary(skill: (typeof visibleSkillRows)[number]) {
     return getSkillDisplaySummary(skill, skillSourceLabels);
   }
 
@@ -156,6 +159,15 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
     skill: Parameters<typeof getMetadataDisplaySummary>[0],
   ) {
     return getMetadataDisplaySummary(skill, skillSourceLabels);
+  }
+
+  function canInstallSystemSkillForAgent(skill: Skill) {
+    return (
+      isSystemSkill(skill) &&
+      getSkillInstallationId(skill) == null &&
+      typeof skill.skill_id === "string" &&
+      typeof skill.version_number === "number"
+    );
   }
 
   const selectedSkillSummaries: AgentSkillDisplaySummary[] = form.skills.map(
@@ -323,6 +335,59 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
         skills: [...current.skills, skillKey],
       };
     });
+  }
+
+  async function handleSkillRowClick(
+    skill: Skill,
+    skillKey: string,
+    summary: AgentSkillDisplaySummary,
+  ) {
+    if (!summary.unavailable) {
+      toggleSkill(skillKey);
+      return;
+    }
+
+    if (!canInstallSystemSkillForAgent(skill)) {
+      return;
+    }
+
+    setSubmitError("");
+    try {
+      const installedSkill = await installSkillHubSkillMutation.mutateAsync({
+        skillId: skill.skill_id!,
+        versionNumber: skill.version_number!,
+      });
+      const installedSkillKey = getSkillSelectionKey(installedSkill);
+      const installedSummary = getSkillDisplaySummary(
+        installedSkill,
+        skillSourceLabels,
+      );
+      if (installedSummary.unavailable) {
+        setSubmitError(t.settings.skills.installError);
+        toast.error(t.settings.skills.installError);
+        return;
+      }
+      setForm((current) => {
+        const withoutUnavailableKey = current.skills.filter(
+          (value) => value !== skillKey,
+        );
+        if (withoutUnavailableKey.includes(installedSkillKey)) {
+          return { ...current, skills: withoutUnavailableKey };
+        }
+        return {
+          ...current,
+          skills: [...withoutUnavailableKey, installedSkillKey],
+        };
+      });
+      toast.success(t.settings.skills.installSuccess(skill.name));
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : t.settings.skills.installError;
+      setSubmitError(message);
+      toast.error(message);
+    }
   }
 
   async function validateName() {
@@ -506,34 +571,35 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
   }
 
   function renderSkillsSection() {
-    const renderSkillRows = (skillsToRender: typeof visibleSkills) =>
+    const renderSkillRows = (skillsToRender: typeof visibleSkillRows) =>
       skillsToRender.map((skill) => {
         const skillKey = getSkillSelectionKey(skill);
         const checked = form.skills.includes(skillKey);
         const summary = getSkillSummary(skill);
-        const cannotAdd = summary.unavailable && !checked;
+        const canInstallSystemSkill = canInstallSystemSkillForAgent(skill);
+        const showUnavailable = summary.unavailable && !canInstallSystemSkill;
+        const cannotAdd = showUnavailable && !checked;
         return (
           <button
             key={skillKey}
             type="button"
             aria-pressed={checked}
-            disabled={cannotAdd}
-            onClick={() =>
-              toggleSkill(skillKey, { canAdd: !summary.unavailable })
-            }
+            disabled={cannotAdd || installSkillHubSkillMutation.isPending}
+            onClick={() => void handleSkillRowClick(skill, skillKey, summary)}
             className="block w-full text-left"
           >
             <Item
               variant="outline"
               className={cn(
                 checked && "border-primary bg-primary/5",
-                cannotAdd && "opacity-60",
+                (cannotAdd || installSkillHubSkillMutation.isPending) &&
+                  "opacity-60",
               )}
             >
               <ItemContent>
                 <ItemTitle className="flex flex-wrap items-center gap-2">
                   <span>{skill.name}</span>
-                  {summary.unavailable && (
+                  {showUnavailable && (
                     <span className="text-destructive inline-flex items-center gap-1 text-xs font-normal">
                       <AlertTriangleIcon className="h-3.5 w-3.5" />
                       {t.agents.skillMetadataUnavailable}
@@ -561,6 +627,27 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
         );
       });
 
+    const renderSkillGroup = (
+      title: string,
+      emptyTitle: string,
+      emptyDescription: string,
+      skillsToRender: typeof visibleSkillRows,
+    ) => (
+      <section className="space-y-2">
+        <h3 className="text-sm font-medium">{title}</h3>
+        <div className="space-y-3">
+          {skillsToRender.length === 0 ? (
+            <div className="text-muted-foreground rounded-md border border-dashed p-3 text-sm">
+              <div className="font-medium">{emptyTitle}</div>
+              <div className="mt-1">{emptyDescription}</div>
+            </div>
+          ) : (
+            renderSkillRows(skillsToRender)
+          )}
+        </div>
+      </section>
+    );
+
     return (
       <div className="space-y-4">
         <div className="space-y-2">
@@ -576,25 +663,21 @@ export function AgentDraftFlow({ mode, agentName }: AgentDraftFlowProps) {
             <div className="text-muted-foreground text-sm">
               {t.agents.createSkillsLoading}
             </div>
-          ) : visibleSkills.length === 0 ? (
-            <div className="text-muted-foreground text-sm">
-              {t.agents.createSkillsEmpty}
-            </div>
           ) : (
-            <section className="space-y-2">
-              <h3 className="text-sm font-medium">
-                {t.settings.skills.mySkillsTab}
-              </h3>
-              <div className="space-y-3">
-                {visibleSkillGroups.mySkills.length === 0 ? (
-                  <div className="text-muted-foreground rounded-md border border-dashed p-3 text-sm">
-                    {t.agents.createSkillsEmpty}
-                  </div>
-                ) : (
-                  renderSkillRows(visibleSkillGroups.mySkills)
-                )}
-              </div>
-            </section>
+            <div className="grid gap-4 lg:grid-cols-2">
+              {renderSkillGroup(
+                t.settings.skills.mySkillsTab,
+                t.settings.skills.noMySkills,
+                t.settings.skills.noMySkillsDescription,
+                visibleSkillGroups.mySkills,
+              )}
+              {renderSkillGroup(
+                t.settings.skills.systemSpaceTab,
+                t.settings.skills.noSystemSkills,
+                t.settings.skills.noSystemSkillsDescription,
+                visibleSkillGroups.systemSkills,
+              )}
+            </div>
           )}
         </div>
       </div>

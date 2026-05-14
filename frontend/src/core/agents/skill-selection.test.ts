@@ -148,16 +148,30 @@ void test("same-name different-source installed Skills remain separate and submi
     getSkillDisplaySummary(alice, labels).sourceLabel,
     getSkillDisplaySummary(bob, labels).sourceLabel,
   );
+  assert.deepEqual(
+    getAgentSkillSelectionGroups([bob, alice]).mySkills.map(
+      getSkillSelectionKey,
+    ),
+    ["install:201", "install:202"],
+  );
   assert.deepEqual(getSelectionSkillInstallationIds(selection), [201, 202]);
   assert.deepEqual(getSelectionSkillNames(selection), []);
 });
 
-void test("Agent Skill selection exposes only install-backed My Skills", () => {
+void test("Agent Skill selection groups install-backed rows and System rows separately", () => {
   const installed = skill({
     name: "same-skill",
     space: "personal",
     skill_installation_id: 201,
     owner_display_name: "Alice",
+  });
+  const installedCommunity = skill({
+    name: "code-review-expert",
+    space: "community",
+    viewer_relation: "installed",
+    skill_installation_id: 202,
+    current_platform_version: 1,
+    owner_display_name: "Acceptance Alice",
   });
   const system = skill({
     name: "same-skill",
@@ -179,40 +193,100 @@ void test("Agent Skill selection exposes only install-backed My Skills", () => {
   const groups = getAgentSkillSelectionGroups([
     communityNotInstalled,
     system,
+    installedCommunity,
     installed,
   ]);
 
-  assert.deepEqual(groups.mySkills.map(getSkillSelectionKey), ["install:201"]);
+  assert.deepEqual(groups.mySkills.map(getSkillSelectionKey), [
+    "install:202",
+    "install:201",
+  ]);
+  assert.deepEqual(groups.systemSkills.map(getSkillSelectionKey), [
+    "unavailable:12345678-1234-5678-1234-567812345678:v1",
+  ]);
   assert.notEqual(
     getSkillSelectionKey(installed),
     getSkillSelectionKey(system),
   );
 });
 
-void test("System Skill rows are unavailable for custom Agent selection", () => {
+void test("System Skill rows are selectable only when install-backed", () => {
+  const unavailableSystem = skill({
+    space: "system",
+    source_kind: "official",
+    viewer_relation: "system_available",
+    skill_installation_id: null,
+    skill_id: "12345678-1234-5678-1234-567812345679",
+    version_number: 3,
+    current_platform_version: null,
+    installed_platform_version: null,
+    platform_version: 3,
+    owner_display_name: null,
+  });
+  const installBackedSystem = skill({
+    space: "system",
+    source_kind: "official",
+    viewer_relation: "system_available",
+    skill_installation_id: 303,
+    skill_id: "12345678-1234-5678-1234-567812345680",
+    version_number: 4,
+    current_platform_version: 4,
+    owner_display_name: null,
+  });
+  const installBackedSameSystem = skill({
+    space: "system",
+    source_kind: "official",
+    viewer_relation: "system_available",
+    skill_installation_id: 304,
+    skill_id: unavailableSystem.skill_id,
+    version_number: unavailableSystem.version_number,
+    current_platform_version: 3,
+    owner_display_name: null,
+  });
+  const unavailableSummary = getSkillDisplaySummary(unavailableSystem, labels);
+  const installBackedSummary = getSkillDisplaySummary(
+    installBackedSystem,
+    labels,
+  );
+
+  assert.deepEqual(unavailableSummary, {
+    key: "unavailable:12345678-1234-5678-1234-567812345679:v3",
+    name: "demo-skill",
+    description: "Demo skill",
+    versionLabel: "v3",
+    sourceLabel: "Official",
+    updateAvailable: false,
+    unavailable: true,
+  });
+  assert.deepEqual(installBackedSummary, {
+    key: "install:303",
+    name: "demo-skill",
+    description: "Demo skill",
+    versionLabel: "v4",
+    sourceLabel: "Official",
+    updateAvailable: false,
+    unavailable: false,
+  });
   assert.deepEqual(
-    getSkillDisplaySummary(
-      skill({
-        space: "system",
-        source_kind: "official",
-        viewer_relation: "system_available",
-        skill_installation_id: null,
-        skill_id: "12345678-1234-5678-1234-567812345679",
-        version_number: 3,
-        current_platform_version: null,
-        owner_display_name: null,
-      }),
-      labels,
-    ),
-    {
-      key: "unavailable:12345678-1234-5678-1234-567812345679:v3",
-      name: "demo-skill",
-      description: "Demo skill",
-      versionLabel: "Version unavailable",
-      sourceLabel: "Official",
-      updateAvailable: false,
-      unavailable: true,
-    },
+    getAgentSkillSelectionGroups([
+      installBackedSystem,
+      unavailableSystem,
+    ]).systemSkills.map(getSkillSelectionKey),
+    ["install:303", "unavailable:12345678-1234-5678-1234-567812345679:v3"],
+  );
+  assert.deepEqual(
+    getAgentSkillSelectionGroups([
+      unavailableSystem,
+      installBackedSameSystem,
+    ]).systemSkills.map(getSkillSelectionKey),
+    ["install:304"],
+  );
+  assert.deepEqual(
+    getSelectionSkillInstallationIds([
+      unavailableSummary.key,
+      installBackedSummary.key,
+    ]),
+    [303],
   );
 });
 
@@ -264,7 +338,7 @@ void test("System Agent metadata is display-only and unavailable for custom Agen
     versionLabel: "v3",
     sourceLabel: "Official",
     updateAvailable: false,
-    unavailable: false,
+    unavailable: true,
   });
 });
 

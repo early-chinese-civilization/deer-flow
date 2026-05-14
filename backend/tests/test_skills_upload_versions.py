@@ -9,6 +9,7 @@ from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 
 from app.gateway.db.models import LegacySkill as Skill
 from app.gateway.db.models import SkillDefinition, SkillVersion, User
@@ -198,6 +199,125 @@ def test_ensure_skill_version_creates_v1_then_v2_and_reuses_identical_content(tm
     assert _terminal_version_path(v1) == f"{_terminal_skill_id(definition.id)}/1"
     assert _terminal_version_path(v2) == f"{_terminal_skill_id(definition.id)}/2"
     assert len(versions) == 2
+
+
+def test_ensure_skill_version_reuses_existing_content_after_definition_unique_race(tmp_path, monkeypatch):
+    definition = SkillDefinition(id=1, name="demo-skill", display_name="demo-skill", description="Demo skill", owner_user_id=7)
+    existing_version = SkillVersion(
+        id=1,
+        skill_id=_terminal_skill_id(definition.id),
+        skill_definition_id=definition.id,
+        version_number=1,
+        source_package_version="pkg-a",
+        description="Demo skill",
+        content_hash="content-hash",
+        file_manifest_hash="manifest-hash",
+        created_by_user_id=7,
+        definition=definition,
+    )
+
+    async def get_or_create(db, *, name, display_name, description, owner_user_id):
+        raise IntegrityError("insert skill_definitions", {}, Exception("unique"))
+
+    async def get_by_name_and_owner(db, *, name, owner_user_id):
+        assert name == "demo-skill"
+        assert owner_user_id == 7
+        return definition
+
+    async def get_by_definition_and_hash(db, *, skill_definition_id, content_hash):
+        assert skill_definition_id == definition.id
+        return existing_version
+
+    async def create_version(*args, **kwargs):
+        raise AssertionError("same-content retry must not create another platform version")
+
+    monkeypatch.setattr(skills_router.SkillDefinitionRepository, "get_or_create", get_or_create)
+    monkeypatch.setattr(skills_router.SkillDefinitionRepository, "get_by_name_and_owner", get_by_name_and_owner)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "get_by_definition_and_hash", get_by_definition_and_hash)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "create_version", create_version)
+    monkeypatch.setattr(skills_router, "_hash_skill_directory", lambda skill_dir: ("content-hash", "manifest-hash"))
+
+    skill_dir = tmp_path / "same"
+    _write_skill_dir(skill_dir, version="pkg-a")
+    db = FakeDb()
+
+    async def run():
+        return await skills_router._ensure_skill_version_from_dir(
+            db,
+            user_id=7,
+            skill_name="demo-skill",
+            description="Demo skill",
+            source_package_version="pkg-a",
+            skill_dir=skill_dir,
+        )
+
+    version, created, resolved_definition = asyncio.run(run())
+
+    assert db.rollbacks == 1
+    assert created is False
+    assert version is existing_version
+    assert resolved_definition is definition
+
+
+def test_ensure_skill_version_reuses_existing_content_after_version_unique_race(tmp_path, monkeypatch):
+    definition = SkillDefinition(id=1, name="demo-skill", display_name="demo-skill", description="Demo skill", owner_user_id=7)
+    existing_version = SkillVersion(
+        id=1,
+        skill_id=_terminal_skill_id(definition.id),
+        skill_definition_id=definition.id,
+        version_number=1,
+        source_package_version="pkg-a",
+        description="Demo skill",
+        content_hash="content-hash",
+        file_manifest_hash="manifest-hash",
+        created_by_user_id=7,
+        definition=definition,
+    )
+    lookup_count = 0
+
+    async def get_or_create(db, *, name, display_name, description, owner_user_id):
+        return definition
+
+    async def get_by_definition_and_hash(db, *, skill_definition_id, content_hash):
+        nonlocal lookup_count
+        lookup_count += 1
+        assert skill_definition_id == definition.id
+        return existing_version if lookup_count > 1 else None
+
+    async def get_latest_for_definition(db, *, skill_definition_id):
+        return None
+
+    async def create_version(db, *, definition, source_package_version, description, content_hash, file_manifest_hash, created_by_user_id):
+        raise IntegrityError("insert skill_versions", {}, Exception("unique"))
+
+    monkeypatch.setattr(skills_router.SkillDefinitionRepository, "get_or_create", get_or_create)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "get_by_definition_and_hash", get_by_definition_and_hash)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "get_latest_for_definition", get_latest_for_definition)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "create_version", create_version)
+    monkeypatch.setattr(skills_router, "_copy_version_artifact", lambda source_dir, artifact_uri, **kwargs: None)
+    monkeypatch.setattr(skills_router, "_hash_skill_directory", lambda skill_dir: ("content-hash", "manifest-hash"))
+    _patch_terminal_skill_repository(monkeypatch)
+
+    skill_dir = tmp_path / "same"
+    _write_skill_dir(skill_dir, version="pkg-a")
+    db = FakeDb()
+
+    async def run():
+        return await skills_router._ensure_skill_version_from_dir(
+            db,
+            user_id=7,
+            skill_name="demo-skill",
+            description="Demo skill",
+            source_package_version="pkg-a",
+            skill_dir=skill_dir,
+        )
+
+    version, created, resolved_definition = asyncio.run(run())
+
+    assert db.rollbacks == 1
+    assert created is False
+    assert version is existing_version
+    assert resolved_definition is definition
 
 
 def test_ensure_skill_version_keeps_same_name_different_owners_distinct(tmp_path, monkeypatch):

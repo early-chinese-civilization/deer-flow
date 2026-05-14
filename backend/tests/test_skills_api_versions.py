@@ -331,6 +331,9 @@ def test_list_skills_uses_platform_version_for_public_and_install_rows(monkeypat
         assert skill_id == public_version.skill_id
         return _release(public.id, public_version)
 
+    async def list_installed_for_user(db_arg, *, user_id):
+        return []
+
     monkeypatch.setattr(skills_router.SkillRepository, "list_visible_skills", list_visible_skills)
     monkeypatch.setattr(skills_router.SkillReleaseRepository, "list_published_releases", list_published_releases)
     monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_published_release_for_skill", get_latest_published_release_for_skill)
@@ -338,6 +341,7 @@ def test_list_skills_uses_platform_version_for_public_and_install_rows(monkeypat
     monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_name", get_install_by_user_and_name)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_definition", get_install_by_user_and_definition)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_skill_id", get_install_by_user_and_skill_id)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "list_installed_for_user", list_installed_for_user)
 
     async def run():
         return await skills_router.list_skills(current_user=current_user, db=db)
@@ -352,6 +356,124 @@ def test_list_skills_uses_platform_version_for_public_and_install_rows(monkeypat
     assert by_category["custom"].platform_version == 1
     assert by_category["custom"].skill_installation_id == 300
     assert by_category["custom"].version == "1"
+
+
+def test_list_skills_projects_installed_community_as_personal_row(monkeypatch):
+    db = FakeDb()
+    current_user = _user()
+    publisher = User(id=8, external_auth_id="sub-8", username="bob", display_name="Bob")
+    definition = _definition(definition_id=502, owner_user_id=publisher.id, source_type="user", source_identifier=str(publisher.id), owner_user=publisher)
+    version = _version(1, definition=definition)
+    install = _install(version)
+    install.user_id = current_user.id
+    install.skill_definition_id = definition.id
+    install.definition = definition
+    release = _release(None, version)
+    release.publisher_user = publisher
+
+    async def list_visible_skills(db_arg, *, user_id):
+        return []
+
+    async def list_installed_for_user(db_arg, *, user_id):
+        assert user_id == current_user.id
+        return [install]
+
+    async def list_published_releases(db_arg):
+        return [release]
+
+    async def get_latest_published_release_for_skill(db_arg, *, skill_id):
+        assert skill_id == version.skill_id
+        return release
+
+    async def get_by_skill_version(db_arg, *, skill_id, version_number):
+        assert skill_id == version.skill_id
+        assert version_number == version.version_number
+        return version
+
+    async def get_by_user_and_skill_id(db_arg, *, user_id, skill_id):
+        assert user_id == current_user.id
+        assert skill_id == version.skill_id
+        return install
+
+    monkeypatch.setattr(skills_router.SkillRepository, "list_visible_skills", list_visible_skills)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "list_installed_for_user", list_installed_for_user)
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "list_published_releases", list_published_releases)
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_latest_published_release_for_skill", get_latest_published_release_for_skill)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "get_by_skill_version", get_by_skill_version)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_skill_id", get_by_user_and_skill_id)
+
+    async def run():
+        return await skills_router.list_skills(current_user=current_user, db=db)
+
+    response = asyncio.run(run())
+    personal = next(skill for skill in response.skills if skill.space == "personal")
+    community = next(skill for skill in response.skills if skill.space == "community")
+
+    assert personal.name == "demo-skill"
+    assert personal.viewer_relation == "installed"
+    assert personal.skill_installation_id == install.id
+    assert personal.skill_id == str(version.skill_id)
+    assert personal.current_platform_version == 1
+    assert personal.installed_platform_version == 1
+    assert personal.owner_display_name == "Bob"
+    assert community.skill_installation_id == install.id
+    assert community.platform_version == 1
+
+
+def test_list_skills_does_not_duplicate_installed_system_release(monkeypatch):
+    db = FakeDb()
+    current_user = _user()
+    definition = _definition(definition_id=503, owner_user_id=None, source_type="legacy", source_identifier="legacy")
+    version = _version(1, definition=definition)
+    install = _install(version)
+    install.user_id = current_user.id
+    install.skill_definition_id = definition.id
+    install.definition = definition
+    release = _release(None, version)
+
+    async def list_visible_skills(db_arg, *, user_id):
+        return []
+
+    async def list_installed_for_user(db_arg, *, user_id):
+        assert user_id == current_user.id
+        return [install]
+
+    async def list_published_releases(db_arg):
+        return [release]
+
+    async def get_by_skill_version(db_arg, *, skill_id, version_number):
+        assert skill_id == version.skill_id
+        assert version_number == version.version_number
+        return version
+
+    async def get_by_user_and_skill_id(db_arg, *, user_id, skill_id):
+        assert user_id == current_user.id
+        assert skill_id == version.skill_id
+        return install
+
+    monkeypatch.setattr(skills_router.SkillRepository, "list_visible_skills", list_visible_skills)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "list_installed_for_user", list_installed_for_user)
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "list_published_releases", list_published_releases)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "get_by_skill_version", get_by_skill_version)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_skill_id", get_by_user_and_skill_id)
+
+    async def run():
+        return await skills_router.list_skills(current_user=current_user, db=db)
+
+    response = asyncio.run(run())
+    system_rows = [skill for skill in response.skills if skill.space == "system"]
+
+    assert len(response.skills) == 1
+    assert len(system_rows) == 1
+    system = system_rows[0]
+    assert system.source_kind == "official"
+    assert system.viewer_relation == "system_available"
+    assert system.skill_id == str(version.skill_id)
+    assert system.version_number == version.version_number
+    assert system.skill_installation_id == install.id
+    assert system.current_platform_version == version.version_number
+    assert system.installed_platform_version == version.version_number
+    assert [(skill.skill_id, skill.version_number) for skill in response.skills].count((str(version.skill_id), version.version_number)) == 1
 
 
 def test_get_skill_includes_public_platform_version_and_publish_metadata(monkeypatch):
@@ -465,6 +587,7 @@ def test_install_public_skill_records_install_without_copying_public_latest(monk
     monkeypatch.setattr(skills_router.SkillInstallRepository, "upsert_install", upsert_install)
     monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_skill_id", get_by_user_and_skill_id)
     monkeypatch.setattr(skills_router.SkillRepository, "create_skill", create_skill)
+    monkeypatch.setattr(skills_router, "_ensure_skill_version_artifact_available_for_install", lambda version: True)
 
     async def run():
         return await skills_router.install_skill(
@@ -480,6 +603,94 @@ def test_install_public_skill_records_install_without_copying_public_latest(monk
     assert response.platform_version == 1
     assert response.skill_installation_id == 300
     assert response.version == "1"
+
+
+def test_install_system_skill_returns_install_backed_system_response(monkeypatch):
+    db = FakeDb()
+    definition = _definition(owner_user_id=None, source_type="legacy", source_identifier="legacy")
+    version = _version(1, definition=definition)
+    release = _release(None, version)
+    install = _install(version)
+
+    async def get_published_release_by_skill_version(db_arg, *, skill_id, version_number):
+        assert skill_id == version.skill_id
+        assert version_number == version.version_number
+        return release
+
+    async def get_by_skill_version(db_arg, *, skill_id, version_number):
+        assert skill_id == version.skill_id
+        assert version_number == version.version_number
+        return version
+
+    async def upsert_install(db_arg, *, user_id, definition, version):
+        assert user_id == _user().id
+        assert definition.id == version.skill_definition_id
+        return install
+
+    async def get_by_user_and_skill_id(db_arg, *, user_id, skill_id):
+        assert skill_id == version.skill_id
+        return install
+
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_published_release_by_skill_version", get_published_release_by_skill_version)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "get_by_skill_version", get_by_skill_version)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "upsert_install", upsert_install)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "get_by_user_and_skill_id", get_by_user_and_skill_id)
+    monkeypatch.setattr(skills_router, "_ensure_skill_version_artifact_available_for_install", lambda version: True)
+
+    async def run():
+        return await skills_router.install_skill(
+            skills_router.SkillInstallRequest(skill_id=str(version.skill_id), version_number=version.version_number),
+            current_user=_user(),
+            db=db,
+        )
+
+    response = asyncio.run(run())
+
+    assert db.commits == 1
+    assert response.space == "system"
+    assert response.source_kind == "official"
+    assert response.skill_installation_id == install.id
+    assert response.current_platform_version == version.version_number
+
+
+def test_terminal_install_rejects_unavailable_artifact(monkeypatch):
+    db = FakeDb()
+    version = _version(1)
+    release = _release(None, version)
+
+    async def get_published_release_by_skill_version(db_arg, *, skill_id, version_number):
+        assert skill_id == version.skill_id
+        assert version_number == version.version_number
+        return release
+
+    async def get_by_skill_version(db_arg, *, skill_id, version_number):
+        assert skill_id == version.skill_id
+        assert version_number == version.version_number
+        return version
+
+    async def upsert_install(*args, **kwargs):
+        raise AssertionError("unavailable Skill artifacts must not create or update installs")
+
+    monkeypatch.setattr(skills_router.SkillReleaseRepository, "get_published_release_by_skill_version", get_published_release_by_skill_version)
+    monkeypatch.setattr(skills_router.SkillVersionRepository, "get_by_skill_version", get_by_skill_version)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "upsert_install", upsert_install)
+    monkeypatch.setattr(skills_router, "_ensure_skill_version_artifact_available_for_install", lambda version: False)
+
+    async def run():
+        with pytest.raises(HTTPException) as exc_info:
+            await skills_router.install_skill(
+                skills_router.SkillInstallRequest(skill_id=str(version.skill_id), version_number=version.version_number),
+                current_user=_user(),
+                db=db,
+            )
+        return exc_info.value
+
+    exc = asyncio.run(run())
+
+    assert exc.status_code == 409
+    assert exc.detail == "Published Skill artifact is unavailable"
+    assert db.commits == 0
+    assert db.rollbacks == 1
 
 
 def test_terminal_install_rejects_unpublished_release(monkeypatch):
@@ -543,8 +754,12 @@ def test_list_skills_hides_public_rows_without_published_release(monkeypatch):
     async def list_published_releases(db_arg):
         return []
 
+    async def list_installed_for_user(db_arg, *, user_id):
+        return []
+
     monkeypatch.setattr(skills_router.SkillRepository, "list_visible_skills", list_visible_skills)
     monkeypatch.setattr(skills_router.SkillReleaseRepository, "list_published_releases", list_published_releases)
+    monkeypatch.setattr(skills_router.SkillInstallRepository, "list_installed_for_user", list_installed_for_user)
 
     async def run():
         return await skills_router.list_skills(current_user=_user(), db=db)
