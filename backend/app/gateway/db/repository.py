@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
+import os
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -33,6 +37,11 @@ from app.gateway.db.models import (
 )
 from deerflow.skills.hashing import hash_skill_file_manifest
 from deerflow.skills.path_utils import build_terminal_skill_version_relative_path, build_terminal_skill_virtual_path, resolve_terminal_skill_version_dir
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_RUNTIME_SKILL_INTEGRITY_TIMEOUT_SECONDS = 5.0
+RUNTIME_SKILL_INTEGRITY_TIMEOUT_ENV = "DEER_FLOW_SKILL_INTEGRITY_TIMEOUT_SECONDS"
 
 
 @dataclass(frozen=True)
@@ -105,6 +114,53 @@ def build_runtime_manifest_hash(manifest_json: dict[str, Any]) -> str:
     """Return the deterministic audit hash for a derived runtime descriptor snapshot."""
     canonical_payload = json.dumps(manifest_json, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
     return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+
+
+def _runtime_skill_integrity_timeout_seconds() -> float:
+    """Return the bounded runtime storage integrity timeout."""
+    raw_value = os.getenv(RUNTIME_SKILL_INTEGRITY_TIMEOUT_ENV)
+    if raw_value is None or not raw_value.strip():
+        return DEFAULT_RUNTIME_SKILL_INTEGRITY_TIMEOUT_SECONDS
+    try:
+        timeout = float(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid %s=%r; using default %.1fs",
+            RUNTIME_SKILL_INTEGRITY_TIMEOUT_ENV,
+            raw_value,
+            DEFAULT_RUNTIME_SKILL_INTEGRITY_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_RUNTIME_SKILL_INTEGRITY_TIMEOUT_SECONDS
+    if timeout <= 0:
+        logger.warning(
+            "Invalid %s=%r; using default %.1fs",
+            RUNTIME_SKILL_INTEGRITY_TIMEOUT_ENV,
+            raw_value,
+            DEFAULT_RUNTIME_SKILL_INTEGRITY_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_RUNTIME_SKILL_INTEGRITY_TIMEOUT_SECONDS
+    return timeout
+
+
+async def _run_runtime_skill_descriptor_builder(
+    builder: Callable[[], Any],
+    *,
+    skill_id: str | uuid.UUID,
+    version_number: int,
+    skill_name: str,
+) -> Any:
+    """Run runtime Skill storage verification outside the event loop with a timeout."""
+    timeout = _runtime_skill_integrity_timeout_seconds()
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(builder), timeout=timeout)
+    except TimeoutError as exc:
+        logger.error(
+            "Runtime Skill integrity check timed out: skill_id=%s version_number=%s timeout_seconds=%.3f",
+            skill_id,
+            version_number,
+            timeout,
+        )
+        raise RuntimeSkillResolutionError(f"Skill '{skill_name}' terminal storage integrity check timed out after {timeout:g}s") from exc
 
 
 def _ensure_terminal_skill_integrity(
@@ -516,6 +572,22 @@ class AgentRepository:
         )
 
     @staticmethod
+    async def _build_runtime_skill_descriptor_async(install: SkillInstall, version: SkillVersion) -> RuntimeSkillDescriptor:
+        """Project an install-backed terminal Skill version without blocking the event loop on storage I/O."""
+        terminal_skill_id = _as_optional_uuid(install.skill_id)
+        if terminal_skill_id is None:
+            raise RuntimeSkillResolutionError(f"Skill install {install.id} is missing terminal skill_id")
+        terminal_skill = install.skill or version.skill
+        definition = install.definition or version.definition
+        display_name = _runtime_skill_display_name(terminal_skill=terminal_skill, definition=definition, skill_id=terminal_skill_id)
+        return await _run_runtime_skill_descriptor_builder(
+            lambda: AgentRepository._build_runtime_skill_descriptor(install, version),
+            skill_id=terminal_skill_id,
+            version_number=version.version_number,
+            skill_name=display_name,
+        )
+
+    @staticmethod
     def _build_runtime_system_skill_descriptor(version: SkillVersion, explicit_definition: SkillDefinition | None = None) -> RuntimeSkillDescriptor:
         """Project a configured default-chat terminal Skill version into runtime metadata."""
         terminal_skill_id = _as_optional_uuid(version.skill_id)
@@ -541,6 +613,21 @@ class AgentRepository:
         )
 
     @staticmethod
+    async def _build_runtime_system_skill_descriptor_async(version: SkillVersion, explicit_definition: SkillDefinition | None = None) -> RuntimeSkillDescriptor:
+        """Project a configured default-chat Skill version without blocking the event loop on storage I/O."""
+        terminal_skill_id = _as_optional_uuid(version.skill_id)
+        if terminal_skill_id is None:
+            raise RuntimeSkillResolutionError("Default chat system Skill version is missing terminal skill_id")
+        definition = explicit_definition or version.definition
+        display_name = _runtime_skill_display_name(terminal_skill=version.skill, definition=definition, skill_id=terminal_skill_id)
+        return await _run_runtime_skill_descriptor_builder(
+            lambda: AgentRepository._build_runtime_system_skill_descriptor(version, explicit_definition=explicit_definition),
+            skill_id=terminal_skill_id,
+            version_number=version.version_number,
+            skill_name=display_name,
+        )
+
+    @staticmethod
     async def _default_chat_runtime_skills(db: AsyncSession) -> list[RuntimeSkillDescriptor]:
         """Resolve default-chat system Skills from platform config."""
         try:
@@ -560,7 +647,7 @@ class AgentRepository:
             version = await SkillVersionRepository.get_by_skill_version(db, skill_id=entry.skill_id, version_number=entry.version_number)
             if version is None:
                 raise RuntimeSkillResolutionError(f"Default chat system Skill version ({entry.skill_id}, {entry.version_number}) not found")
-            descriptors.append(AgentRepository._build_runtime_system_skill_descriptor(version))
+            descriptors.append(await AgentRepository._build_runtime_system_skill_descriptor_async(version))
         return descriptors
 
     @staticmethod
@@ -596,7 +683,7 @@ class AgentRepository:
             version = await SkillVersionRepository.get_by_skill_version(db, skill_id=terminal_skill_id, version_number=install.version_number)
             if version is None:
                 raise RuntimeSkillResolutionError(f"Skill install {install.id} terminal Skill version ({terminal_skill_id}, {install.version_number}) not found")
-            descriptors.append(AgentRepository._build_runtime_skill_descriptor(install, version))
+            descriptors.append(await AgentRepository._build_runtime_skill_descriptor_async(install, version))
         return descriptors
 
     @staticmethod

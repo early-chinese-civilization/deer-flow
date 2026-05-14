@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -512,6 +513,40 @@ async def test_runtime_agent_bundle_without_agent_name_loads_default_chat_system
     assert not hasattr(bundle.skills[0], "artifact_uri")
     assert not hasattr(bundle.skills[0], "file_path")
     assert not hasattr(bundle.skills[0], "skill_version_id")
+
+
+@pytest.mark.anyio
+async def test_runtime_skill_integrity_timeout_does_not_block_event_loop(monkeypatch):
+    from app.gateway.db.repository import RuntimeSkillResolutionError, _run_runtime_skill_descriptor_builder
+
+    monkeypatch.setenv("DEER_FLOW_SKILL_INTEGRITY_TIMEOUT_SECONDS", "0.01")
+    skill_id = uuid4()
+    loop_tick = False
+
+    def slow_storage_open():
+        time.sleep(0.2)
+        return "late"
+
+    async def mark_loop_alive():
+        nonlocal loop_tick
+        await asyncio.sleep(0.03)
+        loop_tick = True
+
+    task = asyncio.create_task(
+        _run_runtime_skill_descriptor_builder(
+            slow_storage_open,
+            skill_id=skill_id,
+            version_number=1,
+            skill_name="slow-skill",
+        )
+    )
+    ticker = asyncio.create_task(mark_loop_alive())
+
+    await ticker
+    assert loop_tick is True
+    assert task.done()
+    with pytest.raises(RuntimeSkillResolutionError, match="integrity check timed out"):
+        await task
 
 
 @pytest.mark.anyio
